@@ -10,8 +10,12 @@ github.com/kylelemons/go-gypsy v1.0.0 h1:7/wQ7A3UL1bnqRMnZ6T8cwCOArfZCxFmb1iTxaO
 github.com/kylelemons/go-gypsy v1.0.0/go.mod h1:chkXM0zjdpXOiqkCW1XcCHDfjfk14PH2KKkQWxfJUcU=
 github.com/lib/pq v1.10.7 h1:p7ZhMD+KsSRozJr34udlUrhboJwWAgCg34+/ZZNvZZw=
 github.com/lib/pq v1.10.7/go.mod h1:AlVN5x4E4T544tWzH6hKfbfQvm3HdbOxrmggDNAPY9o=
+github.com/pitchinnate/golangGeojsonDijkstra v0.0.1 h1:KLAUjYdhyKMQ+YYNwb3Wk/SPjzQLVzy7AKB/8mGwbvk=
+github.com/pitchinnate/golangGeojsonDijkstra v0.0.1/go.mod h1:7ubGHWMQKRWeTU7ju3w7ElJynDWhQp/Wxa/G71N5h9s=
 github.com/pmezard/go-difflib v1.0.0 h1:4DBwDE0NGyQoBHbLQYPwSUPoCMWR5BEzIk/f1lZbAQM=
 github.com/stretchr/testify v1.8.1 h1:w7B6lhMri9wdJUVmEZPGGhZzrYTPvgJArz7wNPgYKsk=
+github.com/tomchavakis/turf-go v0.0.3 h1:BSKbIe0mlasZMYb27719GiwgGFSBTT+XkF+Pm661ohA=
+github.com/tomchavakis/turf-go v0.0.3/go.mod h1:BeSO3k15mLLYjzX3nlv3aR+TaUiEJfws+P2Ewvd5iF8=
 github.com/twpayne/go-geom v1.4.4 h1:bcCPAvvNSzjmpUqR0Uqh39ClCKtPx6kZVR7EakQaVJI=
 github.com/twpayne/go-geom v1.4.4/go.mod h1:Kz4sX4LtdesDQgkhsMERazLlH/NiCg90s6FPaNr0KNI=
 github.com/ziutek/mymysql v1.5.4 h1:GB0qdRGsTwQSBVYuVShFBKaXSnSnYYC2d9knnE1LHFs=
