@@ -10,8 +10,9 @@ import (
 )
 
 // Sample data for test Shanghai-New-York
-var originCoords = gdj.Position{121.8, 31.2}
-var destinationCoords = gdj.Position{-74.1, 40.7}
+var originCoords = gdj.Position{72.9301, 19.0519}
+var destinationCoords = gdj.Position{-9.0905, 38.7062}
+var routeName = "Mumbai-Lisbon"
 
 func main() {
 
@@ -19,7 +20,13 @@ func main() {
 	if err != nil {
 		log.Fatalf("error opening file: %v", err)
 	}
-	defer f.Close()
+
+	defer func(f *os.File) {
+		err := f.Close()
+		if err != nil {
+			log.Fatal(err)
+		}
+	}(f)
 
 	wrt := io.MultiWriter(os.Stdout, f)
 	log.SetOutput(wrt)
@@ -38,11 +45,13 @@ func main() {
 		return
 	}
 
+	splitFc := splitter(fc)
+
 	//// Print the number of features in the collection
 	//log.Printf("Number of features: %d", len(fc.Features))
 
 	// Calculate the shortest path between two points
-	path, distance, err := fc.FindPath(originCoords, destinationCoords, 0.00001)
+	path, distance, err := splitFc.FindPath(originCoords, destinationCoords, 0.00001)
 
 	distanceInKm := distance / 1000
 
@@ -67,6 +76,8 @@ func main() {
 	log.Printf("Last Waypoint to Destination: %f Km", distFromLastWp)
 	log.Printf("Total Distance: %f Km", totalDistance)
 
+	//	Generate output geojson
+	generateOutput(path, originCoords, destinationCoords, totalDistance, distToFirstWp, distFromLastWp, distanceInKm, routeName)
 }
 
 // CalcDistance calculates the distance between two points in meters
