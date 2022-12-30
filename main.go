@@ -9,13 +9,9 @@ import (
 	"os"
 )
 
-// Sample data for test Shanghai-New-York
-var originCoords = gdj.Position{72.9301, 19.0519}
-var destinationCoords = gdj.Position{-9.0905, 38.7062}
-var routeName = "Mumbai-Lisbon"
-
 func main() {
 
+	// Setting the logger
 	f, err := os.OpenFile("runtime.log", os.O_RDWR|os.O_CREATE|os.O_APPEND, 0666)
 	if err != nil {
 		log.Fatalf("error opening file: %v", err)
@@ -31,27 +27,61 @@ func main() {
 	wrt := io.MultiWriter(os.Stdout, f)
 	log.SetOutput(wrt)
 
-	var fc gdj.FeatureCollection
+	// TODO: Initiate a web router and start the server
 
-	// Read the contents of the GeoJSON file into a byte slice
-	data, err := os.ReadFile("marnet_densified_v2.geojson")
-	if err != nil {
-		log.Fatal(err)
+	// Sample data for test Shanghai-New-York
+	var originCoords = gdj.Position{72.9301, 19.0519}
+	var destinationCoords = gdj.Position{-9.0905, 38.7062}
+	var routeName = "Mumbai-Lisbon"
+
+	// Calculate the passage info
+	calculatePassageInfo(originCoords, destinationCoords, routeName)
+
+}
+
+// CalculatePassageInfo calculates the ocean waypoints and distance between two coordinates and generates a GeoJSON output
+func calculatePassageInfo(originCoords, destinationCoords gdj.Position, routeName string) {
+	// FC variable is the GeoJSON FeatureCollection
+	var fc gdj.FeatureCollection
+	var newFc gdj.FeatureCollection
+	var data []byte
+	var splitAvailable bool
+	// Check if splitCoords.geojson exists
+	if _, err := os.Stat("splitCoords.geojson"); os.IsNotExist(err) {
+		// If not, read the original file
+		log.Println("splitCoords.geojson does not exist. Reading original file.")
+		data, err = os.ReadFile("marnet_densified_v2.geojson")
+		if err != nil {
+			log.Fatal(err)
+		}
+	} else {
+		// If it does, read the splitCoords.geojson file
+		splitAvailable = true
+		log.Println("splitCoords.geojson exists. Reading splitCoords.geojson file.")
+		data, err = os.ReadFile("splitCoords.geojson")
+		if err != nil {
+			log.Fatal(err)
+		}
 	}
 
 	//Unmarshall feature collection from geojson
-	err = json.Unmarshal(data, &fc)
+	err := json.Unmarshal(data, &fc)
 	if err != nil {
 		return
 	}
 
-	splitFc := splitter(fc)
-
+	//log.Println("Split file exists: ", splitAvailable)
+	// Do not split if splitCoords.geojson exists
+	if !splitAvailable {
+		newFc = splitter(fc)
+	} else {
+		newFc = fc
+	}
 	//// Print the number of features in the collection
 	//log.Printf("Number of features: %d", len(fc.Features))
 
 	// Calculate the shortest path between two points
-	path, distance, err := splitFc.FindPath(originCoords, destinationCoords, 0.00001)
+	path, distance, err := newFc.FindPath(originCoords, destinationCoords, 0.00001)
 
 	distanceInKm := distance / 1000
 

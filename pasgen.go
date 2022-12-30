@@ -26,6 +26,7 @@ type Feature struct {
 
 type Output struct {
 	Type     string    `json:"type"`
+	Name     string    `json:"name"`
 	Features []Feature `json:"features"`
 }
 
@@ -33,7 +34,6 @@ func generateOutput(path gdj.Path, oCoords gdj.Position, dCoords gdj.Position, t
 
 	//	Add values to the output struct
 	var output Output
-	output.Type = "FeatureCollection"
 	newFeature := Feature{
 		Type: "Feature",
 		Geometry: struct {
@@ -63,7 +63,14 @@ func generateOutput(path gdj.Path, oCoords gdj.Position, dCoords gdj.Position, t
 		ID: "1",
 	}
 	output.Features = append(output.Features, newFeature)
+	output.Type = "FeatureCollection"
+	output.Name = "SeaRoute"
 
+	writeOutput(output, "output.geojson")
+}
+
+// Generic Function to write the output to a file
+func writeOutput(output interface{}, filename string) {
 	//	Convert the output struct to json
 	jsonOutput, err := json.Marshal(output)
 	if err != nil {
@@ -71,7 +78,7 @@ func generateOutput(path gdj.Path, oCoords gdj.Position, dCoords gdj.Position, t
 	}
 
 	//	Create a file and write the json to it
-	file, err := os.Create("output.geojson")
+	file, err := os.Create(filename)
 	if err != nil {
 		panic(err)
 	}
@@ -86,5 +93,4 @@ func generateOutput(path gdj.Path, oCoords gdj.Position, dCoords gdj.Position, t
 	if err != nil {
 		panic(err)
 	}
-
 }
