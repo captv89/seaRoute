@@ -1,0 +1,100 @@
+{{define "top"}}
+    <!DOCTYPE html>
+    <html lang="en">
+    <head>
+        <!-- Required meta tags -->
+        <meta charset="utf-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1" />
+
+        <!-- Materialize CSS -->
+        <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/materialize/1.0.0/css/materialize.min.css">
+        <link href="https://fonts.googleapis.com/icon?family=Material+Icons" rel="stylesheet">
+
+
+        <!-- Leaflet CSS -->
+        <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.3/dist/leaflet.css"
+              integrity="sha256-kLaT2GOSpHechhsozzB+flnD+zUyjE2LlfWPgU04xyI="
+              crossorigin=""/>
+
+        <!-- Leaflet JS -->
+        <script src="https://unpkg.com/leaflet@1.9.3/dist/leaflet.js"
+                integrity="sha256-WBkoXOwTeyKclOHuWtc+i2uENFpDZ9YPdf5Hf+D7ewM="
+                crossorigin=""></script>
+
+
+        <!-- Notie Notification -->
+        <link rel="stylesheet" type="text/css" href="https://unpkg.com/notie@4.3.1/dist/notie.min.css">
+
+        <!-- Own Styles	 -->
+        <link rel="stylesheet" href="./static/style.css">
+
+        <!-- Favicon -->
+        <link rel="icon" type="image/x-icon" href="./static/icons/icons8-waypoint-map-96.png">
+
+
+        <!-- Title -->
+        <title>Short Sea Route</title>
+
+    </head>
+    <body data-theme="dark">
+    <header>
+        <!-- Fixed navbar -->
+        <div class="navbar-fixed blue">
+            <nav>
+                <div class="nav-wrapper blue">
+                    <a href="/" class="brand-logo left">
+                        <img src="./static/icons/logo.png" width="50" height="50"> <span>Short Sea Route</span>  </a>
+                    <ul class="right">
+                        <li><a href="/about">About Me</a></li>
+                    </ul>
+                </div>
+            </nav>
+        </div>
+    </header>
+    <main>
+{{ end }}
+
+{{define "bottom"}}
+    </main>
+    <footer>
+        <div class="page-footer blue">
+            <div class="footer-copyright">
+                <div class="container">
+                    © 2022 CaptV89
+                    <a class="grey-text text-lighten-4 right" href="https://github.com/captv89/seaRoute" target="_blank">Github</a>
+                </div>
+            </div>
+        </div>
+
+        <!-- Materilaze -->
+        <!-- Compiled and minified JavaScript -->
+        <script src="https://cdnjs.cloudflare.com/ajax/libs/materialize/1.0.0/js/materialize.min.js"></script>
+
+
+
+        <!-- Notie Notification -->
+        <script src="https://unpkg.com/notie@4.3.1/dist/notie.min.js" crossorigin="anonymous"></script>
+
+        <!-- Custom JS -->
+        <script src="./static/script.js"></script>
+
+
+        <!-- Notifications -->
+        <script>
+            {{with .Error}}
+            notify('error', '{{.}}');
+            {{end}}
+
+            {{with .Flash}}
+            notify('success', '{{.}}');
+            {{end}}
+
+            {{with .Warning}}
+            notify('warning', '{{.}}');
+            {{end}}
+        </script>
+
+    </footer>
+    </body>
+</html>
+{{end}}

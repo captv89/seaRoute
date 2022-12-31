@@ -30,6 +30,6 @@ func splitter(fc gdj.FeatureCollection) gdj.FeatureCollection {
 
 		}
 	}
-	writeOutput(newFc, "splitCoords.geojson")
+	writeOutput(newFc, "dataset/splitCoords.geojson")
 	return newFc
 }

@@ -19,7 +19,7 @@ type Feature struct {
 		WpToDDist float64      `json:"wp_to_d_dist"`
 		WpDist    float64      `json:"wp_dist"`
 		TotalDist float64      `json:"total_dist"`
-		RouteName string       `json:"route name"`
+		RouteName string       `json:"route_name"`
 	} `json:"properties"`
 	ID string `json:"id"`
 }
@@ -30,7 +30,7 @@ type Output struct {
 	Features []Feature `json:"features"`
 }
 
-func generateOutput(path gdj.Path, oCoords gdj.Position, dCoords gdj.Position, totalDistance float64, oToWpDist float64, wpToDDist float64, Wp2WpDist float64, routeName string) {
+func generateOutput(path gdj.Path, oCoords gdj.Position, dCoords gdj.Position, totalDistance float64, oToWpDist float64, wpToDDist float64, Wp2WpDist float64, routeName string) Output {
 
 	//	Add values to the output struct
 	var output Output
@@ -50,7 +50,7 @@ func generateOutput(path gdj.Path, oCoords gdj.Position, dCoords gdj.Position, t
 			WpToDDist float64      `json:"wp_to_d_dist"`
 			WpDist    float64      `json:"wp_dist"`
 			TotalDist float64      `json:"total_dist"`
-			RouteName string       `json:"route name"`
+			RouteName string       `json:"route_name"`
 		}{
 			OCoords:   oCoords,
 			DCoords:   dCoords,
@@ -66,7 +66,8 @@ func generateOutput(path gdj.Path, oCoords gdj.Position, dCoords gdj.Position, t
 	output.Type = "FeatureCollection"
 	output.Name = "SeaRoute"
 
-	writeOutput(output, "output.geojson")
+	writeOutput(output, "temp/output.geojson")
+	return output
 }
 
 // Generic Function to write the output to a file

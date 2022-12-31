@@ -1,0 +1,25 @@
+body {
+    display: flex;
+    min-height: 100vh;
+    flex-direction: column;
+}
+
+
+main {
+    flex: 1 0 auto;
+    height: 100%;
+}
+
+#map {
+    /* set the height of the map to 100% of the available space */
+    height: 500px;
+    width: 100%;
+    /* position the map at the bottom of the page */
+    position: relative;
+    top: 0;
+    bottom: 0;
+}
+
+.form {
+    margin-top: 20px;
+}
