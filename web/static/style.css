@@ -4,6 +4,10 @@ body {
     flex-direction: column;
 }
 
+body {
+    padding: 0;
+    margin: 0;
+}
 
 main {
     flex: 1 0 auto;
@@ -12,14 +16,16 @@ main {
 
 #map {
     /* set the height of the map to 100% of the available space */
-    height: 500px;
+    height: 480px;
     width: 100%;
     /* position the map at the bottom of the page */
     position: relative;
     top: 0;
-    bottom: 0;
+    bottom: 10px;
 }
 
 .form {
-    margin-top: 20px;
+    margin-top: 10px;
+    height: 10px;
+    bottom: 0;
 }
