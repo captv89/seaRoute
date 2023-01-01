@@ -89,11 +89,10 @@ func main() {
 
 	})
 
-	os.Getenv("APP_ENV")
 	//Start and run the server if production environment
 	if os.Getenv("APP_ENV") == "prod" {
 		log.Println("Starting server in production environment")
-		err = router.RunTLS(":443", "certs/cert.pem", "certs/key.pem")
+		err = router.RunTLS(":443", os.Getenv("CERT_PATH"), os.Getenv("KEY_PATH"))
 	} else {
 		log.Println("Starting server in development environment")
 		err = router.Run(":8080")
