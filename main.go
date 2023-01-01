@@ -89,9 +89,17 @@ func main() {
 
 	})
 
-	err = router.Run(":8080")
-	if err != nil {
-		log.Fatal(err)
+	os.Getenv("APP_ENV")
+	//Start and run the server if production environment
+	if os.Getenv("APP_ENV") == "prod" {
+		log.Println("Starting server in production environment")
+		err = router.RunTLS(":443", "certs/cert.pem", "certs/key.pem")
+	} else {
+		log.Println("Starting server in development environment")
+		err = router.Run(":8080")
+		if err != nil {
+			log.Fatal(err)
+		}
 	}
 
 	// Sample data for test Shanghai-New-York
