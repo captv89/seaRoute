@@ -4,19 +4,19 @@
         <form>
             <div class="row">
                 <div class="input-field col s2">
-                    <input id="origin-lat" type="text" name="origin-lat" required>
+                    <input id="origin-lat" placeholder="+/- xx.xxx" oninput="validateLatitude(this)" type="text" name="origin-lat" required>
                     <label for="origin-lat">Origin Lat</label>
                 </div>
                 <div class="input-field col s2">
-                    <input id="origin-lng" type="text" name="origin-lng" required>
+                    <input id="origin-lng" placeholder="+/- yyy.yyy" oninput="validateLongitude(this)" type="text" name="origin-lng" required>
                     <label for="origin-lng">Origin Lng</label>
                 </div>
                 <div class="input-field col s2">
-                    <input id="dest-lat" type="text" name="dest-lat" required>
+                    <input id="dest-lat" placeholder="+/- xx.xxx" oninput="validateLatitude(this)" type="text" name="dest-lat" required>
                     <label for="dest-lat">Dest Lat</label>
                 </div>
                 <div class="input-field col s2">
-                    <input id="dest-lng" type="text" name="dest-lng" required>
+                    <input id="dest-lng" placeholder="+/- yyy.yyy" oninput="validateLongitude(this)" type="text" name="dest-lng" required>
                     <label for="dest-lng">Dest Lng</label>
                 </div>
                 <div class="input-field col s2 right">

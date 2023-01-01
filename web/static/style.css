@@ -5,6 +5,7 @@ body {
 }
 
 body {
+    overflow: hidden;
     padding: 0;
     margin: 0;
 }
@@ -16,7 +17,7 @@ main {
 
 #map {
     /* set the height of the map to 100% of the available space */
-    height: 480px;
+    height: 470px;
     width: 100%;
     /* position the map at the bottom of the page */
     position: relative;
@@ -28,4 +29,8 @@ main {
     margin-top: 10px;
     height: 10px;
     bottom: 0;
+}
+
+.page-footer {
+    padding-top: 0;
 }
