@@ -32,6 +32,11 @@ func main() {
 	// Set the router as the default one provided by Gin
 	router := gin.Default()
 
+	err = router.SetTrustedProxies(nil)
+	if err != nil {
+		log.Fatal(err)
+	}
+
 	// Serve html template files
 	router.LoadHTMLGlob("web/templates/**/*.gohtml")
 	// Load the static files
