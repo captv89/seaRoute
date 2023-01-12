@@ -13,6 +13,11 @@ import (
 
 func main() {
 
+	// Create a temp folder
+	if _, err := os.Stat("temp"); os.IsNotExist(err) {
+		os.MkdirAll("temp", 0777)
+	}
+
 	// Setting the logger
 	f, err := os.OpenFile("temp/runtime.log", os.O_RDWR|os.O_CREATE|os.O_APPEND, 0666)
 	if err != nil {
