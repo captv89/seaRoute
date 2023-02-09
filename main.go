@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"github.com/gin-gonic/gin"
 	geo "github.com/kellydunn/golang-geo"
 	gdj "github.com/pitchinnate/golangGeojsonDijkstra"
@@ -15,7 +16,10 @@ func main() {
 
 	// Create a temp folder
 	if _, err := os.Stat("temp"); os.IsNotExist(err) {
-		os.MkdirAll("temp", 0777)
+		err := os.MkdirAll("temp", 0777)
+		if err != nil {
+			return
+		}
 	}
 
 	// Setting the logger
@@ -102,10 +106,10 @@ func main() {
 	//Start and run the server if production environment
 	if os.Getenv("APP_ENV") == "prod" {
 		log.Println("Starting server in production environment")
-		err = router.RunTLS(":443", os.Getenv("CERT_PATH"), os.Getenv("KEY_PATH"))
+		err = router.RunTLS(fmt.Sprintf(":%s", os.Getenv("PORT")), os.Getenv("CERT_PATH"), os.Getenv("KEY_PATH"))
 	} else {
 		log.Println("Starting server in development environment")
-		err = router.Run(":8080")
+		err = router.Run(fmt.Sprintf(":%s", os.Getenv("PORT")))
 		if err != nil {
 			log.Fatal(err)
 		}
