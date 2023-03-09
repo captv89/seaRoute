@@ -4,33 +4,39 @@ body {
     flex-direction: column;
 }
 
-body {
-    overflow: hidden;
-    padding: 0;
-    margin: 0;
-}
-
 main {
     flex: 1 0 auto;
+}
+
+html, body {
     height: 100%;
+    margin: 0;
+    padding: 0;
+    overflow: hidden;
 }
 
 #map {
     /* set the height of the map to 100% of the available space */
-    height: 470px;
+    height: 90%;
     width: 100%;
     /* position the map at the bottom of the page */
     position: relative;
     top: 0;
-    bottom: 10px;
+    z-index: 0;
 }
 
 .form {
     margin-top: 10px;
     height: 10px;
     bottom: 0;
+    margin-bottom: 50px;
 }
 
 .page-footer {
+    height: 50px;
     padding-top: 0;
+    position: fixed;
+    bottom: 0;
+    width: 100%;
+    z-index: 1;
 }

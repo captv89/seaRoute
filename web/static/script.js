@@ -10,6 +10,7 @@ map.on('click', function(event) {
     alert(message);
 });
 
+// Validation to impose limits on latitude and longitude
 function validateLatitude(input) {
     var value = input.value;
     if (value < -90 || value > 90) {
@@ -27,6 +28,11 @@ function validateLongitude(input) {
         input.setCustomValidity("");
     }
 }
+
+// Define a variable to store the previously added waypoints
+var previousWaypoints = null;
+
+// Get the form and add an event listener
 const form = document.querySelector("form");
 
 form.addEventListener('submit', function(event) {
@@ -60,8 +66,23 @@ form.addEventListener('submit', function(event) {
                     // Do something with the response data
                     console.log(data);
 
+                    // Remove the previous waypoints from the map, if any
+                    if (previousWaypoints) {
+                        previousWaypoints.forEach(function(waypoint) {
+                            map.removeLayer(waypoint);
+                        });
+                    }
+
+                    // To remove the layer, you can use the following code
+                    map.eachLayer(function(layer) {
+                        if (layer.options && layer.options.id === 'routeLayer') {
+                            map.removeLayer(layer);
+                        }
+                    });
+
                     // Add the feature collection as a layer to the map
                     var routeLayer = L.geoJSON(data, {
+                        id: 'routeLayer',
                         style: function(feature) {
                             return {
                                 color: 'red'
@@ -76,18 +97,23 @@ form.addEventListener('submit', function(event) {
                     }).addTo(map);
 
                     var waypoints = data.features[0].geometry.coordinates;
-
+                    console.log(waypoints);
                     var waypointIcon = L.icon({
                         iconUrl: './static/icons/waypoint.png',
                         iconSize: [8, 8]
                     });
 
+                    var newWaypoints = [];
                     waypoints.forEach(function(waypoint) {
                         var marker = L.marker([waypoint[1], waypoint[0]], {
                             icon: waypointIcon
                         }).addTo(map);
                         marker.bindPopup(`Coordinates: [${waypoint[1]}, ${waypoint[0]}]`);
+                        newWaypoints.push(marker);
                     });
+
+                    // Store the new waypoints in the previousWaypoints variable
+                    previousWaypoints = newWaypoints;
 
                     // Fit the map to the layer bounds
                     map.fitBounds(routeLayer.getBounds());
