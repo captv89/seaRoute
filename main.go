@@ -10,7 +10,10 @@ import (
 	"log"
 	"os"
 	"strconv"
+	"strings"
 )
+
+var PortData []Port
 
 func main() {
 
@@ -38,6 +41,12 @@ func main() {
 	wrt := io.MultiWriter(os.Stdout, f)
 	log.SetOutput(wrt)
 
+	// Load the port data
+	PortData, err = LoadPorts()
+	if err != nil {
+		log.Printf("Error loading port data: %v", err)
+	}
+
 	// Set the router as the default one provided by Gin
 	router := gin.Default()
 
@@ -60,6 +69,16 @@ func main() {
 	// Handle the about page
 	router.GET("/about", func(c *gin.Context) {
 		c.HTML(200, "about.gohtml", gin.H{})
+	})
+
+	// Handle the search for ports
+	router.GET("/ports", func(c *gin.Context) {
+		// Get the search query
+		searchQuery := c.Query("search")
+		// Get the filtered port data
+		filteredPorts := filterPorts(searchQuery)
+		// Send the filtered port data to the client
+		c.JSON(200, filteredPorts)
 	})
 
 	// Handle request to calculate the passage
@@ -204,4 +223,16 @@ func CalcDistance(p1, p2 gdj.Position) float64 {
 	wp2 := geo.NewPoint(p2[1], p2[0])
 
 	return wp1.GreatCircleDistance(wp2)
+}
+
+// filterPorts filters the ports from the []Port struct
+func filterPorts(query string) []Port {
+	filteredPorts := make([]Port, 0)
+	for _, port := range PortData {
+		// Check if the search query is a substring of the port name or location
+		if strings.Contains(strings.ToLower(port.Port), strings.ToLower(query)) || strings.Contains(strings.ToLower(port.Country), strings.ToLower(query)) {
+			filteredPorts = append(filteredPorts, port)
+		}
+	}
+	return filteredPorts
 }

@@ -40,3 +40,33 @@ html, body {
     width: 100%;
     z-index: 1;
 }
+
+.autocomplete-items {
+    position: absolute;
+    z-index: 9999;
+    top: calc(100% + 5px);
+    left: 0;
+    right: 0;
+    max-height: 200px;
+    overflow-y: scroll;
+    background-color: #fff;
+    border: 1px solid #ccc;
+    color: #000000;
+}
+
+.autocomplete-items div {
+    padding: 10px;
+    cursor: pointer;
+}
+
+.autocomplete-items div:hover {
+    background-color: #cecdcd;
+    cursor: pointer;
+}
+
+.autocomplete-active {
+    background-color: DodgerBlue !important;
+    color: #ffffff;
+}
+
+

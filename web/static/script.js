@@ -122,6 +122,81 @@ form.addEventListener('submit', function(event) {
         }
 });
 
+// Get the checkbox and add an event listener
+function handleCoordCheckboxChange(checkbox) {
+    var fromLatInput = document.getElementById('from-lat');
+    var fromLngInput = document.getElementById('from-lng');
+    var toLatInput = document.getElementById('to-lat');
+    var toLngInput = document.getElementById('to-lng');
 
+    if (checkbox.checked) {
+        fromLatInput.disabled = false;
+        fromLngInput.disabled = false;
+        toLatInput.disabled = false;
+        toLngInput.disabled = false;
+    } else {
+        fromLatInput.disabled = true;
+        fromLngInput.disabled = true;
+        toLatInput.disabled = true;
+        toLngInput.disabled = true;
+    }
+}
+
+function showCoordinates() {
+    var checkbox = document.getElementById("use-coordinates");
+    var coordinateFields = document.getElementById("coordinate-fields");
+    if (checkbox.checked) {
+        coordinateFields.style.display = "block";
+    } else {
+        coordinateFields.style.display = "none";
+    }
+}
+
+
+
+function setupAutocomplete(input, autocompleteItems) {
+    input.addEventListener('input', function () {
+        let value = this.value;
+
+        if (!value) {
+            autocompleteItems.innerHTML = '';
+            return;
+        }
+
+        // Fetch data from the backend
+        fetch('/ports?search=' + value)
+            .then(response => response.json())
+            .then(data => {
+                autocompleteItems.innerHTML = '';
+                console.log(data);
+                data.forEach(function (item) {
+                    const div = document.createElement('div');
+                    div.textContent = `${item.port}(${item.country})`;
+                    div.addEventListener('click', function () {
+                        input.value = item.port;
+                        autocompleteItems.innerHTML = '';
+                    });
+                    autocompleteItems.appendChild(div);
+                });
+            });
+    });
+}
+
+
+const fromInput = document.getElementById('from-input');
+const autocompleteItems = document.querySelector('.from-autocomplete-items');
+setupAutocomplete(fromInput, autocompleteItems);
+
+const toInput = document.getElementById('to-input');
+const toAutocompleteItems = document.querySelector('.to-autocomplete-items');
+setupAutocomplete(toInput, toAutocompleteItems);
+
+
+// Close the autocomplete list when the user clicks outside of it
+document.addEventListener('click', function(e) {
+    if (!e.target.matches('.autocomplete-items div')) {
+        autocompleteItems.innerHTML = '';
+    }
+});
 
 
