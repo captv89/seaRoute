@@ -10,25 +10,6 @@ map.on('click', function(event) {
     alert(message);
 });
 
-// Validation to impose limits on latitude and longitude
-function validateLatitude(input) {
-    var value = input.value;
-    if (value < -90 || value > 90) {
-        input.setCustomValidity("Latitude must be between -90 and 90");
-    } else {
-        input.setCustomValidity("");
-    }
-}
-
-function validateLongitude(input) {
-    var value = input.value;
-    if (value < -180 || value > 180) {
-        input.setCustomValidity("Longitude must be between -180 and 180");
-    } else {
-        input.setCustomValidity("");
-    }
-}
-
 // Define a variable to store the previously added waypoints
 var previousWaypoints = null;
 
@@ -41,17 +22,27 @@ form.addEventListener('submit', function(event) {
     } else {
             event.preventDefault();
 
+            // Get the values of the input fields
+            const fromPort = document.getElementById('from-input').value;
+            const toPort = document.getElementById('to-input').value;
+
+            // Do something with the values (e.g. pass them to your backend or API)
+            console.log('From: ' + fromPort);
+            console.log('To: ' + toPort);
+
             // Get the values of the form fields
-            const originLatInput = document.getElementById("origin-lat");
-            const originLngInput = document.getElementById("origin-lng");
-            const destLatInput = document.getElementById("dest-lat");
-            const destLngInput = document.getElementById("dest-lng");
+            // const originLatInput = document.getElementById("origin-lat");
+            // const originLngInput = document.getElementById("origin-lng");
+            // const destLatInput = document.getElementById("dest-lat");
+            // const destLngInput = document.getElementById("dest-lng");
 
             const formData = {};
-            formData.originLatitude = originLatInput.value;
-            formData.originLongitude = originLngInput.value;
-            formData.destinationLatitude = destLatInput.value;
-            formData.destinationLongitude = destLngInput.value;
+            // formData.originLatitude = originLatInput.value;
+            // formData.originLongitude = originLngInput.value;
+            // formData.destinationLatitude = destLatInput.value;
+            // formData.destinationLongitude = destLngInput.value;
+            formData.fromPort = fromPort;
+            formData.toPort = toPort;
 
             // Send a request to the Go server with the form data
             fetch("/waypoints", {
@@ -90,14 +81,18 @@ form.addEventListener('submit', function(event) {
                         },
                         onEachFeature: function(feature, layer) {
                             var properties = feature.properties;
-                            layer.bindPopup('This Route!' +
-                                '<br>Total Distance: ' + properties.total_dist + ' km'
+                            let routeName = properties.route_name;
+                            let distance = properties.total_dist;
+                            let distanceRounded = distance.toFixed(2);
+                            let distanceInNauticalMiles = (distance * 0.539957).toFixed(2);
+                            layer.bindPopup(routeName +
+                                '<br>Total Distance: ' + distanceRounded + ' km / '+ distanceInNauticalMiles + ' nm'
                             );
                         }
                     }).addTo(map);
 
                     var waypoints = data.features[0].geometry.coordinates;
-                    console.log(waypoints);
+                    // console.log(waypoints);
                     var waypointIcon = L.icon({
                         iconUrl: './static/icons/waypoint.png',
                         iconSize: [8, 8]
@@ -118,39 +113,27 @@ form.addEventListener('submit', function(event) {
                     // Fit the map to the layer bounds
                     map.fitBounds(routeLayer.getBounds());
 
+                    // Set the downlod file name
+                    let fileName = `${fromPort}-${toPort}.geojson`;
+                    // Add a download button to allow users to download the GeoJSON data as a file
+                    const downloadButton = document.getElementById('download-button');
+                    downloadButton.addEventListener('click', function() {
+                        const dataStr = 'data:text/json;charset=utf-8,' + encodeURIComponent(JSON.stringify(data));
+                        const downloadAnchorNode = document.createElement('a');
+                        downloadAnchorNode.setAttribute('href', dataStr);
+                        downloadAnchorNode.setAttribute('download', fileName);
+                        document.body.appendChild(downloadAnchorNode); // required for firefox
+                        downloadAnchorNode.click();
+                        downloadAnchorNode.remove();
+                    });
+
+                    // Add a download button to allow users to download the GeoJSON data as a file
+                    // Enable the download button
+                    downloadButton.removeAttribute("disabled");
                 });
         }
 });
 
-// Get the checkbox and add an event listener
-function handleCoordCheckboxChange(checkbox) {
-    var fromLatInput = document.getElementById('from-lat');
-    var fromLngInput = document.getElementById('from-lng');
-    var toLatInput = document.getElementById('to-lat');
-    var toLngInput = document.getElementById('to-lng');
-
-    if (checkbox.checked) {
-        fromLatInput.disabled = false;
-        fromLngInput.disabled = false;
-        toLatInput.disabled = false;
-        toLngInput.disabled = false;
-    } else {
-        fromLatInput.disabled = true;
-        fromLngInput.disabled = true;
-        toLatInput.disabled = true;
-        toLngInput.disabled = true;
-    }
-}
-
-function showCoordinates() {
-    var checkbox = document.getElementById("use-coordinates");
-    var coordinateFields = document.getElementById("coordinate-fields");
-    if (checkbox.checked) {
-        coordinateFields.style.display = "block";
-    } else {
-        coordinateFields.style.display = "none";
-    }
-}
 
 
 
@@ -168,7 +151,7 @@ function setupAutocomplete(input, autocompleteItems) {
             .then(response => response.json())
             .then(data => {
                 autocompleteItems.innerHTML = '';
-                console.log(data);
+                // console.log(data);
                 data.forEach(function (item) {
                     const div = document.createElement('div');
                     div.textContent = `${item.port}(${item.country})`;

@@ -12,7 +12,6 @@ html, body {
     height: 100%;
     margin: 0;
     padding: 0;
-    overflow: hidden;
 }
 
 #map {
@@ -20,16 +19,17 @@ html, body {
     height: 90%;
     width: 100%;
     /* position the map at the bottom of the page */
-    position: relative;
-    top: 0;
+    position: fixed;
+    margin-top: 10px;
     z-index: 0;
 }
 
 .form {
     margin-top: 10px;
-    height: 10px;
     bottom: 0;
-    margin-bottom: 50px;
+    height: 50px;
+    margin-bottom: 10px;
+    z-index: 2;
 }
 
 .page-footer {
@@ -50,7 +50,6 @@ html, body {
     max-height: 200px;
     overflow-y: scroll;
     background-color: #fff;
-    border: 1px solid #ccc;
     color: #000000;
 }
 
@@ -67,6 +66,30 @@ html, body {
 .autocomplete-active {
     background-color: DodgerBlue !important;
     color: #ffffff;
+}
+
+.btn-floating i {
+    display: block;
+    width: 100%;
+    height: 100%;
+    text-align: center;
+    line-height: 34px; /* adjust this value to vertically center the icon */
+}
+
+.btn-floating i.fa-download {
+    font-size: 24px; /* adjust this value to change the size of the icon */
+}
+
+.btn-floating {
+    width: 48px; /* adjust this value to change the size of the circle */
+    height: 48px; /* adjust this value to change the size of the circle */
+    position: absolute;
+    bottom: 80px;
+    right: 80px;
+    border-radius: 50%;
+    display: inline-flex;
+    justify-content: center;
+    align-items: center;
 }
 
 

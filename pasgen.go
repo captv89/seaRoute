@@ -64,7 +64,7 @@ func generateOutput(path gdj.Path, oCoords gdj.Position, dCoords gdj.Position, t
 	}
 	output.Features = append(output.Features, newFeature)
 	output.Type = "FeatureCollection"
-	output.Name = "SeaRoute"
+	output.Name = "Short Sea Route"
 
 	writeOutput(output, "temp/output.geojson")
 	return output

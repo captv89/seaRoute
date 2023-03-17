@@ -3,50 +3,33 @@
 <div class="container form">
     <form>
         <div class="row">
-            <div class="input-field col s3">
-                <input id="from-input" type="text" name="from-input" autocomplete="off">
-                <label for="from-input">From</label>
-                <div class="from-autocomplete-items autocomplete-items"></div>
+            <div class="col-md-4">
+                <div class="input-field">
+                    <input id="from-input" type="text" name="from-input" autocomplete="off">
+                    <label for="from-input">From</label>
+                    <div class="from-autocomplete-items autocomplete-items"></div>
+                </div>
             </div>
-            <div class="input-field col s2 hide">
-                <input id="from-lat" placeholder="+/- xx.xxx" oninput="validateLatitude(this)" type="text" name="from-lat" disabled>
-                <label for="from-lat">Lat</label>
+            <div class="col-md-4">
+                <div class="input-field">
+                    <input id="to-input" type="text" name="to-input" autocomplete="off">
+                    <label for="to-input">To</label>
+                    <div class="to-autocomplete-items autocomplete-items"></div>
+                </div>
             </div>
-            <div class="input-field col s2 hide">
-                <input id="from-lng" placeholder="+/- yyy.yyy" oninput="validateLongitude(this)" type="text" name="from-lng" disabled>
-                <label for="from-lng">Lng</label>
-            </div>
-
-
-            <div class="input-field col s3">
-                <input id="to-input" type="text" name="to-input" autocomplete="off">
-                <label for="to-input">To</label>
-                <div class="to-autocomplete-items autocomplete-items"></div>
-            </div>
-            <div class="input-field col s2 hide">
-                <input id="to-lat" placeholder="+/- xx.xxx" oninput="validateLatitude(this)" type="text" name="to-lat" disabled>
-                <label for="to-lat">Lat</label>
-            </div>
-            <div class="input-field col s2 hide">
-                <input id="to-lng" placeholder="+/- yyy.yyy" oninput="validateLongitude(this)" type="text" name="to-lng" disabled>
-                <label for="to-lng">Lng</label>
-            </div>
-        </div>
-        <div class="row">
-            <div class="col s3">
-                <p>
-                    <label>
-                        <input id="coord-checkbox" type="checkbox" name="use-coordinates" onchange="handleCoordCheckboxChange(this)">
-                        <span>Use coordinates</span>
-                    </label>
-                </p>
-            </div>
-            <div class="input-field col s2 right">
-                <button class="btn waves-effect waves-light blue darken-3" type="submit">Calculate</button>
+            <div class="col-md-2">
+                <div class="input-field">
+                    <button class="btn waves-effect waves-light blue" type="submit">Calculate</button>
+                </div>
             </div>
         </div>
     </form>
 </div>
+
+
+<button type="button" class="btn wave-effect blue btn-floating btn-circle" id="download-button" disabled>
+    <i class="fa fa-download"></i>
+</button>
 
 {{/*Map Box*/}}
 <div id="map"></div>

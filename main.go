@@ -9,7 +9,6 @@ import (
 	"io"
 	"log"
 	"os"
-	"strconv"
 	"strings"
 )
 
@@ -92,16 +91,24 @@ func main() {
 
 		log.Println(form)
 
-		originLongi := form["originLongitude"]
-		originLati := form["originLatitude"]
-		destinationLongi := form["destinationLongitude"]
-		destinationLati := form["destinationLatitude"]
+		//originLongi := form["originLongitude"]
+		//originLati := form["originLatitude"]
+		//destinationLongi := form["destinationLongitude"]
+		//destinationLati := form["destinationLatitude"]
+
+		fromPort := form["fromPort"]
+		toPort := form["toPort"]
+
+		// Get the origin coordinates
+		originLong, originLat := getPortCoordinates(fromPort)
+		// Get the destination coordinates
+		destinationLong, destinationLat := getPortCoordinates(toPort)
 
 		// Convert all the waypoints to float64
-		originLong, _ := strconv.ParseFloat(originLongi, 64)
-		originLat, _ := strconv.ParseFloat(originLati, 64)
-		destinationLong, _ := strconv.ParseFloat(destinationLongi, 64)
-		destinationLat, _ := strconv.ParseFloat(destinationLati, 64)
+		//originLong, _ := strconv.ParseFloat(originLong, 64)
+		//originLat, _ := strconv.ParseFloat(originLati, 64)
+		//destinationLong, _ := strconv.ParseFloat(destinationLongi, 64)
+		//destinationLat, _ := strconv.ParseFloat(destinationLati, 64)
 
 		// Print the coordinates received from form
 		log.Printf("Origin: %f, %f", originLong, originLat)
@@ -112,7 +119,7 @@ func main() {
 		// Get the destination coordinates
 		destinationCoords := gdj.Position{destinationLong, destinationLat}
 		// Set route name
-		routeName := "my-route"
+		routeName := fmt.Sprintf("%s -> %s", fromPort, toPort)
 
 		// Call the function to calculate the passage
 		data := calculatePassageInfo(originCoords, destinationCoords, routeName)
@@ -235,4 +242,14 @@ func filterPorts(query string) []Port {
 		}
 	}
 	return filteredPorts
+}
+
+// getPortCoordinates returns the coordinates of a port
+func getPortCoordinates(portName string) (float64, float64) {
+	for _, port := range PortData {
+		if port.Port == portName {
+			return port.Longitude, port.Latitude
+		}
+	}
+	return 0, 0
 }
