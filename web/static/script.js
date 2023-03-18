@@ -4,14 +4,39 @@ L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
     attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
 }).addTo(map);
 
+// Show a popup when the user clicks on the map
 map.on('click', function(event) {
-    var latlng = event.latlng;
-    var message = `Coordinates: [${latlng.lat}, ${latlng.lng}]`;
-    alert(message);
+    let latlng = event.latlng;
+    let lat = latlng.lat;
+    let lng = latlng.lng;
+
+    let absLat = Math.abs(lat);
+    let absLng = Math.abs(lng);
+
+
+    // Convert latitude to degrees, minutes, and direction (N/S)
+    const latDeg = Math.floor(absLat);
+    const latMin = ((absLat - latDeg) * 60).toFixed(2);
+    const latDir = lat >= 0 ? 'N' : 'S';
+
+    // Convert longitude to degrees, minutes, and direction (E/W)
+    const lngDeg = Math.floor(absLng);
+    const lngMin = ((absLng - lngDeg) * 60).toFixed(2);
+    const lngDir = lng >= 0 ? 'E' : 'W';
+
+    let message = `${latDeg}° ${latMin}' ${latDir}, ${lngDeg}° ${lngMin}' ${lngDir}`;
+    notie.alert({
+        type: 'info',
+        text: message,
+        time: 5
+    });
 });
 
 // Define a variable to store the previously added waypoints
-var previousWaypoints = null;
+let previousWaypoints = null;
+
+let fileName = null;
+let currentGeoJsonData = null;
 
 // Get the form and add an event listener
 const form = document.querySelector("form");
@@ -23,12 +48,24 @@ form.addEventListener('submit', function(event) {
             event.preventDefault();
 
             // Get the values of the input fields
-            const fromPort = document.getElementById('from-input').value;
-            const toPort = document.getElementById('to-input').value;
+            const fromPortElement = document.getElementById('from-input');
+            const toPortElement = document.getElementById('to-input');
+            const fromPort = fromPortElement.value;
+            const toPort = toPortElement.value;
 
-            // Do something with the values (e.g. pass them to your backend or API)
-            console.log('From: ' + fromPort);
-            console.log('To: ' + toPort);
+            // // Do something with the values (e.g. pass them to your backend or API)
+            // console.log('From: ' + fromPort);
+            // console.log('To: ' + toPort);
+
+            // Check that the input fields are not empty
+            if (fromPort.trim() === '' || toPort.trim() === '') {
+                notie.alert({
+                    type: 'error',
+                    text: 'Please enter "From" and "To" ports.',
+                    time: 3
+                });
+                return;
+            }
 
             // Get the values of the form fields
             // const originLatInput = document.getElementById("origin-lat");
@@ -91,16 +128,16 @@ form.addEventListener('submit', function(event) {
                         }
                     }).addTo(map);
 
-                    var waypoints = data.features[0].geometry.coordinates;
+                    let waypoints = data.features[0].geometry.coordinates;
                     // console.log(waypoints);
-                    var waypointIcon = L.icon({
+                    let waypointIcon = L.icon({
                         iconUrl: './static/icons/waypoint.png',
                         iconSize: [8, 8]
                     });
 
-                    var newWaypoints = [];
+                    let newWaypoints = [];
                     waypoints.forEach(function(waypoint) {
-                        var marker = L.marker([waypoint[1], waypoint[0]], {
+                        let marker = L.marker([waypoint[1], waypoint[0]], {
                             icon: waypointIcon
                         }).addTo(map);
                         marker.bindPopup(`Coordinates: [${waypoint[1]}, ${waypoint[0]}]`);
@@ -110,33 +147,112 @@ form.addEventListener('submit', function(event) {
                     // Store the new waypoints in the previousWaypoints variable
                     previousWaypoints = newWaypoints;
 
+                    currentGeoJsonData = data;
+                    fileName = `${fromPort}-${toPort}.geojson`;
+
                     // Fit the map to the layer bounds
                     map.fitBounds(routeLayer.getBounds());
 
-                    // Set the downlod file name
-                    let fileName = `${fromPort}-${toPort}.geojson`;
-                    // Add a download button to allow users to download the GeoJSON data as a file
-                    const downloadButton = document.getElementById('download-button');
-                    downloadButton.addEventListener('click', function() {
-                        const dataStr = 'data:text/json;charset=utf-8,' + encodeURIComponent(JSON.stringify(data));
-                        const downloadAnchorNode = document.createElement('a');
-                        downloadAnchorNode.setAttribute('href', dataStr);
-                        downloadAnchorNode.setAttribute('download', fileName);
-                        document.body.appendChild(downloadAnchorNode); // required for firefox
-                        downloadAnchorNode.click();
-                        downloadAnchorNode.remove();
-                    });
-
-                    // Add a download button to allow users to download the GeoJSON data as a file
                     // Enable the download button
-                    downloadButton.removeAttribute("disabled");
+                    document.getElementById('download-button').removeAttribute("disabled");
+                    // Enable the clear button
+                    document.getElementById('clear-button').removeAttribute("disabled");
                 });
         }
 });
 
+const fromPortElement = document.getElementById('from-input');
+const toPortElement = document.getElementById('to-input');
+
+// Add event listener to input fields
+fromPortElement.addEventListener('input', validateInput);
+toPortElement.addEventListener('input', validateInput);
+
+function validateInput() {
+    // Get the values of the input fields
+    const fromPort = fromPortElement.value;
+    const toPort = toPortElement.value;
+
+    // Check that the input fields are not empty
+    if (fromPort.trim() === '' || toPort.trim() === '') {
+        // Add error styles to input fields
+        if (fromPort === '') {
+            fromPortElement.setCustomValidity('Please enter a valid "From" port');
+            fromPortElement.classList.add('is-invalid');
+        } else {
+            fromPortElement.setCustomValidity('');
+            fromPortElement.classList.remove('is-invalid');
+        }
+        if (toPort === '') {
+            toPortElement.setCustomValidity('Please enter a valid "To" port');
+            toPortElement.classList.add('is-invalid');
+        } else {
+            toPortElement.setCustomValidity('');
+            toPortElement.classList.remove('is-invalid');
+        }
+    } else {
+        // Remove error styles from input fields
+        fromPortElement.setCustomValidity('');
+        fromPortElement.classList.remove('is-invalid');
+        toPortElement.setCustomValidity('');
+        toPortElement.classList.remove('is-invalid');
+    }
+}
 
 
 
+// Add a download button to allow users to download the GeoJSON data as a file
+const downloadButton = document.getElementById('download-button');
+downloadButton.addEventListener('click', function() {
+
+    const dataStr = 'data:text/json;charset=utf-8,' + encodeURIComponent(JSON.stringify(currentGeoJsonData));
+    const downloadAnchorNode = document.createElement('a');
+    downloadAnchorNode.setAttribute('href', dataStr);
+    downloadAnchorNode.setAttribute('download', fileName);
+    document.body.appendChild(downloadAnchorNode); // required for firefox
+    downloadAnchorNode.click();
+    downloadAnchorNode.remove();
+
+
+});
+
+
+// Clear everything when the clear button is clicked
+// Get the "Clear" button element
+const clearButton = document.getElementById('clear-button');
+
+// Add an event listener to the "Clear" button to clear the form and remove the previous waypoints and route layer
+clearButton.addEventListener('click', function() {
+    // Clear the input fields
+    document.getElementById('from-input').value = '';
+    document.getElementById('to-input').value = '';
+
+    // Remove the previous waypoints from the map, if any
+    if (previousWaypoints) {
+        previousWaypoints.forEach(function(waypoint) {
+            map.removeLayer(waypoint);
+        });
+        previousWaypoints = null;
+    }
+
+    // Remove the route layer from the map, if any
+    map.eachLayer(function(layer) {
+        if (layer.options && layer.options.id === 'routeLayer') {
+            map.removeLayer(layer);
+        }
+    });
+
+    // Disable the download button
+    const downloadButton = document.getElementById('download-button');
+    downloadButton.setAttribute('disabled', true);
+    clearButton.setAttribute('disabled', true);
+});
+
+// Disable the "Clear" button initially
+clearButton.setAttribute('disabled', true);
+
+
+// Add autocomplete functionality to the input fields
 function setupAutocomplete(input, autocompleteItems) {
     input.addEventListener('input', function () {
         let value = this.value;

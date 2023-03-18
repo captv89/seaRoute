@@ -92,4 +92,25 @@ html, body {
     align-items: center;
 }
 
+#clear-button {
+    position: absolute;
+    bottom: 80px;
+    right: 20px;
+}
+
+.notie-alert {
+    z-index: 9999;
+}
+
+a {
+    font-family: 'Montserrat', sans-serif; /* Change the font family */
+    text-decoration: none; /* Remove the underline */
+    color: #eeeeee; /* Set the text color */
+    transition: color 0.2s ease-in-out;
+}
+
+a:hover {
+    color: #ffffff;
+}
+
 
