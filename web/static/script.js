@@ -302,6 +302,15 @@ clearButton.addEventListener('click', function() {
         }
     });
 
+    // Clear the Active class in the label
+    // Remove the active class from the label elements
+    document.querySelectorAll('.active').forEach(function(label) {
+        label.classList.remove('active');
+    });
+
+    // Reset the map to the initial view
+    map.setView([0, 0], 2);
+
     // Disable the download button
     const downloadButton = document.getElementById('download-button');
     downloadButton.setAttribute('disabled', true);
