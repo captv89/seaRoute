@@ -1,12 +1,69 @@
 // Create a map and add it to the page
-const map = L.map("map").setView([0, 0], 2);
-L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
-    attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+
+// const southWest = L.latLng(-90, -180);
+// const northEast = L.latLng(90, 180);
+// const bounds = L.latLngBounds(southWest, northEast);
+
+// const map = L.map('map', {
+//     center: [0, 0],
+//     zoom: 2,
+//     maxBounds: bounds
+// }).setView([0, 0], 2);
+
+const map = L.map("map", {
+    preferCanvas: true, // Improve performance on mobile devices and older browsers
+}).setView([0, 0], 2);
+
+// Add OpenStreetMap tile layer from CDN
+// L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+//     attribution:
+//         '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
+// }).addTo(map);
+
+// L.tileLayer('https://{s}.tile.openstreetmap.fr/hot/{z}/{x}/{y}.png', {
+//     attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
+//     className: 'map-tiles'
+// }).addTo(map);
+//
+// L.tileLayer('https://stamen-tiles-{s}.a.ssl.fastly.net/watercolor/{z}/{x}/{y}.png', {
+//     attribution: 'Map tiles by Stamen Design, under CC BY 3.0. Data by OpenStreetMap, under ODbL.',
+//     maxZoom: 18,
+// }).addTo(map);
+
+// L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png', {
+//     attribution: 'Map tiles by Carto, under CC BY 3.0. Data by OpenStreetMap, under ODbL.',
+//     maxZoom: 18,
+//     className: 'map-tiles'
+// }).addTo(map);
+// console.log('secretKey: ' + secretKey);
+
+L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager_labels_under/{z}/{x}/{y}{r}.png', {
+    attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>',
+    subdomains: 'abcd',
+    maxZoom: 20
 }).addTo(map);
+
+L.tileLayer('https://tiles.openseamap.org/seamark/{z}/{x}/{y}.png', {
+    attribution: 'Map data: &copy; <a href="http://www.openseamap.org">OpenSeaMap</a> contributors'
+}).addTo(map);
+
+// L.tileLayer('http://{s}.tile.openweathermap.org/map/clouds/{z}/{x}/{y}.png?appid={apiKey}', {
+//     maxZoom: 19,
+//     attribution: 'Map data &copy; <a href="http://openweathermap.org">OpenWeatherMap</a>',
+//     apiKey: secretKey,
+//     opacity: 0.5
+// }).addTo(map);
+//
+// L.tileLayer('http://{s}.tile.openweathermap.org/map/wind/{z}/{x}/{y}.png?appid={apiKey}', {
+//     maxZoom: 19,
+//     attribution: 'Map data &copy; <a href="http://openweathermap.org">OpenWeatherMap</a>',
+//     apiKey: secretKey,
+//     opacity: 0.5
+// }).addTo(map);
 
 // Show a popup when the user clicks on the map
 map.on('click', function(event) {
-    let latlng = event.latlng;
+    let latlng = event.latlng.wrap();
     let lat = latlng.lat;
     let lng = latlng.lng;
 
@@ -16,15 +73,18 @@ map.on('click', function(event) {
 
     // Convert latitude to degrees, minutes, and direction (N/S)
     const latDeg = Math.floor(absLat);
+    const latDegString = latDeg.toString().padStart(2, '0');
     const latMin = ((absLat - latDeg) * 60).toFixed(2);
     const latDir = lat >= 0 ? 'N' : 'S';
 
     // Convert longitude to degrees, minutes, and direction (E/W)
     const lngDeg = Math.floor(absLng);
+    const lngDegString = lngDeg.toString().padStart(3, '0');
     const lngMin = ((absLng - lngDeg) * 60).toFixed(2);
     const lngDir = lng >= 0 ? 'E' : 'W';
 
-    let message = `${latDeg}° ${latMin}' ${latDir}, ${lngDeg}° ${lngMin}' ${lngDir}`;
+    let message = `${latDegString}° ${latMin}' ${latDir}, ${lngDegString}° ${lngMin}' ${lngDir}`;
+    console.log(message);
     notie.alert({
         type: 'info',
         text: message,
