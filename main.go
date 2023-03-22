@@ -17,6 +17,12 @@ var PortData []Port
 var openWeatherAPIKey = os.Getenv("OPENWEATHER_API_KEY")
 
 func main() {
+	skipNowTemp := false
+	if skipNowTemp {
+		navWarn := GetNavWarnings()
+
+		SaveNavWarnings(navWarn)
+	}
 
 	// Create a temp folder
 	if _, err := os.Stat("temp"); os.IsNotExist(err) {

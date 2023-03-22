@@ -10,21 +10,34 @@
 //     maxBounds: bounds
 // }).setView([0, 0], 2);
 
+
+// Clean Coordinates
+function CleaCoordinates(lat,lng) {
+    let absLat = Math.abs(lat);
+    let absLng = Math.abs(lng);
+
+
+    // Convert latitude to degrees, minutes, and direction (N/S)
+    const latDeg = Math.floor(absLat);
+    const latDegString = latDeg.toString().padStart(2, '0');
+    const latMin = ((absLat - latDeg) * 60).toFixed(2);
+    const latDir = lat >= 0 ? 'N' : 'S';
+
+    // Convert longitude to degrees, minutes, and direction (E/W)
+    const lngDeg = Math.floor(absLng);
+    const lngDegString = lngDeg.toString().padStart(3, '0');
+    const lngMin = ((absLng - lngDeg) * 60).toFixed(2);
+    const lngDir = lng >= 0 ? 'E' : 'W';
+
+    let message = `${latDegString}° ${latMin}' ${latDir}, ${lngDegString}° ${lngMin}' ${lngDir}`;
+    return message;
+}
+
+
 const map = L.map("map", {
     preferCanvas: true, // Improve performance on mobile devices and older browsers
 }).setView([0, 0], 2);
 
-// Add OpenStreetMap tile layer from CDN
-// L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
-//     attribution:
-//         '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
-// }).addTo(map);
-
-// L.tileLayer('https://{s}.tile.openstreetmap.fr/hot/{z}/{x}/{y}.png', {
-//     attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
-//     className: 'map-tiles'
-// }).addTo(map);
-//
 // L.tileLayer('https://stamen-tiles-{s}.a.ssl.fastly.net/watercolor/{z}/{x}/{y}.png', {
 //     attribution: 'Map tiles by Stamen Design, under CC BY 3.0. Data by OpenStreetMap, under ODbL.',
 //     maxZoom: 18,
@@ -47,19 +60,145 @@ L.tileLayer('https://tiles.openseamap.org/seamark/{z}/{x}/{y}.png', {
     attribution: 'Map data: &copy; <a href="http://www.openseamap.org">OpenSeaMap</a> contributors'
 }).addTo(map);
 
-// L.tileLayer('http://{s}.tile.openweathermap.org/map/clouds/{z}/{x}/{y}.png?appid={apiKey}', {
-//     maxZoom: 19,
-//     attribution: 'Map data &copy; <a href="http://openweathermap.org">OpenWeatherMap</a>',
-//     apiKey: secretKey,
-//     opacity: 0.5
-// }).addTo(map);
-//
-// L.tileLayer('http://{s}.tile.openweathermap.org/map/wind/{z}/{x}/{y}.png?appid={apiKey}', {
-//     maxZoom: 19,
-//     attribution: 'Map data &copy; <a href="http://openweathermap.org">OpenWeatherMap</a>',
-//     apiKey: secretKey,
-//     opacity: 0.5
-// }).addTo(map);
+// Cloud Layer
+let cloud = L.tileLayer('https://{s}.sat.owm.io/vane/2.0/weather/CL/{z}/{x}/{y}?appid=9de243494c0b295cca9337e1e96b00e2').addTo(map);
+
+// Wind Layer @ 10m
+// L.tileLayer('https://{s}.sat.owm.io/vane/2.0/weather/WS10/{z}/{x}/{y}?appid=9de243494c0b295cca9337e1e96b00e2').addTo(map);
+
+// Wind with Direction
+let wind = L.tileLayer('https://{s}.sat.owm.io/vane/2.0/weather/WND/{z}/{x}/{y}?appid=9de243494c0b295cca9337e1e96b00e2').addTo(map);
+
+// Atmospheric Pressure
+let pressure = L.tileLayer('https://{s}.sat.owm.io/vane/2.0/weather/APM/{z}/{x}/{y}?appid=9de243494c0b295cca9337e1e96b00e2').addTo(map);
+
+// Temperature
+let temperature = L.tileLayer('https://{s}.sat.owm.io/vane/2.0/weather/TA2/{z}/{x}/{y}?appid=9de243494c0b295cca9337e1e96b00e2').addTo(map);
+
+
+// Get current date and time in UTC
+let now = new Date();
+// Reduce time by 3 hours and round off to nearest hour
+now.setHours(now.getHours() - 1);
+now.setMinutes(0);
+now.setSeconds(0);
+now.setMilliseconds(0);
+// console.log('now: ' + now);
+//  Convert today to format of 2023-03-20T20:20 in UTC
+let today = now.toISOString().slice(0, 16);
+// console.log('today: ' + today);
+
+// Precipitation
+let precipitation = L.tileLayer(`https://{s}.sat.owm.io/maps/2.0/radar/{z}/{x}/{y}?appid=9de243494c0b295cca9337e1e96b00e2&day=${today}`).addTo(map);
+
+// Add a layer group to the map
+let weather = L.layerGroup().addTo(map);
+
+// Add the weather layers to the layer group
+weather.addLayer(cloud);
+weather.addLayer(wind);
+weather.addLayer(pressure);
+weather.addLayer(temperature);
+weather.addLayer(precipitation);
+
+// Add a geojson layer to the map
+let twelveNm = L.geoJSON().addTo(map);
+
+fetch('./static/data/eez_12nm_v3.geojson')
+    .then(response => response.json())
+    .then(data => {
+        twelveNm.addData(data);
+    });
+
+
+// Add Marine layer group to the map
+let marine = L.layerGroup().addTo(map);
+
+// Add the marine layers to the layer group
+marine.addLayer(twelveNm);
+
+// Define base layers so we can reference them multiple times
+let osm = L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+    attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
+    className: 'map-tiles'
+});
+
+let openSeaMap = L.tileLayer('https://tiles.openseamap.org/seamark/{z}/{x}/{y}.png', {
+    attribution: 'Map data: &copy; <a href="http://www.openseamap.org">OpenSeaMap</a> contributors'
+});
+
+let cartoLight = L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png', {
+    attribution: 'Map tiles by Carto, under CC BY 3.0. Data by OpenStreetMap, under ODbL.',
+    maxZoom: 18,
+    className: 'map-tiles'
+});
+
+let cartoDark = L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+    attribution: 'Map tiles by Carto, under CC BY 3.0. Data by OpenStreetMap, under ODbL.',
+    maxZoom: 18,
+    className: 'map-tiles'
+});
+
+let cartoVoyager = L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager_labels_under/{z}/{x}/{y}{r}.png', {
+    attribution: 'Map tiles by Carto, under CC BY 3.0. Data by OpenStreetMap, under ODbL.',
+    maxZoom: 18,
+    className: 'map-tiles'
+});
+
+
+// Add layer control
+let baseMaps = {
+    "OpenStreetMap": osm,
+    "OpenSeaMap": openSeaMap,
+    "Carto Light": cartoLight,
+    "Carto Dark": cartoDark,
+    "Carto Voyager": cartoVoyager,
+}
+
+let weatherLayers = {
+    "Cloud": cloud,
+    "Wind": wind,
+    "Pressure": pressure,
+    "Temperature": temperature,
+    "Precipitation": precipitation,
+}
+
+let marineLayers = {
+    "12 Nautical Miles": twelveNm,
+}
+
+let overlayMaps = {
+    "Weather": weather,
+    "Marine Boundaries": marine,
+}
+
+
+// Dissable all layers by default
+wind.remove();
+temperature.remove();
+precipitation.remove();
+cloud.remove();
+pressure.remove();
+twelveNm.remove();
+
+// Add a scale to the map
+L.control.scale({
+    imperial: false,
+    position: 'bottomleft',
+}).addTo(map);
+
+//  Weather control
+let weatherControl = L.control.layers(null, weatherLayers, {
+    collapsed: true,
+}).addTo(map);
+
+//  Marine control
+let marineControl = L.control.layers(null, marineLayers, {
+    collapsed: true,
+}).addTo(map);
+
+// Add a layer control to the map
+L.control.layers(baseMaps, overlayMaps, weatherLayers).addTo(map);
 
 // Show a popup when the user clicks on the map
 map.on('click', function(event) {
@@ -67,23 +206,8 @@ map.on('click', function(event) {
     let lat = latlng.lat;
     let lng = latlng.lng;
 
-    let absLat = Math.abs(lat);
-    let absLng = Math.abs(lng);
+    let message = CleaCoordinates(lat,lng);
 
-
-    // Convert latitude to degrees, minutes, and direction (N/S)
-    const latDeg = Math.floor(absLat);
-    const latDegString = latDeg.toString().padStart(2, '0');
-    const latMin = ((absLat - latDeg) * 60).toFixed(2);
-    const latDir = lat >= 0 ? 'N' : 'S';
-
-    // Convert longitude to degrees, minutes, and direction (E/W)
-    const lngDeg = Math.floor(absLng);
-    const lngDegString = lngDeg.toString().padStart(3, '0');
-    const lngMin = ((absLng - lngDeg) * 60).toFixed(2);
-    const lngDir = lng >= 0 ? 'E' : 'W';
-
-    let message = `${latDegString}° ${latMin}' ${latDir}, ${lngDegString}° ${lngMin}' ${lngDir}`;
     console.log(message);
     notie.alert({
         type: 'info',
@@ -200,7 +324,11 @@ form.addEventListener('submit', function(event) {
                         let marker = L.marker([waypoint[1], waypoint[0]], {
                             icon: waypointIcon
                         }).addTo(map);
-                        marker.bindPopup(`Coordinates: [${waypoint[1]}, ${waypoint[0]}]`);
+
+                        // Create a popup with the coordinates
+                        let coords = CleaCoordinates(waypoint[1], waypoint[0]);
+                        marker.bindPopup(coords);
+
                         newWaypoints.push(marker);
                     });
 
@@ -366,5 +494,3 @@ document.addEventListener('click', function(e) {
         autocompleteItems.innerHTML = '';
     }
 });
-
-
