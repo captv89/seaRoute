@@ -60,63 +60,6 @@ L.tileLayer('https://tiles.openseamap.org/seamark/{z}/{x}/{y}.png', {
     attribution: 'Map data: &copy; <a href="http://www.openseamap.org">OpenSeaMap</a> contributors'
 }).addTo(map);
 
-// Cloud Layer
-let cloud = L.tileLayer('https://{s}.sat.owm.io/vane/2.0/weather/CL/{z}/{x}/{y}?appid=9de243494c0b295cca9337e1e96b00e2').addTo(map);
-
-// Wind Layer @ 10m
-// L.tileLayer('https://{s}.sat.owm.io/vane/2.0/weather/WS10/{z}/{x}/{y}?appid=9de243494c0b295cca9337e1e96b00e2').addTo(map);
-
-// Wind with Direction
-let wind = L.tileLayer('https://{s}.sat.owm.io/vane/2.0/weather/WND/{z}/{x}/{y}?appid=9de243494c0b295cca9337e1e96b00e2').addTo(map);
-
-// Atmospheric Pressure
-let pressure = L.tileLayer('https://{s}.sat.owm.io/vane/2.0/weather/APM/{z}/{x}/{y}?appid=9de243494c0b295cca9337e1e96b00e2').addTo(map);
-
-// Temperature
-let temperature = L.tileLayer('https://{s}.sat.owm.io/vane/2.0/weather/TA2/{z}/{x}/{y}?appid=9de243494c0b295cca9337e1e96b00e2').addTo(map);
-
-
-// Get current date and time in UTC
-let now = new Date();
-// Reduce time by 3 hours and round off to nearest hour
-now.setHours(now.getHours() - 1);
-now.setMinutes(0);
-now.setSeconds(0);
-now.setMilliseconds(0);
-// console.log('now: ' + now);
-//  Convert today to format of 2023-03-20T20:20 in UTC
-let today = now.toISOString().slice(0, 16);
-// console.log('today: ' + today);
-
-// Precipitation
-let precipitation = L.tileLayer(`https://{s}.sat.owm.io/maps/2.0/radar/{z}/{x}/{y}?appid=9de243494c0b295cca9337e1e96b00e2&day=${today}`).addTo(map);
-
-// Add a layer group to the map
-let weather = L.layerGroup().addTo(map);
-
-// Add the weather layers to the layer group
-weather.addLayer(cloud);
-weather.addLayer(wind);
-weather.addLayer(pressure);
-weather.addLayer(temperature);
-weather.addLayer(precipitation);
-
-// Add a geojson layer to the map
-let twelveNm = L.geoJSON().addTo(map);
-
-fetch('./static/data/eez_12nm_v3.geojson')
-    .then(response => response.json())
-    .then(data => {
-        twelveNm.addData(data);
-    });
-
-
-// Add Marine layer group to the map
-let marine = L.layerGroup().addTo(map);
-
-// Add the marine layers to the layer group
-marine.addLayer(twelveNm);
-
 // Define base layers so we can reference them multiple times
 let osm = L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
     attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
@@ -145,6 +88,310 @@ let cartoVoyager = L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/vo
     className: 'map-tiles'
 });
 
+// Define overlays
+
+let snow = L.OWM.snow({
+    appId: '9de243494c0b295cca9337e1e96b00e2',
+    opacity: 0.5,
+    showLegend: true,
+});
+
+// Cloud Layer
+let cloud = L.tileLayer('https://{s}.sat.owm.io/vane/2.0/weather/CL/{z}/{x}/{y}?appid=9de243494c0b295cca9337e1e96b00e2').addTo(map);
+
+// Wind Layer @ 10m
+// L.tileLayer('https://{s}.sat.owm.io/vane/2.0/weather/WS10/{z}/{x}/{y}?appid=9de243494c0b295cca9337e1e96b00e2').addTo(map);
+
+// Wind with Direction
+let wind = L.tileLayer('https://{s}.sat.owm.io/vane/2.0/weather/WND/{z}/{x}/{y}?use_norm=false&opacity=0.9&arrow_step=16&appid=9de243494c0b295cca9337e1e96b00e2').addTo(map);
+
+// Atmospheric Pressure
+let pressure = L.tileLayer('https://{s}.sat.owm.io/vane/2.0/weather/APM/{z}/{x}/{y}?appid=9de243494c0b295cca9337e1e96b00e2').addTo(map);
+
+// Temperature
+let temperature = L.tileLayer('https://{s}.sat.owm.io/vane/2.0/weather/TA2/{z}/{x}/{y}?appid=9de243494c0b295cca9337e1e96b00e2').addTo(map);
+
+// Rainfall
+let rainfall = L.tileLayer('https://tile.openweathermap.org/map/precipitation_new/{z}/{x}/{y}?appid=9de243494c0b295cca9337e1e96b00e2').addTo(map);
+
+// Get current date and time in UTC
+let now = new Date();
+// Reduce time by 3 hours and round off to nearest hour
+now.setHours(now.getHours() - 1);
+now.setMinutes(0);
+now.setSeconds(0);
+now.setMilliseconds(0);
+// console.log('now: ' + now);
+//  Convert today to format of 2023-03-20T20:20 in UTC
+let today = now.toISOString().slice(0, 16);
+// console.log('today: ' + today);
+
+// Precipitation
+let precipitationRadar = L.tileLayer(`https://{s}.sat.owm.io/maps/2.0/radar/{z}/{x}/{y}?appid=9de243494c0b295cca9337e1e96b00e2&day=${today}`).addTo(map);
+
+// Add a layer group to the map
+let weather = L.layerGroup().addTo(map);
+
+// Add the weather layers to the layer group
+weather.addLayer(cloud);
+weather.addLayer(wind);
+weather.addLayer(pressure);
+weather.addLayer(temperature);
+weather.addLayer(precipitationRadar);
+weather.addLayer(rainfall);
+weather.addLayer(snow);
+
+const worker = new Worker('./static/worker.js');
+
+
+// Add a geojson layer to the map
+let twelveNm = L.geoJSON(null, {
+    style: function(feature) {
+        return {
+            color: 'blue',
+            weight: 2,
+            opacity: 1,
+        };
+    },
+    onEachFeature: function(feature, layer) {
+        let popupContent = '<ul>';
+        for (let prop in feature.properties) {
+            popupContent += '<li><b>' + prop + ':</b> ' + feature.properties[prop] + '</li>';
+        }
+        popupContent += '</ul>';
+        layer.bindPopup(popupContent);
+    }
+}).addTo(map);
+
+// Send a message to the worker to fetch the GeoJSON data
+worker.postMessage({url: './data/eez_12nm_v3.geojson'});
+
+// Receive a message from the worker with the GeoJSON data
+worker.onmessage = function(event) {
+    twelveNm.addData(event.data);
+};
+
+// ECA SoX Areas
+let ecaSoX = L.geoJSON(null, {
+    style: function(feature) {
+        return {
+            color: 'red',
+            weight: 2,
+            opacity: 0.7,
+        };
+    },
+    onEachFeature: function(feature, layer) {
+        let popupContent = '<ul>';
+        for (let prop in feature.properties) {
+            popupContent += '<li><b>' + prop + ':</b> ' + feature.properties[prop] + '</li>';
+        }
+        popupContent += '</ul>';
+        layer.bindPopup(popupContent);
+    }
+}).addTo(map);
+
+// Send a message to the worker to fetch the GeoJSON data
+worker.postMessage({url: './data/eca_reg14_sox_pm.geojson'});
+
+// Receive a message from the worker with the GeoJSON data
+worker.onmessage = function(event) {
+    ecaSoX.addData(event.data);
+};
+
+// ECA NOx Areas
+let ecaNOx = L.geoJSON(null, {
+    style: function(feature) {
+        return {
+            color: 'red',
+            weight: 2,
+            opacity: 0.7,
+        };
+    },
+    onEachFeature: function(feature, layer) {
+        let popupContent = '<ul>';
+        for (let prop in feature.properties) {
+            popupContent += '<li><b>' + prop + ':</b> ' + feature.properties[prop] + '</li>';
+        }
+        popupContent += '</ul>';
+        layer.bindPopup(popupContent);
+    }
+}).addTo(map);
+
+// Send a message to the worker to fetch the GeoJSON data
+worker.postMessage({url: './data/eca_reg13_nox.geojson'});
+
+// Receive a message from the worker with the GeoJSON data
+worker.onmessage = function(event) {
+    ecaNOx.addData(event.data);
+};
+
+// Piracy Risk Areas
+
+let alertIcon = L.icon({
+    iconUrl: './static/icons/alert.svg',
+    iconSize: [15, 15],
+    iconAnchor: [10, 10],
+    popupAnchor: [0, -15]
+});
+
+let piracy = L.geoJSON(null, {
+    pointToLayer: function(feature, latlng) {
+        return L.marker(latlng, {icon: alertIcon});
+    },
+    onEachFeature: function(feature, layer) {
+        let popupContent = '<ul>';
+        for (let prop in feature.properties) {
+            popupContent += '<li><b>' + prop + ':</b> ' + feature.properties[prop] + '</li>';
+        }
+        popupContent += '</ul>';
+        layer.bindPopup(popupContent);
+    }
+}).addTo(map);
+
+
+// Send a message to the worker to fetch the GeoJSON data
+worker.postMessage({url: './data/ASAM_events.geojson'});
+
+// Receive a message from the worker with the GeoJSON data
+worker.onmessage = function(event) {
+    piracy.addData(event.data);
+};
+
+// Fishing Areas
+let fishing = L.geoJSON(null, {
+    style: function(feature) {
+        return {
+            color: 'black',
+            weight: 2,
+            opacity: 0.7,
+        };
+    },
+    onEachFeature: function(feature, layer) {
+        let popupContent = '<ul>';
+        for (let prop in feature.properties) {
+            popupContent += '<li><b>' + prop + ':</b> ' + feature.properties[prop] + '</li>';
+        }
+        popupContent += '</ul>';
+        layer.bindPopup(popupContent);
+    }
+}).addTo(map);
+
+// Send a message to the worker to fetch the GeoJSON data
+worker.postMessage({url: './data/FAO_AREAS_CWP.geojson'});
+
+// Receive a message from the worker with the GeoJSON data
+worker.onmessage = function(event) {
+    fishing.addData(event.data);
+};
+
+// Custom icon options
+let portIcon = L.icon({
+    iconUrl: './static/icons/location-pin.svg',
+    iconSize: [20, 20], // set the size of the icon
+    iconAnchor: [10, 10], // set the anchor point of the icon
+    popupAnchor: [0, -15] // set the anchor point of the popup
+});
+
+// Word seaport
+let worldSeaPort = L.geoJSON(null, {
+    pointToLayer: function(feature, latlng) {
+        return L.marker(latlng, {icon: portIcon});
+    },
+    onEachFeature: function(feature, layer) {
+        let popupContent = '<ul>';
+        for (let prop in feature.properties) {
+            popupContent += '<li><b>' + prop + ':</b> ' + feature.properties[prop] + '</li>';
+        }
+        popupContent += '</ul>';
+        layer.bindPopup(popupContent, {maxHeight: 200}).on('popupopen', function() {
+            // get the popup content wrapper element
+            let wrapper = this._popup._contentWrapper;
+            // add the CSS style to make the content scrollable
+            wrapper.style.overflowY = 'auto';
+        });
+    }
+}).addTo(map);
+
+// Load data and add to layer
+fetch('./static/data/WPI.geojson')
+    .then(response => response.json())
+    .then(data => {
+        worldSeaPort.addData(data);
+    });
+
+
+
+// EEZ Baseline
+
+let eezBaseline = L.geoJSON(null, {
+    style: function(feature) {
+        return {
+            color: 'green',
+            weight: 2,
+            opacity: 0.7,
+        };
+    },
+    onEachFeature: function(feature, layer) {
+        let popupContent = '<ul>';
+        for (let prop in feature.properties) {
+            popupContent += '<li><b>' + prop + ':</b> ' + feature.properties[prop] + '</li>';
+        }
+        popupContent += '</ul>';
+        layer.bindPopup(popupContent);
+    }
+}).addTo(map);
+
+fetch('./static/data/eez_v11.geojson')
+    .then(response => response.json())
+    .then(data => {
+        eezBaseline.addData(data);
+    });
+
+
+// EEZ boundaries
+
+let eezBoundaries= L.geoJSON(null, {
+    style: function(feature) {
+        return {
+            color: 'blue',
+            weight: 2,
+            opacity: 0.7,
+        };
+    },
+    onEachFeature: function(feature, layer) {
+        let popupContent = '<ul>';
+        for (let prop in feature.properties) {
+            popupContent += '<li><b>' + prop + ':</b> ' + feature.properties[prop] + '</li>';
+        }
+        popupContent += '</ul>';
+        layer.bindPopup(popupContent);
+    }
+}).addTo(map);
+
+
+fetch('./static/data/eez_boundaries_v11.geojson')
+    .then(response => response.json())
+    .then(data => {
+        eezBoundaries.addData(data);
+    });
+
+
+// Add Marine layer group to the map
+let marine = L.layerGroup().addTo(map);
+
+// Add the marine layers to the layer group
+marine.addLayer(twelveNm);
+marine.addLayer(ecaSoX);
+marine.addLayer(ecaNOx);
+marine.addLayer(piracy);
+marine.addLayer(fishing);
+marine.addLayer(worldSeaPort);
+marine.addLayer(eezBaseline);
+marine.addLayer(eezBoundaries);
+
+
+
+
 
 // Add layer control
 let baseMaps = {
@@ -160,45 +407,76 @@ let weatherLayers = {
     "Wind": wind,
     "Pressure": pressure,
     "Temperature": temperature,
-    "Precipitation": precipitation,
+    "Precipitation": precipitationRadar,
+    "Rainfall": rainfall,
+    "Snow": snow,
 }
 
 let marineLayers = {
     "12 Nautical Miles": twelveNm,
+    "ECA SoX": ecaSoX,
+    "ECA NOx": ecaNOx,
+    "Piracy": piracy,
+    "Fishing": fishing,
+    "World Seaport": worldSeaPort,
+    "EEZ Baseline": eezBaseline,
+    "EEZ Boundaries": eezBoundaries,
 }
 
 let overlayMaps = {
-    "Weather": weather,
-    "Marine Boundaries": marine,
+    "Temperature": temperature,
+    "Precipitation": rainfall,
+    "Radar": precipitationRadar,
+    "Wind": wind,
+    "Pressure": pressure,
+    "Cloud": cloud,
+    "Snow": snow,
 }
+
+
+
 
 
 // Dissable all layers by default
 wind.remove();
 temperature.remove();
-precipitation.remove();
+precipitationRadar.remove();
 cloud.remove();
 pressure.remove();
 twelveNm.remove();
+rainfall.remove();
+snow.remove();
+ecaSoX.remove();
+ecaNOx.remove();
+piracy.remove();
+fishing.remove();
+worldSeaPort.remove();
+eezBaseline.remove();
+eezBoundaries.remove();
+
 
 // Add a scale to the map
 L.control.scale({
-    imperial: false,
-    position: 'bottomleft',
+    imperial: true,
 }).addTo(map);
 
-//  Weather control
-let weatherControl = L.control.layers(null, weatherLayers, {
-    collapsed: true,
-}).addTo(map);
-
-//  Marine control
-let marineControl = L.control.layers(null, marineLayers, {
-    collapsed: true,
-}).addTo(map);
+// //  Weather control
+// let weatherControl = L.control.layers(null, weatherLayers, {
+//     collapsed: true,
+// }).addTo(map);
+//
+// //  Marine control
+// let marineControl = L.control.layers(null, marineLayers, {
+//     collapsed: true,
+// }).addTo(map);
 
 // Add a layer control to the map
-L.control.layers(baseMaps, overlayMaps, weatherLayers).addTo(map);
+L.control.layers(baseMaps, weatherLayers).addTo(map);
+
+// Add a maritime layer control
+L.control.layers(null, marineLayers, {
+    collapsed: true,
+}).addTo(map);
 
 // Show a popup when the user clicks on the map
 map.on('click', function(event) {

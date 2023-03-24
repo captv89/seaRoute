@@ -14,8 +14,6 @@ import (
 
 var PortData []Port
 
-var openWeatherAPIKey = os.Getenv("OPENWEATHER_API_KEY")
-
 func main() {
 	skipNowTemp := false
 	if skipNowTemp {
@@ -70,10 +68,8 @@ func main() {
 	// Setup route group for the API
 	// Handle the index route
 	router.GET("/", func(c *gin.Context) {
-		fmt.Println("key", openWeatherAPIKey)
-		c.HTML(200, "home.gohtml", gin.H{
-			"secretKey": openWeatherAPIKey,
-		})
+
+		c.HTML(200, "home.gohtml", gin.H{})
 	})
 
 	// Handle the about page
