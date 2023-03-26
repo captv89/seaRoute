@@ -141,8 +141,6 @@ weather.addLayer(precipitationRadar);
 weather.addLayer(rainfall);
 weather.addLayer(snow);
 
-const worker = new Worker('./static/worker.js');
-
 
 // Add a geojson layer to the map
 let twelveNm = L.geoJSON(null, {
@@ -160,16 +158,16 @@ let twelveNm = L.geoJSON(null, {
         }
         popupContent += '</ul>';
         layer.bindPopup(popupContent);
-    }
+    },
+    
 }).addTo(map);
 
-// Send a message to the worker to fetch the GeoJSON data
-worker.postMessage({url: './data/eez_12nm_v3.geojson'});
-
-// Receive a message from the worker with the GeoJSON data
-worker.onmessage = function(event) {
-    twelveNm.addData(event.data);
-};
+// Async load GeoJSON data
+(async () => {
+const response = await fetch('./static/data/eez_12nm_v3.geojson');
+    const data = await response.json();
+    twelveNm.addData(data);
+})();
 
 // ECA SoX Areas
 let ecaSoX = L.geoJSON(null, {
@@ -190,13 +188,12 @@ let ecaSoX = L.geoJSON(null, {
     }
 }).addTo(map);
 
-// Send a message to the worker to fetch the GeoJSON data
-worker.postMessage({url: './data/eca_reg14_sox_pm.geojson'});
-
-// Receive a message from the worker with the GeoJSON data
-worker.onmessage = function(event) {
-    ecaSoX.addData(event.data);
-};
+// Async load GeoJSON data
+(async () => {
+const response = await fetch('./static/data/eca_reg14_sox_pm.geojson');
+    const data = await response.json();
+    ecaSoX.addData(data);
+})();
 
 // ECA NOx Areas
 let ecaNOx = L.geoJSON(null, {
@@ -217,13 +214,12 @@ let ecaNOx = L.geoJSON(null, {
     }
 }).addTo(map);
 
-// Send a message to the worker to fetch the GeoJSON data
-worker.postMessage({url: './data/eca_reg13_nox.geojson'});
-
-// Receive a message from the worker with the GeoJSON data
-worker.onmessage = function(event) {
-    ecaNOx.addData(event.data);
-};
+// Async load GeoJSON data
+(async () => {
+const response = await fetch('./static/data/eca_reg13_nox.geojson');
+    const data = await response.json();
+    ecaNOx.addData(data);
+})();
 
 // Piracy Risk Areas
 
@@ -233,6 +229,9 @@ let alertIcon = L.icon({
     iconAnchor: [10, 10],
     popupAnchor: [0, -15]
 });
+
+// Create a marker layer group
+let piracyMarkerGroup = L.markerClusterGroup();
 
 let piracy = L.geoJSON(null, {
     pointToLayer: function(feature, latlng) {
@@ -244,45 +243,23 @@ let piracy = L.geoJSON(null, {
             popupContent += '<li><b>' + prop + ':</b> ' + feature.properties[prop] + '</li>';
         }
         popupContent += '</ul>';
-        layer.bindPopup(popupContent);
+        layer.bindPopup(popupContent, {maxHeight: 200});
+
+        piracyMarkerGroup.addLayer(layer);
+        let bounds = map.getBounds();
+        if (!bounds.contains(layer.getLatLng())) {
+            piracy.removeLayer(layer);
     }
+}
 }).addTo(map);
 
+// Async load GeoJSON data
+(async () => {
+const response = await fetch('./static/data/ASAM_events.geojson');
+    const data = await response.json();
+    piracy.addData(data);
+})();
 
-// Send a message to the worker to fetch the GeoJSON data
-worker.postMessage({url: './data/ASAM_events.geojson'});
-
-// Receive a message from the worker with the GeoJSON data
-worker.onmessage = function(event) {
-    piracy.addData(event.data);
-};
-
-// Fishing Areas
-let fishing = L.geoJSON(null, {
-    style: function(feature) {
-        return {
-            color: 'black',
-            weight: 2,
-            opacity: 0.7,
-        };
-    },
-    onEachFeature: function(feature, layer) {
-        let popupContent = '<ul>';
-        for (let prop in feature.properties) {
-            popupContent += '<li><b>' + prop + ':</b> ' + feature.properties[prop] + '</li>';
-        }
-        popupContent += '</ul>';
-        layer.bindPopup(popupContent);
-    }
-}).addTo(map);
-
-// Send a message to the worker to fetch the GeoJSON data
-worker.postMessage({url: './data/FAO_AREAS_CWP.geojson'});
-
-// Receive a message from the worker with the GeoJSON data
-worker.onmessage = function(event) {
-    fishing.addData(event.data);
-};
 
 // Custom icon options
 let portIcon = L.icon({
@@ -291,6 +268,9 @@ let portIcon = L.icon({
     iconAnchor: [10, 10], // set the anchor point of the icon
     popupAnchor: [0, -15] // set the anchor point of the popup
 });
+
+// Create a marker layer group
+let portMarkerGroup = L.markerClusterGroup();
 
 // Word seaport
 let worldSeaPort = L.geoJSON(null, {
@@ -303,32 +283,32 @@ let worldSeaPort = L.geoJSON(null, {
             popupContent += '<li><b>' + prop + ':</b> ' + feature.properties[prop] + '</li>';
         }
         popupContent += '</ul>';
-        layer.bindPopup(popupContent, {maxHeight: 200}).on('popupopen', function() {
-            // get the popup content wrapper element
-            let wrapper = this._popup._contentWrapper;
-            // add the CSS style to make the content scrollable
-            wrapper.style.overflowY = 'auto';
-        });
+        layer.bindPopup(popupContent, {maxHeight: 200});
+
+        portMarkerGroup.addLayer(layer);
+        let bounds = map.getBounds();
+        if (!bounds.contains(layer.getLatLng())) {
+            worldSeaPort.removeLayer(layer);
+        }
     }
 }).addTo(map);
 
-// Load data and add to layer
-fetch('./static/data/WPI.geojson')
-    .then(response => response.json())
-    .then(data => {
-        worldSeaPort.addData(data);
-    });
+// Async load GeoJSON data
+(async () => {
+const response = await fetch('./static/data/WPI.geojson');
+    const data = await response.json();
+    worldSeaPort.addData(data);
+})();
 
 
 
 // EEZ Baseline
-
-let eezBaseline = L.geoJSON(null, {
+let eezArea = L.geoJSON(null, {
     style: function(feature) {
         return {
             color: 'green',
             weight: 2,
-            opacity: 0.7,
+            opacity: 0.6,
         };
     },
     onEachFeature: function(feature, layer) {
@@ -337,44 +317,42 @@ let eezBaseline = L.geoJSON(null, {
             popupContent += '<li><b>' + prop + ':</b> ' + feature.properties[prop] + '</li>';
         }
         popupContent += '</ul>';
-        layer.bindPopup(popupContent);
-    }
-}).addTo(map);
-
-fetch('./static/data/eez_v11.geojson')
-    .then(response => response.json())
-    .then(data => {
-        eezBaseline.addData(data);
-    });
-
-
-// EEZ boundaries
-
-let eezBoundaries= L.geoJSON(null, {
-    style: function(feature) {
-        return {
-            color: 'blue',
-            weight: 2,
-            opacity: 0.7,
-        };
+        layer.bindPopup(popupContent, {maxHeight: 200});
     },
-    onEachFeature: function(feature, layer) {
-        let popupContent = '<ul>';
-        for (let prop in feature.properties) {
-            popupContent += '<li><b>' + prop + ':</b> ' + feature.properties[prop] + '</li>';
-        }
-        popupContent += '</ul>';
-        layer.bindPopup(popupContent);
-    }
 }).addTo(map);
 
+// Async load GeoJSON data
+(async () => {
+const response = await fetch('./static/data/eez_v11.geojson');
+    const data = await response.json();
+    eezArea.addData(data);
+})();
 
-fetch('./static/data/eez_boundaries_v11.geojson')
-    .then(response => response.json())
-    .then(data => {
-        eezBoundaries.addData(data);
-    });
-
+// // EEZ boundaries
+// let eezBoundaries= L.geoJSON(null, {
+//     style: function(feature) {
+//         return {
+//             color: 'blue',
+//             weight: 2,
+//             opacity: 0.7,
+//         };
+//     },
+//     onEachFeature: function(feature, layer) {
+//         let popupContent = '<ul>';
+//         for (let prop in feature.properties) {
+//             popupContent += '<li><b>' + prop + ':</b> ' + feature.properties[prop] + '</li>';
+//         }
+//         popupContent += '</ul>';
+//         layer.bindPopup(popupContent, {maxHeight: 200});
+//     },
+// }).addTo(map);
+//
+// // Async load GeoJSON data
+// (async () => {
+// const response = await fetch('./static/data/eez_boundaries_v11.geojson');
+//     const data = await response.json();
+//     eezBoundaries.addData(data);
+// })();
 
 // Add Marine layer group to the map
 let marine = L.layerGroup().addTo(map);
@@ -383,11 +361,11 @@ let marine = L.layerGroup().addTo(map);
 marine.addLayer(twelveNm);
 marine.addLayer(ecaSoX);
 marine.addLayer(ecaNOx);
-marine.addLayer(piracy);
-marine.addLayer(fishing);
-marine.addLayer(worldSeaPort);
-marine.addLayer(eezBaseline);
-marine.addLayer(eezBoundaries);
+marine.addLayer(eezArea);
+// marine.addLayer(eezBoundaries);
+// Add the marker cluster group to the map
+marine.addLayer(piracyMarkerGroup);
+map.addLayer(portMarkerGroup);
 
 
 
@@ -407,8 +385,8 @@ let weatherLayers = {
     "Wind": wind,
     "Pressure": pressure,
     "Temperature": temperature,
-    "Precipitation": precipitationRadar,
-    "Rainfall": rainfall,
+    "Radar": precipitationRadar,
+    "Precipitation": rainfall,
     "Snow": snow,
 }
 
@@ -416,26 +394,11 @@ let marineLayers = {
     "12 Nautical Miles": twelveNm,
     "ECA SoX": ecaSoX,
     "ECA NOx": ecaNOx,
-    "Piracy": piracy,
-    "Fishing": fishing,
-    "World Seaport": worldSeaPort,
-    "EEZ Baseline": eezBaseline,
-    "EEZ Boundaries": eezBoundaries,
+    "Piracy": piracyMarkerGroup,
+    "World Seaports": portMarkerGroup,
+    "EEZ Area": eezArea,
+    // "EEZ Boundaries": eezBoundaries,
 }
-
-let overlayMaps = {
-    "Temperature": temperature,
-    "Precipitation": rainfall,
-    "Radar": precipitationRadar,
-    "Wind": wind,
-    "Pressure": pressure,
-    "Cloud": cloud,
-    "Snow": snow,
-}
-
-
-
-
 
 // Dissable all layers by default
 wind.remove();
@@ -448,11 +411,12 @@ rainfall.remove();
 snow.remove();
 ecaSoX.remove();
 ecaNOx.remove();
+piracyMarkerGroup.remove();
+portMarkerGroup.remove();
+eezArea.remove();
+// eezBoundaries.remove();
 piracy.remove();
-fishing.remove();
 worldSeaPort.remove();
-eezBaseline.remove();
-eezBoundaries.remove();
 
 
 // Add a scale to the map
