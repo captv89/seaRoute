@@ -10,6 +10,32 @@
 //     maxBounds: bounds
 // }).setView([0, 0], 2);
 
+const spinOps = {
+    lines: 13, // The number of lines to draw
+    length: 38, // The length of each line
+    width: 17, // The line thickness
+    radius: 45, // The radius of the inner circle
+    scale: 1, // Scales overall size of the spinner
+    corners: 1, // Corner roundness (0..1)
+    speed: 1, // Rounds per second
+    rotate: 0, // The rotation offset
+    animation: 'spinner-line-fade-quick', // The CSS animation name for the lines
+    direction: 1, // 1: clockwise, -1: counterclockwise
+    color: '#ffffff', // CSS color or array of colors
+    fadeColor: 'transparent', // CSS color or array of colors
+    top: '50%', // Top position relative to parent
+    left: '50%', // Left position relative to parent
+    shadow: '0 0 1px transparent', // Box-shadow for the lines
+    zIndex: 2000000000, // The z-index (defaults to 2e9)
+    className: 'spinner', // The CSS class to assign to the spinner
+    position: 'absolute', // Element positioning
+}
+
+const spinElement = document.getElementById('map');
+
+// Create a new spinner instance
+const spinner = new Spinner(spinOps).spin(spinElement);
+spinner.stop();
 
 // Clean Coordinates
 function CleaCoordinates(lat,lng) {
@@ -142,87 +168,201 @@ weather.addLayer(rainfall);
 weather.addLayer(snow);
 
 
-// Add a geojson layer to the map
+// create a Promise that fetches the data
+const fetchData = (pathToFile) => {
+    return new Promise((resolve, reject) => {
+        fetch(pathToFile)
+            .then(response => response.json())
+            .then(data => resolve(data))
+            .catch(error => reject(error));
+    });
+};
+
+// GeoJSON Layers
+// 12nm and baseline
 let twelveNm = L.geoJSON(null, {
-    style: function(feature) {
-        return {
-            color: 'blue',
-            weight: 2,
-            opacity: 1,
-        };
+    onEachFeature: function (feature, layer) {
+        layer.bindPopup(`<b>12nm EEZ</b><br>Territory: ${feature.properties.TERRITORY1} (${feature.properties.ISO_TER1})<br>Sovereign: ${feature.properties.SOVEREIGN1} (${feature.properties.ISO_SOV1})<br>Area: ${feature.properties.AREA_KM2} km<sup>2</sup>`);
     },
-    onEachFeature: function(feature, layer) {
-        let popupContent = '<ul>';
-        for (let prop in feature.properties) {
-            popupContent += '<li><b>' + prop + ':</b> ' + feature.properties[prop] + '</li>';
-        }
-        popupContent += '</ul>';
-        layer.bindPopup(popupContent);
-    },
-    
-}).addTo(map);
-
-// Async load GeoJSON data
-(async () => {
-const response = await fetch('./static/data/eez_12nm_v3.geojson');
-    const data = await response.json();
-    twelveNm.addData(data);
-})();
-
-// ECA SoX Areas
-let ecaSoX = L.geoJSON(null, {
-    style: function(feature) {
-        return {
-            color: 'red',
-            weight: 2,
-            opacity: 0.7,
-        };
-    },
-    onEachFeature: function(feature, layer) {
-        let popupContent = '<ul>';
-        for (let prop in feature.properties) {
-            popupContent += '<li><b>' + prop + ':</b> ' + feature.properties[prop] + '</li>';
-        }
-        popupContent += '</ul>';
-        layer.bindPopup(popupContent);
+    style: {
+        opacity: 0,
+        fillOpacity: 0,
     }
-}).addTo(map);
+});
 
+function load12nm() {
+    // console.log('Loading load12nm');
+    spinner.spin(spinElement);
 // Async load GeoJSON data
-(async () => {
-const response = await fetch('./static/data/eca_reg14_sox_pm.geojson');
-    const data = await response.json();
-    ecaSoX.addData(data);
-})();
+    (async () => {
+// const response = await fetch('./static/data/eez_12nm_v3.geojson');
+//     const data = await response.json();
+        const data = await fetchData('./static/data/eez_12nm_v3.geojson');
 
-// ECA NOx Areas
+        // Check if data is loaded
+        if (data != null) {
+            // console.log('Data loaded');
+            spinner.stop();
+        }
+
+        let geoJsonLayer = L.geoJson.vt(data, {
+            maxZoom: 18,
+            tolerance: 5,
+            debug: 0,
+            style: (feature) => {
+                return {
+                    color: '#0074D9', // blue
+                    weight: 2,
+                    opacity: 1,
+                    fillOpacity: 0.5,
+                    fillColor: '#0074D9', // blue
+                };
+            },
+        });
+
+        geoJsonLayer.addTo(twelveNm);
+
+        // Add the layer data to ecaNOx to show on mouseover
+        twelveNm.addData(data);
+    })();
+}
+
+// ECA SOx Areas
+let ecaSOx = L.geoJSON(null, {
+    onEachFeature: function (feature, layer) {
+        layer.bindPopup(`<b>SOx ECA</b><br>Area: ${feature.properties.area}<br>Regulation: ${feature.properties.regulation}`);
+    },
+    style: {
+        opacity: 0,
+        fillOpacity: 0,
+    }
+});
+
+function loadEcaSOx() {
+    // console.log('Loading loadEcaSOx');
+    spinner.spin(spinElement);
+// Async load GeoJSON data
+    (async () => {
+        // const response = await fetch('./static/data/eca_reg14_sox_pm.geojson');
+        // const data = await response.json();
+        const data = await fetchData('./static/data/eca_reg14_sox_pm.geojson');
+
+        // Check if data is loaded
+        if (data != null) {
+            // console.log('Data loaded');
+            spinner.stop();
+        }
+
+        let geoJsonLayer = L.geoJson.vt(data, {
+            maxZoom: 18,
+            tolerance: 5,
+            debug: 0,
+            style: (feature) => {
+                return {
+                    color: '#ffdb00', // red
+                    weight: 2,
+                    opacity: 1,
+                    fillOpacity: 0.5,
+                    fillColor: '#f8d802', // red
+                };
+            }
+        });
+
+        geoJsonLayer.addTo(ecaSOx);
+
+        // Add the layer data to ecaNOx to show on mouseover
+        ecaSOx.addData(data);
+
+    })();
+
+}
+
+// // ECA NOx Areas
 let ecaNOx = L.geoJSON(null, {
-    style: function(feature) {
-        return {
-            color: 'red',
-            weight: 2,
-            opacity: 0.7,
-        };
+    onEachFeature: function (feature, layer) {
+        layer.bindPopup(`<b>NOx ECA</b><br>Area: ${feature.properties.area}`);
     },
-    onEachFeature: function(feature, layer) {
-        let popupContent = '<ul>';
-        for (let prop in feature.properties) {
-            popupContent += '<li><b>' + prop + ':</b> ' + feature.properties[prop] + '</li>';
-        }
-        popupContent += '</ul>';
-        layer.bindPopup(popupContent);
+    style: {
+        opacity: 0,
+        fillOpacity: 0,
     }
-}).addTo(map);
+});
 
+function loadEcaNOx() {
+    // console.log('Loading loadEcaNOx');
+    spinner.spin(spinElement);
 // Async load GeoJSON data
-(async () => {
-const response = await fetch('./static/data/eca_reg13_nox.geojson');
-    const data = await response.json();
-    ecaNOx.addData(data);
-})();
+    (async () => {
+        // const response = await fetch('./static/data/eca_reg13_nox.geojson');
+        // const data = await response.json();
+        const data = await fetchData('./static/data/eca_reg13_nox.geojson');
 
+        // Check if data is loaded
+        if (data != null) {
+            // console.log('Data loaded');
+            spinner.stop();
+        }
+
+        let geoJsonLayer = L.geoJson.vt(data, {
+            maxZoom: 18,
+            tolerance: 5,
+            debug: 0,
+            style: (feature) => {
+                return {
+                    color: '#FF4136', // red
+                    weight: 2,
+                    opacity: 1,
+                    fillOpacity: 0.5,
+                    fillColor: '#FF4136', // red
+                };
+            }
+        });
+        geoJsonLayer.addTo(ecaNOx);
+
+        // Add the layer data to ecaNOx to show on mouseover
+        ecaNOx.addData(data);
+
+    })();
+}
+
+
+// EEZ Baseline
+let eezArea = L.featureGroup();
+
+function loadEezArea() {
+    // console.log('Loading loadEezArea');
+    spinner.spin(spinElement);
+// Async load GeoJSON data
+    (async () => {
+        // const response = await fetch('./static/data/eez_v11.geojson');
+        // const data = await response.json();
+        const data = await fetchData('./static/data/eez_v11.geojson');
+
+        // Check if data is loaded
+        if (data != null) {
+            // console.log('Data loaded');
+            spinner.stop();
+        }
+
+        let geoJsonLayer = L.geoJson.vt(data, {
+            maxZoom: 18,
+            tolerance: 5,
+            debug: 0,
+            style: (feature) => {
+                return {
+                    color: '#2ECC40', // green
+                    weight: 2,
+                    opacity: 1,
+                    fillOpacity: 0.5,
+                    fillColor: '#2ECC40', // green
+                };
+            }
+        });
+        geoJsonLayer.addTo(eezArea);
+    })();
+}
+// Clustered markers
 // Piracy Risk Areas
-
 let alertIcon = L.icon({
     iconUrl: './static/icons/alert.svg',
     iconSize: [15, 15],
@@ -302,75 +442,6 @@ const response = await fetch('./static/data/WPI.geojson');
 
 
 
-// EEZ Baseline
-let eezArea = L.geoJSON(null, {
-    style: function(feature) {
-        return {
-            color: 'green',
-            weight: 2,
-            opacity: 0.6,
-        };
-    },
-    onEachFeature: function(feature, layer) {
-        let popupContent = '<ul>';
-        for (let prop in feature.properties) {
-            popupContent += '<li><b>' + prop + ':</b> ' + feature.properties[prop] + '</li>';
-        }
-        popupContent += '</ul>';
-        layer.bindPopup(popupContent, {maxHeight: 200});
-    },
-}).addTo(map);
-
-// Async load GeoJSON data
-(async () => {
-const response = await fetch('./static/data/eez_v11.geojson');
-    const data = await response.json();
-    eezArea.addData(data);
-})();
-
-// // EEZ boundaries
-// let eezBoundaries= L.geoJSON(null, {
-//     style: function(feature) {
-//         return {
-//             color: 'blue',
-//             weight: 2,
-//             opacity: 0.7,
-//         };
-//     },
-//     onEachFeature: function(feature, layer) {
-//         let popupContent = '<ul>';
-//         for (let prop in feature.properties) {
-//             popupContent += '<li><b>' + prop + ':</b> ' + feature.properties[prop] + '</li>';
-//         }
-//         popupContent += '</ul>';
-//         layer.bindPopup(popupContent, {maxHeight: 200});
-//     },
-// }).addTo(map);
-//
-// // Async load GeoJSON data
-// (async () => {
-// const response = await fetch('./static/data/eez_boundaries_v11.geojson');
-//     const data = await response.json();
-//     eezBoundaries.addData(data);
-// })();
-
-// Add Marine layer group to the map
-let marine = L.layerGroup().addTo(map);
-
-// Add the marine layers to the layer group
-marine.addLayer(twelveNm);
-marine.addLayer(ecaSoX);
-marine.addLayer(ecaNOx);
-marine.addLayer(eezArea);
-// marine.addLayer(eezBoundaries);
-// Add the marker cluster group to the map
-marine.addLayer(piracyMarkerGroup);
-map.addLayer(portMarkerGroup);
-
-
-
-
-
 // Add layer control
 let baseMaps = {
     "OpenStreetMap": osm,
@@ -391,30 +462,30 @@ let weatherLayers = {
 }
 
 let marineLayers = {
-    "12 Nautical Miles": twelveNm,
-    "ECA SoX": ecaSoX,
+    "Baseline & 12nm": twelveNm,
+    "ECA SOx": ecaSOx,
     "ECA NOx": ecaNOx,
-    "Piracy": piracyMarkerGroup,
+    "Piracy Incidents": piracyMarkerGroup,
     "World Seaports": portMarkerGroup,
     "EEZ Area": eezArea,
-    // "EEZ Boundaries": eezBoundaries,
 }
 
-// Dissable all layers by default
+// Disable all layers by default
 wind.remove();
 temperature.remove();
 precipitationRadar.remove();
 cloud.remove();
 pressure.remove();
-twelveNm.remove();
 rainfall.remove();
 snow.remove();
-ecaSoX.remove();
-ecaNOx.remove();
+
+// twelveNm.remove();
+// ecaSoX.remove();
+// ecaNOx.remove();
+// eezArea.remove();
+
 piracyMarkerGroup.remove();
 portMarkerGroup.remove();
-eezArea.remove();
-// eezBoundaries.remove();
 piracy.remove();
 worldSeaPort.remove();
 
@@ -424,16 +495,6 @@ L.control.scale({
     imperial: true,
 }).addTo(map);
 
-// //  Weather control
-// let weatherControl = L.control.layers(null, weatherLayers, {
-//     collapsed: true,
-// }).addTo(map);
-//
-// //  Marine control
-// let marineControl = L.control.layers(null, marineLayers, {
-//     collapsed: true,
-// }).addTo(map);
-
 // Add a layer control to the map
 L.control.layers(baseMaps, weatherLayers).addTo(map);
 
@@ -441,6 +502,23 @@ L.control.layers(baseMaps, weatherLayers).addTo(map);
 L.control.layers(null, marineLayers, {
     collapsed: true,
 }).addTo(map);
+
+// Call load12nm function when the 12nm EEZ overlay is added
+map.on('overlayadd', function(e) {
+    // console.log(e);
+    if (e.name === 'Baseline & 12nm') {
+        load12nm();
+    }
+    if (e.name === 'ECA SOx') {
+        loadEcaSOx();
+    }
+    if (e.name === 'ECA NOx') {
+        loadEcaNOx();
+    }
+    if (e.name === 'EEZ Area') {
+        loadEezArea();
+    }
+});
 
 // Show a popup when the user clicks on the map
 map.on('click', function(event) {

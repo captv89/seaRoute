@@ -181,6 +181,9 @@ a:hover {
     height: 10px;
 }
 
+.leaflet-tooltip {
+    visibility: visible;
+}
 
 
 
