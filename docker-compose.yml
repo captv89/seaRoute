@@ -1,0 +1,18 @@
+version: "3.9"
+
+services:
+  searoute:
+    build: .
+    ports:
+      - "8080:8080"
+    environment:
+      - PORT=8080
+      - APP_ENV=development
+      # Uncomment for production with TLS:
+      # - APP_ENV=production
+      # - CERT_PATH=/certs/cert.pem
+      # - KEY_PATH=/certs/key.pem
+    volumes:
+      - ./dataset:/app/dataset
+      - ./temp:/app/temp
+    restart: unless-stopped
