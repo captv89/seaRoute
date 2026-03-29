@@ -2,3 +2,4 @@ runtime.log
 /temp/
 /bin/
 Makefile
+/web/static/data/

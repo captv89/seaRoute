@@ -14,5 +14,6 @@ services:
       # - KEY_PATH=/certs/key.pem
     volumes:
       - ./dataset:/app/dataset
+      - ./web/static/data:/app/web/static/data
       - ./temp:/app/temp
     restart: unless-stopped
