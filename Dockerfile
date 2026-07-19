@@ -16,7 +16,7 @@ RUN go mod download
 COPY . .
 
 # Build the binary with optimizations
-RUN CGO_ENABLED=1 go build -ldflags='-s -w' -o /searoute
+RUN CGO_ENABLED=1 CGO_CFLAGS="-D_LARGEFILE64_SOURCE" go build -ldflags='-s -w' -o /searoute
 
 # --- Runtime Stage ---
 FROM alpine:3.19
@@ -45,6 +45,6 @@ USER appuser
 EXPOSE 8080
 
 HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
-    CMD wget --no-verbose --tries=1 --spider http://localhost:${PORT:-8080}/ || exit 1
+    CMD wget --no-verbose --tries=1 -O - http://localhost:${PORT:-8080}/ > /dev/null || exit 1
 
 CMD ["/app/searoute"]

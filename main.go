@@ -111,6 +111,9 @@ func main() {
 	router.GET("/", func(c *gin.Context) {
 		c.HTML(http.StatusOK, "home.gohtml", templateVars())
 	})
+	router.HEAD("/", func(c *gin.Context) {
+		c.Status(http.StatusOK)
+	})
 
 	// Handle the about page
 	router.GET("/about", func(c *gin.Context) {

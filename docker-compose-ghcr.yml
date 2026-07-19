@@ -1,0 +1,18 @@
+services:
+  searoute:
+    image: ghcr.io/captv89/searoute:latest
+    ports:
+      - "127.0.0.1:8080:8080"
+    env_file:
+      - .env
+    environment:
+      - PORT=8080
+      - APP_ENV=production
+    volumes:
+      - ./temp:/app/temp
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:8080/ > /dev/null || exit 1"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+    restart: unless-stopped
