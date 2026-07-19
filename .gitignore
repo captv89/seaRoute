@@ -2,4 +2,7 @@ runtime.log
 /temp/
 /bin/
 Makefile
+.env
+seaRoute
 /web/static/data/
+

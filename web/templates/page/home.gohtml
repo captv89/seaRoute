@@ -2,38 +2,33 @@
 
 <div class="container form">
     <form>
-        <div class="row">
+        <div class="row g-3 align-items-end">
             <div class="col-md-4">
-                <div class="input-field">
-                    <input id="from-input" type="text" name="from-input" autocomplete="off">
-                    <label for="from-input">From</label>
+                <div class="position-relative">
+                    <label for="from-input" class="form-label">From</label>
+                    <input id="from-input" type="text" class="form-control" name="from-input" autocomplete="off" placeholder="Enter origin port">
                     <div class="from-autocomplete-items autocomplete-items"></div>
                 </div>
             </div>
             <div class="col-md-4">
-                <div class="input-field">
-                    <input id="to-input" type="text" name="to-input" autocomplete="off">
-                    <label for="to-input">To</label>
+                <div class="position-relative">
+                    <label for="to-input" class="form-label">To</label>
+                    <input id="to-input" type="text" class="form-control" name="to-input" autocomplete="off" placeholder="Enter destination port">
                     <div class="to-autocomplete-items autocomplete-items"></div>
                 </div>
             </div>
             <div class="col-md-2">
-                <div class="input-field">
-                    <button class="btn waves-effect waves-light blue text-light" type="submit">Calculate</button>
-                </div>
+                <button class="btn btn-primary w-100" type="submit">Calculate</button>
             </div>
         </div>
     </form>
-
-
 </div>
 
-
-<button type="button" class="btn wave-effect blue btn-floating btn-circle" id="download-button" disabled>
+<button type="button" class="btn btn-primary btn-floating" id="download-button" disabled>
     <i class="fa fa-download"></i>
 </button>
 
-<button type="button" class="btn wave-effect blue btn-floating btn-circle" id="clear-button">
+<button type="button" class="btn btn-primary btn-floating" id="clear-button">
     <i class="fa fa-times"></i>
 </button>
 

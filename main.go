@@ -1,215 +1,269 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
+	"io"
+	"log"
+	"net/http"
+	"os"
+	"os/signal"
+	"strings"
+	"sync"
+	"syscall"
+	"time"
+
 	"github.com/gin-gonic/gin"
 	geo "github.com/kellydunn/golang-geo"
 	gdj "github.com/pitchinnate/golangGeojsonDijkstra"
-	"io"
-	"log"
-	"os"
-	"strings"
 )
 
-var PortData []Port
+// App holds the application state
+type App struct {
+	PortData   []Port
+	RouteGraph gdj.FeatureCollection
+}
+
+// WaypointRequest represents a validated waypoint calculation request
+type WaypointRequest struct {
+	FromPort string `json:"fromPort" binding:"required"`
+	ToPort   string `json:"toPort" binding:"required"`
+}
+
+// Rate limiting state
+var (
+	rateLimitMu sync.Mutex
+	visitors    = make(map[string]*rateLimitEntry)
+)
+
+type rateLimitEntry struct {
+	count   int
+	resetAt time.Time
+}
 
 func main() {
-	skipNowTemp := false
-	if skipNowTemp {
-		navWarn := GetNavWarnings()
-
-		SaveNavWarnings(navWarn)
-	}
-
-	// Create a temp folder
+	// Create a temp folder with secure permissions
 	if _, err := os.Stat("temp"); os.IsNotExist(err) {
-		err := os.MkdirAll("temp", 0777)
-		if err != nil {
-			return
+		if err := os.MkdirAll("temp", 0700); err != nil {
+			log.Fatalf("Failed to create temp directory: %v", err)
 		}
 	}
 
 	// Setting the logger
-	f, err := os.OpenFile("temp/runtime.log", os.O_RDWR|os.O_CREATE|os.O_APPEND, 0666)
+	f, err := os.OpenFile("temp/runtime.log", os.O_RDWR|os.O_CREATE|os.O_APPEND, 0600)
 	if err != nil {
-		log.Fatalf("error opening file: %v", err)
+		log.Fatalf("Error opening log file: %v", err)
 	}
-
 	defer func(f *os.File) {
-		err := f.Close()
-		if err != nil {
-			log.Fatal(err)
+		if err := f.Close(); err != nil {
+			log.Printf("Error closing log file: %v", err)
 		}
 	}(f)
 
 	wrt := io.MultiWriter(os.Stdout, f)
 	log.SetOutput(wrt)
 
+	// Initialize app state
+	app := &App{}
+
 	// Load the port data
-	PortData, err = LoadPorts()
+	ports, err := LoadPorts()
 	if err != nil {
-		log.Printf("Error loading port data: %v", err)
+		log.Fatalf("Error loading port data: %v", err)
 	}
+	app.PortData = ports
+	log.Printf("Loaded %d ports", len(app.PortData))
+
+	// Pre-load and cache the route graph at startup
+	routeGraph, err := loadRouteGraph()
+	if err != nil {
+		log.Fatalf("Error loading route graph: %v", err)
+	}
+	app.RouteGraph = routeGraph
+	log.Printf("Route graph loaded with %d features", len(app.RouteGraph.Features))
 
 	// Set the router as the default one provided by Gin
 	router := gin.Default()
 
-	err = router.SetTrustedProxies(nil)
-	if err != nil {
-		log.Fatal(err)
+	if err := router.SetTrustedProxies(nil); err != nil {
+		log.Fatalf("Error setting trusted proxies: %v", err)
 	}
+
+	// Add security middleware
+	router.Use(securityHeadersMiddleware())
+	router.Use(rateLimitMiddleware())
 
 	// Serve html template files
 	router.LoadHTMLGlob("web/templates/**/*.gohtml")
 	// Load the static files
 	router.Static("/static", "./web/static")
 
-	// Setup route group for the API
+	// Template variables helper
+	templateVars := func() gin.H {
+		return gin.H{
+			"owmApiKey":    os.Getenv("OWM_API_KEY"),
+			"gaTrackingID": os.Getenv("GA_TRACKING_ID"),
+		}
+	}
+
 	// Handle the index route
 	router.GET("/", func(c *gin.Context) {
-
-		c.HTML(200, "home.gohtml", gin.H{})
+		c.HTML(http.StatusOK, "home.gohtml", templateVars())
 	})
 
 	// Handle the about page
 	router.GET("/about", func(c *gin.Context) {
-		c.HTML(200, "about.gohtml", gin.H{})
+		c.HTML(http.StatusOK, "about.gohtml", templateVars())
 	})
 
 	// Handle the search for ports
 	router.GET("/ports", func(c *gin.Context) {
-		// Get the search query
 		searchQuery := c.Query("search")
-		// Get the filtered port data
-		filteredPorts := filterPorts(searchQuery)
-		// Send the filtered port data to the client
-		c.JSON(200, filteredPorts)
+		// Input length validation
+		if len(searchQuery) > 100 {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "search query too long"})
+			return
+		}
+		filteredPorts := app.filterPorts(searchQuery)
+		c.JSON(http.StatusOK, filteredPorts)
 	})
 
 	// Handle request to calculate the passage
 	router.POST("/waypoints", func(c *gin.Context) {
-
-		var form map[string]string
-		if err := c.Bind(&form); err != nil {
-			// Handle error
-			log.Println(err)
+		var req WaypointRequest
+		if err := c.ShouldBindJSON(&req); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request: fromPort and toPort are required"})
+			return
 		}
 
-		log.Println(form)
+		// Input length validation
+		if len(req.FromPort) > 200 || len(req.ToPort) > 200 {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "port name too long"})
+			return
+		}
 
-		//originLongi := form["originLongitude"]
-		//originLati := form["originLatitude"]
-		//destinationLongi := form["destinationLongitude"]
-		//destinationLati := form["destinationLatitude"]
+		// Validate that ports exist
+		originLong, originLat, err := app.getPortCoordinates(req.FromPort)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("origin port not found: %s", req.FromPort)})
+			return
+		}
 
-		fromPort := form["fromPort"]
-		toPort := form["toPort"]
+		destLong, destLat, err := app.getPortCoordinates(req.ToPort)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("destination port not found: %s", req.ToPort)})
+			return
+		}
 
-		// Get the origin coordinates
-		originLong, originLat := getPortCoordinates(fromPort)
-		// Get the destination coordinates
-		destinationLong, destinationLat := getPortCoordinates(toPort)
-
-		// Convert all the waypoints to float64
-		//originLong, _ := strconv.ParseFloat(originLong, 64)
-		//originLat, _ := strconv.ParseFloat(originLati, 64)
-		//destinationLong, _ := strconv.ParseFloat(destinationLongi, 64)
-		//destinationLat, _ := strconv.ParseFloat(destinationLati, 64)
-
-		// Print the coordinates received from form
-		log.Printf("Origin: %f, %f", originLong, originLat)
-		log.Printf("Destination: %f, %f", destinationLong, destinationLat)
-
-		// Get the origin coordinates
 		originCoords := gdj.Position{originLong, originLat}
-		// Get the destination coordinates
-		destinationCoords := gdj.Position{destinationLong, destinationLat}
-		// Set route name
-		routeName := fmt.Sprintf("%s -> %s", fromPort, toPort)
+		destCoords := gdj.Position{destLong, destLat}
+		routeName := fmt.Sprintf("%s -> %s", req.FromPort, req.ToPort)
 
-		// Call the function to calculate the passage
-		data := calculatePassageInfo(originCoords, destinationCoords, routeName)
+		// Calculate the passage using the cached route graph
+		data, err := calculatePassageInfo(originCoords, destCoords, routeName, app.RouteGraph)
+		if err != nil {
+			log.Printf("Error calculating passage for %s: %v", routeName, err)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to calculate route"})
+			return
+		}
 
-		// Send the data to the client
-		c.JSON(200, data)
-
+		c.JSON(http.StatusOK, data)
 	})
 
-	//Start and run the server if production environment
-	if os.Getenv("APP_ENV") == "prod" {
-		log.Println("Starting server in production environment")
-		err = router.RunTLS(fmt.Sprintf(":%s", os.Getenv("PORT")), os.Getenv("CERT_PATH"), os.Getenv("KEY_PATH"))
-	} else {
-		log.Println("Starting server in development environment")
-		err = router.Run(fmt.Sprintf(":%s", os.Getenv("PORT")))
-		if err != nil {
-			log.Fatal(err)
-		}
+	// Start server with graceful shutdown
+	port := os.Getenv("PORT")
+	if port == "" {
+		port = "8080"
 	}
 
-	// Sample data for test Shanghai-New-York
-	//var originCoords = gdj.Position{72.9301, 19.0519}
-	//var destinationCoords = gdj.Position{-9.0905, 38.7062}
-	//var routeName = "Mumbai-Lisbon"
+	srv := &http.Server{
+		Addr:         ":" + port,
+		Handler:      router,
+		ReadTimeout:  30 * time.Second,
+		WriteTimeout: 30 * time.Second,
+		IdleTimeout:  120 * time.Second,
+	}
 
-	// Calculate the passage info
-	//calculatePassageInfo(originCoords, destinationCoords, routeName)
+	go func() {
+		if os.Getenv("APP_ENV") == "prod" {
+			log.Printf("Starting server in production environment on port %s", port)
+			if err := srv.ListenAndServeTLS(os.Getenv("CERT_PATH"), os.Getenv("KEY_PATH")); err != nil && err != http.ErrServerClosed {
+				log.Fatalf("TLS server error: %v", err)
+			}
+		} else {
+			log.Printf("Starting server in development environment on port %s", port)
+			if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+				log.Fatalf("Server error: %v", err)
+			}
+		}
+	}()
 
+	// Wait for interrupt signal for graceful shutdown
+	quit := make(chan os.Signal, 1)
+	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
+	<-quit
+	log.Println("Shutting down server...")
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if err := srv.Shutdown(ctx); err != nil {
+		log.Fatalf("Server forced to shutdown: %v", err)
+	}
+	log.Println("Server exited gracefully")
 }
 
-// CalculatePassageInfo calculates the ocean waypoints and distance between two coordinates and generates a GeoJSON output
-func calculatePassageInfo(originCoords, destinationCoords gdj.Position, routeName string) Output {
-	// FC variable is the GeoJSON FeatureCollection
+// loadRouteGraph loads and caches the GeoJSON route graph at startup
+func loadRouteGraph() (gdj.FeatureCollection, error) {
 	var fc gdj.FeatureCollection
-	var newFc gdj.FeatureCollection
 	var data []byte
-	var splitAvailable bool
+	var err error
+
 	// Check if splitCoords.geojson exists
-	if _, err := os.Stat("dataset/splitCoords.geojson"); os.IsNotExist(err) {
-		// If not, read the original file
+	if _, statErr := os.Stat("dataset/splitCoords.geojson"); os.IsNotExist(statErr) {
 		log.Println("splitCoords.geojson does not exist. Reading original file.")
 		data, err = os.ReadFile("dataset/marnet_densified_v2.geojson")
 		if err != nil {
-			log.Fatal(err)
+			return fc, fmt.Errorf("failed to read route data: %w", err)
 		}
+
+		if err := json.Unmarshal(data, &fc); err != nil {
+			return fc, fmt.Errorf("failed to parse route data: %w", err)
+		}
+
+		// Split the coordinates for better pathfinding
+		fc = splitter(fc)
 	} else {
-		// If it does, read the splitCoords.geojson file
-		splitAvailable = true
 		log.Println("splitCoords.geojson exists. Reading splitCoords.geojson file.")
 		data, err = os.ReadFile("dataset/splitCoords.geojson")
 		if err != nil {
-			log.Fatal(err)
+			return fc, fmt.Errorf("failed to read split route data: %w", err)
+		}
+
+		if err := json.Unmarshal(data, &fc); err != nil {
+			return fc, fmt.Errorf("failed to parse split route data: %w", err)
 		}
 	}
 
-	//Unmarshall feature collection from geojson
-	err := json.Unmarshal(data, &fc)
+	return fc, nil
+}
+
+// calculatePassageInfo calculates the ocean waypoints and distance between two coordinates
+func calculatePassageInfo(originCoords, destinationCoords gdj.Position, routeName string, fc gdj.FeatureCollection) (Output, error) {
+	path, distance, err := fc.FindPath(originCoords, destinationCoords, 0.00001)
 	if err != nil {
-		log.Fatal(err)
+		return Output{}, fmt.Errorf("pathfinding failed: %w", err)
 	}
 
-	//log.Println("Split file exists: ", splitAvailable)
-	// Do not split if splitCoords.geojson exists
-	if !splitAvailable {
-		newFc = splitter(fc)
-	} else {
-		newFc = fc
+	if len(path) == 0 {
+		return Output{}, fmt.Errorf("no path found between the given coordinates")
 	}
-	//// Print the number of features in the collection
-	//log.Printf("Number of features: %d", len(fc.Features))
-
-	// Calculate the shortest path between two points
-	path, distance, err := newFc.FindPath(originCoords, destinationCoords, 0.00001)
 
 	distanceInKm := distance / 1000
 
 	// Get the first and last coordinates of the path
 	lastWp := path[0]
 	firstWp := path[len(path)-1]
-
-	log.Println("First waypoint: ", firstWp)
-	log.Println("Last waypoint: ", lastWp)
 
 	// Calculate the gc distance between the origin coordinates and the first waypoint
 	distToFirstWp := CalcDistance(originCoords, firstWp)
@@ -218,20 +272,16 @@ func calculatePassageInfo(originCoords, destinationCoords gdj.Position, routeNam
 	// Total distance of the path
 	totalDistance := distToFirstWp + distanceInKm + distFromLastWp
 
-	// Print the path and distance
-	log.Printf("Waypoints: %v", path)
-	log.Printf("Origin to First Waypoint: %f Km", distToFirstWp)
-	log.Printf("Waypoint Distance: %f Km", distanceInKm)
-	log.Printf("Last Waypoint to Destination: %f Km", distFromLastWp)
-	log.Printf("Total Distance: %f Km", totalDistance)
+	log.Printf("Route: %s | Total: %.2f Km (Origin->WP: %.2f, WP: %.2f, WP->Dest: %.2f)",
+		routeName, totalDistance, distToFirstWp, distanceInKm, distFromLastWp)
 
-	//	Generate output geojson
+	// Generate output geojson
 	output := generateOutput(path, originCoords, destinationCoords, totalDistance, distToFirstWp, distFromLastWp, distanceInKm, routeName)
 
-	return output
+	return output, nil
 }
 
-// CalcDistance calculates the distance between two points in meters
+// CalcDistance calculates the great circle distance between two points in kilometers
 func CalcDistance(p1, p2 gdj.Position) float64 {
 	wp1 := geo.NewPoint(p1[1], p1[0])
 	wp2 := geo.NewPoint(p2[1], p2[0])
@@ -240,10 +290,9 @@ func CalcDistance(p1, p2 gdj.Position) float64 {
 }
 
 // filterPorts filters the ports from the []Port struct
-func filterPorts(query string) []Port {
+func (app *App) filterPorts(query string) []Port {
 	filteredPorts := make([]Port, 0)
-	for _, port := range PortData {
-		// Check if the search query is a substring of the port name or location
+	for _, port := range app.PortData {
 		if strings.Contains(strings.ToLower(port.Port), strings.ToLower(query)) || strings.Contains(strings.ToLower(port.Country), strings.ToLower(query)) {
 			filteredPorts = append(filteredPorts, port)
 		}
@@ -251,12 +300,51 @@ func filterPorts(query string) []Port {
 	return filteredPorts
 }
 
-// getPortCoordinates returns the coordinates of a port
-func getPortCoordinates(portName string) (float64, float64) {
-	for _, port := range PortData {
+// getPortCoordinates returns the coordinates of a port or an error if not found
+func (app *App) getPortCoordinates(portName string) (float64, float64, error) {
+	for _, port := range app.PortData {
 		if port.Port == portName {
-			return port.Longitude, port.Latitude
+			return port.Longitude, port.Latitude, nil
 		}
 	}
-	return 0, 0
+	return 0, 0, fmt.Errorf("port not found: %s", portName)
+}
+
+// securityHeadersMiddleware adds security headers to all responses
+func securityHeadersMiddleware() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		c.Header("X-Content-Type-Options", "nosniff")
+		c.Header("X-Frame-Options", "DENY")
+		c.Header("X-XSS-Protection", "1; mode=block")
+		c.Header("Referrer-Policy", "strict-origin-when-cross-origin")
+		c.Header("Permissions-Policy", "geolocation=(), microphone=(), camera=()")
+		c.Next()
+	}
+}
+
+// rateLimitMiddleware implements a simple per-IP rate limiter (60 requests/minute)
+func rateLimitMiddleware() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		ip := c.ClientIP()
+		rateLimitMu.Lock()
+
+		now := time.Now()
+		entry, exists := visitors[ip]
+		if !exists || now.After(entry.resetAt) {
+			visitors[ip] = &rateLimitEntry{count: 1, resetAt: now.Add(time.Minute)}
+			rateLimitMu.Unlock()
+			c.Next()
+			return
+		}
+
+		entry.count++
+		if entry.count > 60 {
+			rateLimitMu.Unlock()
+			c.AbortWithStatusJSON(http.StatusTooManyRequests, gin.H{"error": "rate limit exceeded, try again later"})
+			return
+		}
+
+		rateLimitMu.Unlock()
+		c.Next()
+	}
 }

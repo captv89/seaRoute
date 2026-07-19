@@ -15,12 +15,11 @@ html, body {
 }
 
 #map {
-    /* set the height of the map to 100% of the available space */
-    height: 90%;
+    height: calc(100vh - 176px);
     width: 100%;
-    /* position the map at the bottom of the page */
     position: fixed;
-    margin-top: 10px;
+    top: 126px;
+    left: 0;
     z-index: 0;
 }
 
@@ -36,11 +35,10 @@ html, body {
 
 
 .form {
-    margin-top: 10px;
-    bottom: 0;
-    height: 50px;
-    margin-bottom: 10px;
+    position: relative;
     z-index: 2;
+    padding: 10px 0;
+    background: #fff;
 }
 
 .page-footer {
@@ -55,13 +53,16 @@ html, body {
 .autocomplete-items {
     position: absolute;
     z-index: 9999;
-    top: calc(100% + 5px);
+    top: 100%;
     left: 0;
     right: 0;
     max-height: 200px;
-    overflow-y: scroll;
+    overflow-y: auto;
     background-color: #fff;
     color: #000000;
+    border: 1px solid #ddd;
+    border-radius: 0 0 4px 4px;
+    box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
 }
 
 .autocomplete-items div {
@@ -79,32 +80,34 @@ html, body {
     color: #ffffff;
 }
 
-.btn-floating i {
-    display: block;
-    width: 100%;
-    height: 100%;
-    text-align: center;
-    line-height: 34px; /* adjust this value to vertically center the icon */
-}
-
-.btn-floating i.fa-download {
-    font-size: 24px; /* adjust this value to change the size of the icon */
-}
-
 .btn-floating {
-    width: 48px; /* adjust this value to change the size of the circle */
-    height: 48px; /* adjust this value to change the size of the circle */
-    position: absolute;
+    width: 48px;
+    height: 48px;
+    position: fixed;
     bottom: 80px;
     right: 80px;
     border-radius: 50%;
     display: inline-flex;
     justify-content: center;
     align-items: center;
+    z-index: 500;
+    box-shadow: 0 2px 5px rgba(0, 0, 0, 0.3);
+}
+
+.btn-floating i {
+    display: block;
+    width: 100%;
+    height: 100%;
+    text-align: center;
+    line-height: 34px;
+}
+
+.btn-floating i.fa-download {
+    font-size: 24px;
 }
 
 #clear-button {
-    position: absolute;
+    position: fixed;
     bottom: 80px;
     right: 20px;
 }
@@ -114,16 +117,10 @@ html, body {
 }
 
 a {
-    font-family: 'Montserrat', sans-serif; /* Change the font family */
-    text-decoration: none; /* Remove the underline */
-    color: #eeeeee; /* Set the text color */
+    font-family: 'Montserrat', sans-serif;
+    text-decoration: none;
     transition: color 0.2s ease-in-out;
 }
-
-a:hover {
-    color: #ffffff;
-}
-
 
 .leaflet-control-color-scale {
     display: block;
@@ -184,8 +181,3 @@ a:hover {
 .leaflet-tooltip {
     visibility: visible;
 }
-
-
-
-
-

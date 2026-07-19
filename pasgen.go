@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	gdj "github.com/pitchinnate/golangGeojsonDijkstra"
+	"log"
 	"os"
 )
 
@@ -75,23 +76,25 @@ func writeOutput(output interface{}, filename string) {
 	//	Convert the output struct to json
 	jsonOutput, err := json.Marshal(output)
 	if err != nil {
-		panic(err)
+		log.Printf("Error writing output file %s: %v", filename, err)
+		return
 	}
 
 	//	Create a file and write the json to it
 	file, err := os.Create(filename)
 	if err != nil {
-		panic(err)
+		log.Printf("Error writing output file %s: %v", filename, err)
+		return
 	}
 	defer func(file *os.File) {
-		err := file.Close()
-		if err != nil {
-			panic(err)
+		if err := file.Close(); err != nil {
+			log.Printf("Error closing output file %s: %v", filename, err)
 		}
 	}(file)
 
 	_, err = file.Write(jsonOutput)
 	if err != nil {
-		panic(err)
+		log.Printf("Error writing output file %s: %v", filename, err)
+		return
 	}
 }

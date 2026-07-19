@@ -1,5 +1,5 @@
 runtime.log
 /temp/
 /bin/
-/dataset/splitCoords.geojson
 .idea/
+.env
