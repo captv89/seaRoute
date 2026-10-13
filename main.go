@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"io"
 	"log"
@@ -14,15 +13,15 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/captv89/seaRoute/route"
 	"github.com/gin-gonic/gin"
-	geo "github.com/kellydunn/golang-geo"
 	gdj "github.com/pitchinnate/golangGeojsonDijkstra"
 )
 
 // App holds the application state
 type App struct {
 	PortData   []Port
-	RouteGraph gdj.FeatureCollection
+	RouteGraph *route.Graph
 }
 
 // WaypointRequest represents a validated waypoint calculation request
@@ -76,12 +75,12 @@ func main() {
 	log.Printf("Loaded %d ports", len(app.PortData))
 
 	// Pre-load and cache the route graph at startup
-	routeGraph, err := loadRouteGraph()
+	routeGraph, err := route.Load("dataset/marnet_densified_v2.geojson")
 	if err != nil {
 		log.Fatalf("Error loading route graph: %v", err)
 	}
 	app.RouteGraph = routeGraph
-	log.Printf("Route graph loaded with %d features", len(app.RouteGraph.Features))
+	log.Println("Route graph loaded")
 
 	// Set the router as the default one provided by Gin
 	router := gin.Default()
@@ -216,80 +215,24 @@ func main() {
 	log.Println("Server exited gracefully")
 }
 
-// loadRouteGraph loads and caches the GeoJSON route graph at startup
-func loadRouteGraph() (gdj.FeatureCollection, error) {
-	var fc gdj.FeatureCollection
-	var data []byte
-	var err error
-
-	// Check if splitCoords.geojson exists
-	if _, statErr := os.Stat("dataset/splitCoords.geojson"); os.IsNotExist(statErr) {
-		log.Println("splitCoords.geojson does not exist. Reading original file.")
-		data, err = os.ReadFile("dataset/marnet_densified_v2.geojson")
-		if err != nil {
-			return fc, fmt.Errorf("failed to read route data: %w", err)
-		}
-
-		if err := json.Unmarshal(data, &fc); err != nil {
-			return fc, fmt.Errorf("failed to parse route data: %w", err)
-		}
-
-		// Split the coordinates for better pathfinding
-		fc = splitter(fc)
-	} else {
-		log.Println("splitCoords.geojson exists. Reading splitCoords.geojson file.")
-		data, err = os.ReadFile("dataset/splitCoords.geojson")
-		if err != nil {
-			return fc, fmt.Errorf("failed to read split route data: %w", err)
-		}
-
-		if err := json.Unmarshal(data, &fc); err != nil {
-			return fc, fmt.Errorf("failed to parse split route data: %w", err)
-		}
-	}
-
-	return fc, nil
-}
-
 // calculatePassageInfo calculates the ocean waypoints and distance between two coordinates
-func calculatePassageInfo(originCoords, destinationCoords gdj.Position, routeName string, fc gdj.FeatureCollection) (Output, error) {
-	path, distance, err := fc.FindPath(originCoords, destinationCoords, 0.00001)
+func calculatePassageInfo(originCoords, destinationCoords gdj.Position, routeName string, g *route.Graph) (Output, error) {
+	r, err := g.Route(originCoords, destinationCoords)
 	if err != nil {
 		return Output{}, fmt.Errorf("pathfinding failed: %w", err)
 	}
 
-	if len(path) == 0 {
-		return Output{}, fmt.Errorf("no path found between the given coordinates")
-	}
-
-	distanceInKm := distance / 1000
-
-	// Get the first and last coordinates of the path
-	lastWp := path[0]
-	firstWp := path[len(path)-1]
-
-	// Calculate the gc distance between the origin coordinates and the first waypoint
-	distToFirstWp := CalcDistance(originCoords, firstWp)
-	// Calculate gc distance between the destination coordinates and the last waypoint
-	distFromLastWp := CalcDistance(destinationCoords, lastWp)
-	// Total distance of the path
-	totalDistance := distToFirstWp + distanceInKm + distFromLastWp
+	leg := r.Legs[0]
+	totalDistance := leg.DistanceM / 1000
+	networkDistance := leg.NetworkM / 1000
+	// Connector lengths at each end, off the network
+	distToFirstWp := route.Distance(originCoords, leg.Path[1]) / 1000
+	distFromLastWp := route.Distance(leg.Path[len(leg.Path)-2], destinationCoords) / 1000
 
 	log.Printf("Route: %s | Total: %.2f Km (Origin->WP: %.2f, WP: %.2f, WP->Dest: %.2f)",
-		routeName, totalDistance, distToFirstWp, distanceInKm, distFromLastWp)
+		routeName, totalDistance, distToFirstWp, networkDistance, distFromLastWp)
 
-	// Generate output geojson
-	output := generateOutput(path, originCoords, destinationCoords, totalDistance, distToFirstWp, distFromLastWp, distanceInKm, routeName)
-
-	return output, nil
-}
-
-// CalcDistance calculates the great circle distance between two points in kilometers
-func CalcDistance(p1, p2 gdj.Position) float64 {
-	wp1 := geo.NewPoint(p1[1], p1[0])
-	wp2 := geo.NewPoint(p2[1], p2[0])
-
-	return wp1.GreatCircleDistance(wp2)
+	return generateOutput(r.Path, originCoords, destinationCoords, totalDistance, distToFirstWp, distFromLastWp, networkDistance, routeName), nil
 }
 
 // filterPorts filters the ports from the []Port struct

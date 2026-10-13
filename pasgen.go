@@ -1,10 +1,7 @@
 package main
 
 import (
-	"encoding/json"
 	gdj "github.com/pitchinnate/golangGeojsonDijkstra"
-	"log"
-	"os"
 )
 
 type Feature struct {
@@ -67,34 +64,5 @@ func generateOutput(path gdj.Path, oCoords gdj.Position, dCoords gdj.Position, t
 	output.Type = "FeatureCollection"
 	output.Name = "Short Sea Route"
 
-	writeOutput(output, "temp/output.geojson")
 	return output
-}
-
-// Generic Function to write the output to a file
-func writeOutput(output interface{}, filename string) {
-	//	Convert the output struct to json
-	jsonOutput, err := json.Marshal(output)
-	if err != nil {
-		log.Printf("Error writing output file %s: %v", filename, err)
-		return
-	}
-
-	//	Create a file and write the json to it
-	file, err := os.Create(filename)
-	if err != nil {
-		log.Printf("Error writing output file %s: %v", filename, err)
-		return
-	}
-	defer func(file *os.File) {
-		if err := file.Close(); err != nil {
-			log.Printf("Error closing output file %s: %v", filename, err)
-		}
-	}(file)
-
-	_, err = file.Write(jsonOutput)
-	if err != nil {
-		log.Printf("Error writing output file %s: %v", filename, err)
-		return
-	}
 }
