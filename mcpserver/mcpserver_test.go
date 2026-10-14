@@ -52,6 +52,25 @@ func call(t *testing.T, cs *mcp.ClientSession, name string, args any, out any) *
 	return res
 }
 
+func TestDistanceToGoPath(t *testing.T) {
+	cs := session(t)
+	var plain, withPath distanceOut
+	args := map[string]any{"from": map[string]any{"port": "Rotterdam"}, "to": map[string]any{"port": "Gdynia"}}
+	call(t, cs, "distance_to_go", args, &plain)
+	args["include_path"] = true
+	call(t, cs, "distance_to_go", args, &withPath)
+	if len(plain.Path) != 0 {
+		t.Errorf("path returned without include_path: %d points", len(plain.Path))
+	}
+	if len(withPath.Path) < 2 || withPath.DistanceNM != plain.DistanceNM {
+		t.Fatalf("include_path: %d points, %.1f nm; want a path and %.1f nm", len(withPath.Path), withPath.DistanceNM, plain.DistanceNM)
+	}
+	first, last := withPath.Path[0], withPath.Path[len(withPath.Path)-1]
+	if first != ports["Rotterdam"] || last != ports["Gdynia"] {
+		t.Errorf("path runs %v to %v; want the two ports", first, last)
+	}
+}
+
 func TestDistanceToGoAvoid(t *testing.T) {
 	cs := session(t)
 	var via, round distanceOut

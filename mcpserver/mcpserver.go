@@ -33,11 +33,13 @@ type distanceIn struct {
 	From Point `json:"from" jsonschema:"ship position"`
 	To   Point `json:"to" jsonschema:"destination"`
 	Passages
+	IncludePath bool `json:"include_path,omitempty" jsonschema:"return the route geometry as [lon, lat] pairs"`
 }
 
 type distanceOut struct {
-	DistanceNM float64  `json:"distance_nm" jsonschema:"sea distance in nautical miles, rounded to 0.1"`
-	Passages   []string `json:"passages" jsonschema:"tagged canals and straits on the route, in order"`
+	DistanceNM float64          `json:"distance_nm" jsonschema:"sea distance in nautical miles, rounded to 0.1"`
+	Passages   []string         `json:"passages" jsonschema:"tagged canals and straits on the route, in order"`
+	Path       []route.Position `json:"path,omitempty" jsonschema:"route geometry as [lon, lat] pairs, when include_path is set"`
 }
 
 type routeIn struct {
@@ -87,7 +89,11 @@ func New(g *route.Graph, ports PortFinder) *mcp.Server {
 		if err != nil {
 			return nil, distanceOut{}, err
 		}
-		return nil, distanceOut{DistanceNM: round1(r.DistanceNM()), Passages: r.Passages}, nil
+		out := distanceOut{DistanceNM: round1(r.DistanceNM()), Passages: r.Passages}
+		if in.IncludePath {
+			out.Path = r.Path
+		}
+		return nil, out, nil
 	})
 
 	mcp.AddTool(s, &mcp.Tool{
