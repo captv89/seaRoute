@@ -15,4 +15,8 @@
   unless a request opens them.
 
 ## port-list.sqlite — port names and positions
-- Origin and licence not recorded in this repo. To be confirmed.
+
+- Built by hand by the seaRoute author from UNECE UN/LOCODE (United Nations Code
+  for Trade and Transport Locations), https://unece.org/trade/cefact/unlocode-code-list-country-and-territory
+- UNECE publishes UN/LOCODE free of charge. No formal licence text was found;
+  UNECE's website terms of use apply. Credit: "Source: UN/LOCODE, UNECE".

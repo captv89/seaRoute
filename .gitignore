@@ -6,3 +6,4 @@ Makefile
 seaRoute
 /web/static/data/
 
+.DS_Store

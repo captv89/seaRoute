@@ -1,7 +1,7 @@
 # syntax=docker/dockerfile:1
 
 # --- Build Stage ---
-FROM golang:1.25-alpine AS builder
+FROM golang:1.26.9-alpine3.24 AS builder
 
 WORKDIR /app
 
@@ -19,7 +19,7 @@ COPY . .
 RUN CGO_ENABLED=1 CGO_CFLAGS="-D_LARGEFILE64_SOURCE" go build -ldflags='-s -w' -o /searoute
 
 # --- Runtime Stage ---
-FROM alpine:3.19
+FROM alpine:3.24
 
 # Install runtime dependencies for SQLite
 RUN apk add --no-cache ca-certificates libc6-compat wget
