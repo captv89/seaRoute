@@ -1,5 +1,7 @@
 // App Configuration
 const OWM_API_KEY = (window.__APP_CONFIG__ && window.__APP_CONFIG__.owmApiKey) || '';
+// CARTO basemaps need a key since 2026; without one their layers are hidden
+const CARTO_API_KEY = (window.__APP_CONFIG__ && window.__APP_CONFIG__.cartoApiKey) || '';
 
 // Create a map and add it to the page
 const spinOps = {
@@ -49,10 +51,11 @@ const map = L.map("map", {
     preferCanvas: true,
 }).setView([0, 0], 2);
 
-L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager_labels_under/{z}/{x}/{y}{r}.png', {
-    attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>',
-    subdomains: 'abcd',
-    maxZoom: 20
+// OpenStreetMap is the default base map; it needs no key
+let osm = L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
+    attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
+    maxZoom: 19,
+    className: 'map-tiles'
 }).addTo(map);
 
 L.tileLayer('https://tiles.openseamap.org/seamark/{z}/{x}/{y}.png', {
@@ -60,29 +63,25 @@ L.tileLayer('https://tiles.openseamap.org/seamark/{z}/{x}/{y}.png', {
 }).addTo(map);
 
 // Define base layers
-let osm = L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
-    attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
-    className: 'map-tiles'
-});
 
 let openSeaMap = L.tileLayer('https://tiles.openseamap.org/seamark/{z}/{x}/{y}.png', {
     attribution: 'Map data: &copy; <a href="http://www.openseamap.org">OpenSeaMap</a> contributors'
 });
 
-let cartoLight = L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png', {
-    attribution: 'Map tiles by Carto, under CC BY 3.0. Data by OpenStreetMap, under ODbL.',
+let cartoLight = L.tileLayer(`https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png?key=${CARTO_API_KEY}`, {
+    attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>',
     maxZoom: 18,
     className: 'map-tiles'
 });
 
-let cartoDark = L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
-    attribution: 'Map tiles by Carto, under CC BY 3.0. Data by OpenStreetMap, under ODbL.',
+let cartoDark = L.tileLayer(`https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png?key=${CARTO_API_KEY}`, {
+    attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>',
     maxZoom: 18,
     className: 'map-tiles'
 });
 
-let cartoVoyager = L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager_labels_under/{z}/{x}/{y}{r}.png', {
-    attribution: 'Map tiles by Carto, under CC BY 3.0. Data by OpenStreetMap, under ODbL.',
+let cartoVoyager = L.tileLayer(`https://{s}.basemaps.cartocdn.com/rastertiles/voyager_labels_under/{z}/{x}/{y}{r}.png?key=${CARTO_API_KEY}`, {
+    attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>',
     maxZoom: 18,
     className: 'map-tiles'
 });
@@ -373,10 +372,12 @@ function loadPortData() {
 let baseMaps = {
     "OpenStreetMap": osm,
     "OpenSeaMap": openSeaMap,
-    "Carto Light": cartoLight,
-    "Carto Dark": cartoDark,
-    "Carto Voyager": cartoVoyager,
 };
+if (CARTO_API_KEY) {
+    baseMaps["Carto Light"] = cartoLight;
+    baseMaps["Carto Dark"] = cartoDark;
+    baseMaps["Carto Voyager"] = cartoVoyager;
+}
 
 let weatherLayers = {
     "Cloud": cloud,

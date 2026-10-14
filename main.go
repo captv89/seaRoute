@@ -102,6 +102,7 @@ func main() {
 	templateVars := func() gin.H {
 		return gin.H{
 			"owmApiKey":    os.Getenv("OWM_API_KEY"),
+			"cartoApiKey":  os.Getenv("CARTO_API_KEY"),
 			"gaTrackingID": os.Getenv("GA_TRACKING_ID"),
 		}
 	}
