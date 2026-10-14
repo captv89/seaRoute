@@ -25,19 +25,29 @@ Navigate to the project directory:
 cd seaRoute
 ```
 
-Install the dependencies:
-
-```go
-go get github.com/gin-gonic/gin github.com/pitchinnate/golangGeojsonDijkstra github.com/kellydunn/golang-geo
-```
-
-
-Start the server:
-```go
-go run main.go
+Start the server (Go downloads the dependencies on first run):
+```bash
+go run .
 ```
 
 Open your browser and navigate to http://localhost:8080 to use the application.
+
+### Environment
+
+| Variable | Purpose |
+|---|---|
+| `PORT` | HTTP port (default 8080) |
+| `CARTO_API_KEY` | CARTO base maps. Without it the map uses OpenStreetMap. |
+| `OWM_API_KEY` | OpenWeatherMap overlay |
+| `GA_TRACKING_ID` | Google Analytics (optional) |
+
+CARTO keys can be restricted to a domain. Use a key allowed for the host you serve from: the production key on the production domain, a separate key allowed for `localhost` when running locally:
+
+```bash
+CARTO_API_KEY=<localhost key> go run .
+```
+
+With Docker Compose, the variables come from `.env` next to `docker-compose.yml`. Create the container with `docker compose up -d` so it reads that file; a container recreated from an old container's configuration keeps the old variables.
 
 ## Usage
 
