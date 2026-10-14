@@ -14,8 +14,10 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/captv89/seaRoute/mcpserver"
 	"github.com/captv89/seaRoute/route"
 	"github.com/gin-gonic/gin"
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
 // App holds the application state
@@ -181,6 +183,14 @@ func main() {
 
 		c.JSON(http.StatusOK, data)
 	})
+
+	// MCP endpoint: distance_to_go, route and list_passages for AI agents
+	mcpServer := mcpserver.New(app.RouteGraph, func(name string) (route.Position, bool) {
+		lon, lat, err := app.getPortCoordinates(name)
+		return route.Position{lon, lat}, err == nil
+	})
+	mcpHandler := mcp.NewStreamableHTTPHandler(func(*http.Request) *mcp.Server { return mcpServer }, nil)
+	router.Any("/mcp", gin.WrapH(mcpHandler))
 
 	// Start server with graceful shutdown
 	port := os.Getenv("PORT")
