@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -15,7 +16,6 @@ import (
 
 	"github.com/captv89/seaRoute/route"
 	"github.com/gin-gonic/gin"
-	gdj "github.com/pitchinnate/golangGeojsonDijkstra"
 )
 
 // App holds the application state
@@ -28,6 +28,10 @@ type App struct {
 type WaypointRequest struct {
 	FromPort string `json:"fromPort" binding:"required"`
 	ToPort   string `json:"toPort" binding:"required"`
+	// Avoid lists passages to keep out of, e.g. ["kiel", "suez"]. Optional.
+	Avoid []string `json:"avoid"`
+	// Allow opens passages closed by default (the Arctic routes). Optional.
+	Allow []string `json:"allow"`
 }
 
 // Rate limiting state
@@ -75,7 +79,7 @@ func main() {
 	log.Printf("Loaded %d ports", len(app.PortData))
 
 	// Pre-load and cache the route graph at startup
-	routeGraph, err := route.Load("dataset/marnet_densified_v2.geojson")
+	routeGraph, err := route.Load("dataset/marnet_plus_5km.geojson")
 	if err != nil {
 		log.Fatalf("Error loading route graph: %v", err)
 	}
@@ -159,12 +163,16 @@ func main() {
 			return
 		}
 
-		originCoords := gdj.Position{originLong, originLat}
-		destCoords := gdj.Position{destLong, destLat}
+		originCoords := route.Position{originLong, originLat}
+		destCoords := route.Position{destLong, destLat}
 		routeName := fmt.Sprintf("%s -> %s", req.FromPort, req.ToPort)
 
 		// Calculate the passage using the cached route graph
-		data, err := calculatePassageInfo(originCoords, destCoords, routeName, app.RouteGraph)
+		data, err := calculatePassageInfo(originCoords, destCoords, routeName, app.RouteGraph, route.Options{Avoid: req.Avoid, Allow: req.Allow})
+		if errors.Is(err, route.ErrUnknownPassage) {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
 		if err != nil {
 			log.Printf("Error calculating passage for %s: %v", routeName, err)
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to calculate route"})
@@ -217,8 +225,8 @@ func main() {
 }
 
 // calculatePassageInfo calculates the ocean waypoints and distance between two coordinates
-func calculatePassageInfo(originCoords, destinationCoords gdj.Position, routeName string, g *route.Graph) (Output, error) {
-	r, err := g.Route(originCoords, destinationCoords)
+func calculatePassageInfo(originCoords, destinationCoords route.Position, routeName string, g *route.Graph, opts route.Options) (Output, error) {
+	r, err := g.Route([]route.Position{originCoords, destinationCoords}, opts)
 	if err != nil {
 		return Output{}, fmt.Errorf("pathfinding failed: %w", err)
 	}
@@ -233,7 +241,7 @@ func calculatePassageInfo(originCoords, destinationCoords gdj.Position, routeNam
 	log.Printf("Route: %s | Total: %.2f Km (Origin->WP: %.2f, WP: %.2f, WP->Dest: %.2f)",
 		routeName, totalDistance, distToFirstWp, networkDistance, distFromLastWp)
 
-	return generateOutput(r.Path, originCoords, destinationCoords, totalDistance, distToFirstWp, distFromLastWp, networkDistance, routeName), nil
+	return generateOutput(r.Path, originCoords, destinationCoords, totalDistance, distToFirstWp, distFromLastWp, networkDistance, routeName, r.Passages), nil
 }
 
 // filterPorts filters the ports from the []Port struct

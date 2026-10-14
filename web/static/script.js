@@ -51,14 +51,14 @@ const map = L.map("map", {
     preferCanvas: true,
 }).setView([0, 0], 2);
 
-// OpenStreetMap is the default base map; it needs no key
+// OpenStreetMap is the fallback base map when no CARTO key is set
 let osm = L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
     attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
     maxZoom: 19,
     className: 'map-tiles'
-}).addTo(map);
+});
 
-L.tileLayer('https://tiles.openseamap.org/seamark/{z}/{x}/{y}.png', {
+let openSeaMapSeamarks = L.tileLayer('https://tiles.openseamap.org/seamark/{z}/{x}/{y}.png', {
     attribution: 'Map data: &copy; <a href="http://www.openseamap.org">OpenSeaMap</a> contributors'
 }).addTo(map);
 
@@ -378,6 +378,9 @@ if (CARTO_API_KEY) {
     baseMaps["Carto Dark"] = cartoDark;
     baseMaps["Carto Voyager"] = cartoVoyager;
 }
+// Carto Voyager is the default base map; without a key its tiles are watermarked
+(CARTO_API_KEY ? cartoVoyager : osm).addTo(map);
+openSeaMapSeamarks.bringToFront();
 
 let weatherLayers = {
     "Cloud": cloud,
