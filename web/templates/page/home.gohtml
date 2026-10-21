@@ -1,38 +1,586 @@
 {{template "top" .}}
 
-<div class="container form">
-    <form>
-        <div class="row g-3 align-items-end">
-            <div class="col-md-4">
-                <div class="position-relative">
-                    <label for="from-input" class="form-label">From</label>
-                    <input id="from-input" type="text" class="form-control" name="from-input" autocomplete="off" placeholder="Enter origin port">
-                    <div class="from-autocomplete-items autocomplete-items"></div>
+<!-- Main Application Body -->
+<div class="flex-1 flex relative overflow-hidden">
+    <!-- DESKTOP COLLAPSED STRIP (Visible when sidebar is collapsed) -->
+    <aside class="hidden flex-col items-center justify-between py-3 px-2 w-12 bg-surface-container-lowest border-r border-surface-container-high z-30 transition-all duration-300 ease-in-out shrink-0" id="collapsed-sidebar">
+        <div class="flex flex-col items-center gap-4">
+            <!-- Re-expand button -->
+            <button class="w-8 h-8 rounded-sm bg-surface-container hover:bg-primary hover:text-on-primary text-primary border border-surface-variant flex items-center justify-center transition-all shadow cursor-pointer" id="btn-expand-sidebar" title="Expand Routing Panel (Ctrl+B)" type="button">
+                <span class="material-symbols-outlined text-[18px]">chevron_right</span>
+            </button>
+            <div class="w-6 h-px bg-surface-container-high"></div>
+            <!-- Vertical metric indicators -->
+            <div class="flex flex-col items-center gap-3 text-center">
+                <div class="flex flex-col items-center p-1 rounded-sm hover:bg-surface-container cursor-pointer" id="collapsed-metric-dist" title="Total Distance">
+                    <span class="material-symbols-outlined text-primary text-[17px]">straighten</span>
+                    <span class="font-mono text-[10px] text-primary font-bold mt-0.5" id="collapsed-dist-val">--</span>
+                    <span class="font-mono text-[8px] text-on-surface-variant uppercase">NM</span>
                 </div>
-            </div>
-            <div class="col-md-4">
-                <div class="position-relative">
-                    <label for="to-input" class="form-label">To</label>
-                    <input id="to-input" type="text" class="form-control" name="to-input" autocomplete="off" placeholder="Enter destination port">
-                    <div class="to-autocomplete-items autocomplete-items"></div>
+                <div class="flex flex-col items-center p-1 rounded-sm hover:bg-surface-container cursor-pointer" id="collapsed-metric-pts" title="Route Waypoints">
+                    <span class="material-symbols-outlined text-secondary text-[17px]">alt_route</span>
+                    <span class="font-mono text-[9px] text-secondary font-bold mt-0.5" id="collapsed-pts-val">--</span>
+                    <span class="font-mono text-[8px] text-on-surface-variant uppercase">PTS</span>
                 </div>
-            </div>
-            <div class="col-md-2">
-                <button class="btn btn-primary w-100" type="submit">Calculate</button>
+                <div class="flex flex-col items-center p-1 rounded-sm hover:bg-surface-container cursor-pointer" id="btn-quick-sim-trigger" title="Passage Playback / Simulation">
+                    <span class="material-symbols-outlined text-tertiary text-[17px]">play_circle</span>
+                    <span class="font-mono text-[8px] text-tertiary uppercase">SIM</span>
+                </div>
+                <div class="flex flex-col items-center p-1 rounded-sm hover:bg-surface-container cursor-pointer" id="collapsed-metric-avoid" title="Passage Constraints">
+                    <span class="material-symbols-outlined text-warning text-[17px]">warning</span>
+                    <span class="font-mono text-[8px] text-warning" id="collapsed-avoid-val">AVOID</span>
+                </div>
             </div>
         </div>
-    </form>
+    </aside>
+
+    <!-- FULL INTERACTIVE SIDEBAR PANE -->
+    <aside class="absolute lg:relative inset-y-0 left-0 z-30 w-full max-w-full sm:w-[480px] lg:w-[460px] bg-surface-container-lowest border-r border-surface-container-high flex flex-col justify-between overflow-hidden shadow-2xl lg:shadow-none transition-transform duration-300 ease-in-out" id="main-sidebar">
+        <!-- Panel Header with Collapse Button -->
+        <div class="p-3 border-b border-surface-container-high flex items-center justify-between bg-surface-container-lowest shrink-0">
+            <div class="flex items-center gap-2">
+                <div class="w-7 h-7 rounded-sm bg-primary/10 text-primary flex items-center justify-center border border-primary/20">
+                    <span class="material-symbols-outlined text-[17px]">tune</span>
+                </div>
+                <div>
+                    <h2 class="font-label-lg text-[13px] font-bold uppercase tracking-wider text-on-surface">Route Planning &amp; Dijkstra</h2>
+                    <span class="font-mono text-[10px] text-on-surface-variant">Marnet Navigation Mesh v2024.3</span>
+                </div>
+            </div>
+            <div class="flex items-center gap-1">
+                <!-- Desktop Collapse Button -->
+                <button class="hidden lg:flex items-center justify-center w-7 h-7 rounded-sm hover:bg-surface-container text-on-surface-variant hover:text-on-surface border border-transparent hover:border-surface-variant transition-colors cursor-pointer" id="btn-collapse-sidebar" title="Collapse panel" type="button">
+                    <span class="material-symbols-outlined text-[18px]">chevron_left</span>
+                </button>
+                <!-- Mobile Close Button -->
+                <button class="lg:hidden flex items-center justify-center w-7 h-7 rounded-sm hover:bg-surface-container text-on-surface-variant cursor-pointer" id="mobile-sidebar-close" title="Close Panel" type="button">
+                    <span class="material-symbols-outlined text-[20px]">close</span>
+                </button>
+            </div>
+        </div>
+
+        <!-- Scrollable Configuration Content -->
+        <div class="flex-1 overflow-y-auto custom-scroll p-3 flex flex-col gap-3">
+            <!-- 1. ALGORITHM SELECTION -->
+            <div class="p-2.5 rounded-sm bg-surface-container-low border border-surface-container-high flex flex-col gap-2">
+                <div class="flex items-center justify-between">
+                    <label class="font-label-sm text-[10px] uppercase font-bold text-primary flex items-center gap-1.5">
+                        <span class="material-symbols-outlined text-[14px]">device_hub</span> Routing Algorithm
+                    </label>
+                    <span class="font-mono text-[9px] px-1.5 py-0.5 rounded-sm bg-surface-container text-secondary border border-surface-variant" id="algo-perf-badge">O(E + V log V)</span>
+                </div>
+                <!-- Crisp Segmented Selector -->
+                <div class="grid grid-cols-2 p-1 bg-surface-container-lowest rounded-sm border border-surface-container-high gap-1">
+                    <button class="algo-pill-active py-1.5 px-2 rounded-sm text-[11px] font-mono font-medium flex items-center justify-center gap-1.5 transition-all bg-primary-container text-on-primary-container shadow-sm cursor-pointer" id="algo-btn-dijkstra" type="button">
+                        <span class="material-symbols-outlined text-[14px]">account_tree</span>
+                        <span>Dijkstra (Default)</span>
+                    </button>
+                    <button class="py-1.5 px-2 rounded-sm text-[11px] font-mono font-medium flex items-center justify-center gap-1.5 transition-all text-on-surface-variant hover:text-on-surface hover:bg-surface-container cursor-pointer" id="algo-btn-astar" type="button">
+                        <span class="material-symbols-outlined text-[14px]">bolt</span>
+                        <span>A* (A-Star Engine)</span>
+                    </button>
+                </div>
+                <p class="text-[10px] font-mono text-on-surface-variant" id="algo-explanation">
+                    Standard Dijkstra traverses lowest cumulative nautical weight across graph nodes. Guarantees global optimum.
+                </p>
+            </div>
+
+            <!-- 2. ORIGIN & DESTINATION SELECTORS -->
+            <div class="flex flex-col gap-2">
+                <!-- Origin -->
+                <div class="flex flex-col gap-1.5 p-2.5 rounded-sm bg-surface-container-low border border-surface-container-high">
+                    <div class="flex items-center justify-between">
+                        <label class="font-label-sm text-[11px] font-semibold uppercase text-primary flex items-center gap-1" for="origin-preset">
+                            <span class="material-symbols-outlined text-[14px]">trip_origin</span> Origin Port / Point
+                        </label>
+                        <button class="font-label-sm text-[10px] text-secondary hover:underline flex items-center gap-0.5 cursor-pointer" id="btn-map-pick-origin" type="button">
+                            <span class="material-symbols-outlined text-[12px]">place</span> Pick on map
+                        </button>
+                    </div>
+                    <div class="relative">
+                        <select class="w-full bg-surface-container-lowest text-on-surface font-label-md text-[11px] px-2.5 py-1.5 rounded-sm border border-surface-container-high focus:outline-none focus:ring-1 focus:ring-primary appearance-none cursor-pointer" id="origin-preset">
+                            <option selected="" value="NLRTM">Rotterdam, Netherlands (NLRTM) [51.95° N, 04.05° E]</option>
+                            <option value="BEANR">Antwerp-Bruges, Belgium (BEANR) [51.24° N, 04.40° E]</option>
+                            <option value="DEHAM">Hamburg, Germany (DEHAM) [53.55° N, 09.99° E]</option>
+                            <option value="USNYC">New York / New Jersey, USA (USNYC) [40.68° N, 74.04° W]</option>
+                            <option value="CNSHA">Shanghai, China (CNSHA) [31.23° N, 121.47° E]</option>
+                            <option value="CUSTOM">-- Custom Coordinates / Search --</option>
+                        </select>
+                        <span class="material-symbols-outlined absolute right-2 top-2 pointer-events-none text-on-surface-variant text-[16px]">expand_more</span>
+                    </div>
+                    <!-- Integrated Port Search & Autocomplete Container -->
+                    <div class="relative mt-0.5">
+                        <div class="flex items-center gap-1">
+                            <span class="material-symbols-outlined text-[14px] text-on-surface-variant">search</span>
+                            <input type="text" id="origin-search" class="w-full bg-surface-container-lowest text-on-surface font-mono text-[10px] px-2 py-1 rounded-sm border border-surface-container-high focus:outline-none focus:ring-1 focus:ring-primary" placeholder="Type port name or UN/LOCODE to search..." autocomplete="off">
+                        </div>
+                        <div id="origin-autocomplete" class="hidden absolute z-50 left-0 right-0 top-full mt-1 bg-surface-container-lowest border border-surface-container-high rounded-sm shadow-2xl max-h-48 overflow-y-auto custom-scroll text-on-surface font-mono text-[10px]"></div>
+                    </div>
+                    <div class="grid grid-cols-2 gap-2 mt-0.5">
+                        <div class="flex flex-col">
+                            <span class="font-mono text-[9px] text-on-surface-variant">LATITUDE (DEC / DMS)</span>
+                            <input class="w-full bg-surface-container-lowest text-on-surface font-mono text-[10px] px-2 py-1 rounded-sm border border-surface-container-high focus:outline-none focus:ring-1 focus:ring-primary" id="origin-lat" type="text" value="51° 57.00' N (51.9500)"/>
+                        </div>
+                        <div class="flex flex-col">
+                            <span class="font-mono text-[9px] text-on-surface-variant">LONGITUDE (DEC / DMS)</span>
+                            <input class="w-full bg-surface-container-lowest text-on-surface font-mono text-[10px] px-2 py-1 rounded-sm border border-surface-container-high focus:outline-none focus:ring-1 focus:ring-primary" id="origin-lon" type="text" value="004° 03.00' E (4.0500)"/>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Swap Button -->
+                <div class="flex items-center justify-center -my-2 relative z-10">
+                    <button class="w-6 h-6 rounded-sm bg-surface-container-high border border-surface-variant hover:bg-surface-bright flex items-center justify-center text-primary shadow transition-all hover:scale-105 active:scale-95 cursor-pointer" id="btn-reverse" title="Swap Origin and Destination" type="button">
+                        <span class="material-symbols-outlined text-[14px]">swap_vert</span>
+                    </button>
+                </div>
+
+                <!-- Destination -->
+                <div class="flex flex-col gap-1.5 p-2.5 rounded-sm bg-surface-container-low border border-surface-container-high">
+                    <div class="flex items-center justify-between">
+                        <label class="font-label-sm text-[11px] font-semibold uppercase text-secondary flex items-center gap-1" for="dest-preset">
+                            <span class="material-symbols-outlined text-[14px]">location_on</span> Destination Port / Point
+                        </label>
+                        <button class="font-label-sm text-[10px] text-secondary hover:underline flex items-center gap-0.5 cursor-pointer" id="btn-map-pick-dest" type="button">
+                            <span class="material-symbols-outlined text-[12px]">place</span> Pick on map
+                        </button>
+                    </div>
+                    <div class="relative">
+                        <select class="w-full bg-surface-container-lowest text-on-surface font-label-md text-[11px] px-2.5 py-1.5 rounded-sm border border-surface-container-high focus:outline-none focus:ring-1 focus:ring-primary appearance-none cursor-pointer" id="dest-preset">
+                            <option selected="" value="SGSIN">Port of Singapore, Singapore (SGSIN) [01.26° N, 103.82° E]</option>
+                            <option value="CNSHA">Port of Shanghai, China (CNSHA) [31.23° N, 121.47° E]</option>
+                            <option value="AEJEA">Jebel Ali / Dubai, UAE (AEJEA) [25.01° N, 55.06° E]</option>
+                            <option value="JPTYO">Port of Tokyo, Japan (JPTYO) [35.65° N, 139.75° E]</option>
+                            <option value="USLAX">Port of Los Angeles, USA (USLAX) [33.74° N, 118.26° W]</option>
+                            <option value="CUSTOM">-- Custom Coordinates / Search --</option>
+                        </select>
+                        <span class="material-symbols-outlined absolute right-2 top-2 pointer-events-none text-on-surface-variant text-[16px]">expand_more</span>
+                    </div>
+                    <!-- Integrated Port Search & Autocomplete Container -->
+                    <div class="relative mt-0.5">
+                        <div class="flex items-center gap-1">
+                            <span class="material-symbols-outlined text-[14px] text-on-surface-variant">search</span>
+                            <input type="text" id="dest-search" class="w-full bg-surface-container-lowest text-on-surface font-mono text-[10px] px-2 py-1 rounded-sm border border-surface-container-high focus:outline-none focus:ring-1 focus:ring-primary" placeholder="Type port name or UN/LOCODE to search..." autocomplete="off">
+                        </div>
+                        <div id="dest-autocomplete" class="hidden absolute z-50 left-0 right-0 top-full mt-1 bg-surface-container-lowest border border-surface-container-high rounded-sm shadow-2xl max-h-48 overflow-y-auto custom-scroll text-on-surface font-mono text-[10px]"></div>
+                    </div>
+                    <div class="grid grid-cols-2 gap-2 mt-0.5">
+                        <div class="flex flex-col">
+                            <span class="font-mono text-[9px] text-on-surface-variant">LATITUDE (DEC / DMS)</span>
+                            <input class="w-full bg-surface-container-lowest text-on-surface font-mono text-[10px] px-2 py-1 rounded-sm border border-surface-container-high focus:outline-none focus:ring-1 focus:ring-primary" id="dest-lat" type="text" value="01° 15.60' N (1.2600)"/>
+                        </div>
+                        <div class="flex flex-col">
+                            <span class="font-mono text-[9px] text-on-surface-variant">LONGITUDE (DEC / DMS)</span>
+                            <input class="w-full bg-surface-container-lowest text-on-surface font-mono text-[10px] px-2 py-1 rounded-sm border border-surface-container-high focus:outline-none focus:ring-1 focus:ring-primary" id="dest-lon" type="text" value="103° 49.20' E (103.8200)"/>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 3. AVOIDANCE OF CERTAIN STRAITS & CANALS -->
+            <div class="p-2.5 rounded-sm bg-surface-container-low border border-surface-container-high flex flex-col gap-2">
+                <div class="flex items-center justify-between">
+                    <label class="font-label-sm text-[10px] uppercase font-bold text-warning flex items-center gap-1.5">
+                        <span class="material-symbols-outlined text-[14px]">block</span> Avoid Passages / Choke Points
+                    </label>
+                    <span class="font-mono text-[9px] px-1.5 py-0.2 rounded-sm bg-surface-container text-on-surface-variant border border-surface-variant" id="avoid-count-badge">0 Blocked</span>
+                </div>
+                <p class="text-[9px] font-mono text-on-surface-variant leading-tight">
+                    Click to toggle graph cost penalties. High cost forces automated rerouting (e.g. Cape of Good Hope).
+                </p>
+                <!-- Interactive avoidance buttons -->
+                <div class="flex flex-wrap gap-1.5" id="avoid-tags-container">
+                    <button class="avoid-pill px-2 py-1 rounded-sm text-[10px] font-mono flex items-center gap-1 transition-all border bg-surface-container-lowest border-surface-container-high text-on-surface hover:border-surface-variant cursor-pointer" data-avoid="suez" type="button">
+                        <span class="material-symbols-outlined text-[12px] opacity-40">circle</span>
+                        <span>Suez Canal</span>
+                    </button>
+                    <button class="avoid-pill px-2 py-1 rounded-sm text-[10px] font-mono flex items-center gap-1 transition-all border bg-surface-container-lowest border-surface-container-high text-on-surface hover:border-surface-variant cursor-pointer" data-avoid="malacca" type="button">
+                        <span class="material-symbols-outlined text-[12px] opacity-40">circle</span>
+                        <span>Malacca Strait</span>
+                    </button>
+                    <button class="avoid-pill px-2 py-1 rounded-sm text-[10px] font-mono flex items-center gap-1 transition-all border bg-surface-container-lowest border-surface-container-high text-on-surface hover:border-surface-variant cursor-pointer" data-avoid="babelmandeb" type="button">
+                        <span class="material-symbols-outlined text-[12px] opacity-40">circle</span>
+                        <span>Bab-el-Mandeb</span>
+                    </button>
+                    <button class="avoid-pill px-2 py-1 rounded-sm text-[10px] font-mono flex items-center gap-1 transition-all border bg-surface-container-lowest border-surface-container-high text-on-surface hover:border-surface-variant cursor-pointer" data-avoid="hormuz" type="button">
+                        <span class="material-symbols-outlined text-[12px] opacity-40">circle</span>
+                        <span>Strait of Hormuz</span>
+                    </button>
+                    <button class="avoid-pill px-2 py-1 rounded-sm text-[10px] font-mono flex items-center gap-1 transition-all border bg-surface-container-lowest border-surface-container-high text-on-surface hover:border-surface-variant cursor-pointer" data-avoid="panama" type="button">
+                        <span class="material-symbols-outlined text-[12px] opacity-40">circle</span>
+                        <span>Panama Canal</span>
+                    </button>
+                    <button class="avoid-pill px-2 py-1 rounded-sm text-[10px] font-mono flex items-center gap-1 transition-all border bg-surface-container-lowest border-surface-container-high text-on-surface hover:border-surface-variant cursor-pointer" data-avoid="gibraltar" type="button">
+                        <span class="material-symbols-outlined text-[12px] opacity-40">circle</span>
+                        <span>Gibraltar</span>
+                    </button>
+                    <button class="avoid-pill px-2 py-1 rounded-sm text-[10px] font-mono flex items-center gap-1 transition-all border bg-surface-container-lowest border-surface-container-high text-on-surface hover:border-surface-variant cursor-pointer" data-avoid="bosphorus" type="button">
+                        <span class="material-symbols-outlined text-[12px] opacity-40">circle</span>
+                        <span>Bosphorus / Dardanelles</span>
+                    </button>
+                    <button class="avoid-pill px-2 py-1 rounded-sm text-[10px] font-mono flex items-center gap-1 transition-all border bg-surface-container-lowest border-surface-container-high text-on-surface hover:border-surface-variant cursor-pointer" data-avoid="kiel" type="button">
+                        <span class="material-symbols-outlined text-[12px] opacity-40">circle</span>
+                        <span>Kiel Canal</span>
+                    </button>
+                    <button class="avoid-pill px-2 py-1 rounded-sm text-[10px] font-mono flex items-center gap-1 transition-all border bg-surface-container-lowest border-surface-container-high text-on-surface hover:border-surface-variant cursor-pointer" data-avoid="oresund" type="button">
+                        <span class="material-symbols-outlined text-[12px] opacity-40">circle</span>
+                        <span>Øresund / The Sound</span>
+                    </button>
+                </div>
+            </div>
+
+            <!-- Compute Action Button -->
+            <button class="w-full bg-primary-container text-on-primary-container py-2.5 px-3 rounded-sm font-label-lg text-[13px] font-bold flex items-center justify-center gap-2 hover:brightness-110 active:brightness-95 shadow-md transition-all cursor-pointer" id="btn-compute" type="button">
+                <span class="material-symbols-outlined text-[18px] animate-spin hidden" id="spinner-compute">progress_activity</span>
+                <span class="material-symbols-outlined text-[18px]" id="icon-compute">calculate</span>
+                <span id="btn-compute-text">Compute Optimal Sea Route</span>
+            </button>
+
+            <!-- Route Metrics Summary -->
+            <div class="p-2.5 bg-surface-container rounded-sm border border-surface-container-high flex flex-col gap-2">
+                <div class="flex items-center justify-between">
+                    <span class="font-label-sm text-[10px] font-bold uppercase text-on-surface flex items-center gap-1">
+                        <span class="material-symbols-outlined text-primary text-[14px]">analytics</span> Route Output Summary
+                    </span>
+                    <span class="font-mono text-[9px] text-on-surface-variant" id="stat-status">Optimal Solved</span>
+                </div>
+                <div class="grid grid-cols-2 gap-2">
+                    <div class="bg-surface-container-low p-2 rounded-sm border border-surface-container-high">
+                        <p class="font-mono text-[9px] uppercase text-on-surface-variant">Total Distance</p>
+                        <p class="font-mono text-[16px] text-primary font-bold leading-tight" id="stat-dist">-- <span class="text-[10px] font-normal">NM</span></p>
+                        <p class="font-mono text-[9px] text-on-surface-variant" id="stat-dist-alt">-- KM • -- MI</p>
+                    </div>
+                    <div class="bg-surface-container-low p-2 rounded-sm border border-surface-container-high">
+                        <p class="font-mono text-[9px] uppercase text-on-surface-variant">Marnet Graph Nodes</p>
+                        <p class="font-mono text-[16px] text-secondary font-bold leading-tight" id="stat-nodes">-- <span class="text-[10px] font-normal">Nodes</span></p>
+                        <p class="font-mono text-[9px] text-tertiary" id="stat-land-incursions">0 Land Incursions</p>
+                    </div>
+                </div>
+                <!-- Transit Speed slider & Duration -->
+                <div class="bg-surface-container-low p-2 rounded-sm border border-surface-container-high flex flex-col gap-1.5">
+                    <div class="flex items-center justify-between">
+                        <span class="font-mono text-[10px] text-on-surface-variant uppercase">Transit Speed: <span class="text-on-surface font-semibold font-mono" id="speed-label">18.0 kts</span></span>
+                        <span class="font-mono text-[11px] text-secondary font-semibold" id="stat-time">--</span>
+                    </div>
+                    <input class="w-full accent-primary h-1 bg-surface-container-highest rounded cursor-pointer" id="speed-slider" max="28" min="8" step="0.5" type="range" value="18"/>
+                    <div class="flex justify-between text-[8px] font-mono text-outline">
+                        <span>8 kts (Eco)</span>
+                        <span>18 kts (Cruising)</span>
+                        <span>28 kts (Fast)</span>
+                    </div>
+                </div>
+                <!-- ROUTE PLAYBACK & SIMULATION ACTION BUTTON -->
+                <button class="w-full py-2 px-3 rounded-sm bg-tertiary/15 hover:bg-tertiary/25 text-tertiary border border-tertiary/30 font-mono text-[11px] font-semibold flex items-center justify-center gap-2 transition-all shadow-sm cursor-pointer" id="btn-start-simulation" type="button">
+                    <span class="material-symbols-outlined text-[16px]">play_circle</span>
+                    <span>Simulate Passage &amp; Play Route</span>
+                </button>
+            </div>
+
+            <!-- 4. WAYPOINT MANIFEST (Tabular Monospace Detail) -->
+            <div class="flex flex-col gap-1.5">
+                <div class="flex items-center justify-between px-1">
+                    <div class="flex items-center gap-1.5">
+                        <span class="material-symbols-outlined text-[14px] text-primary">format_list_numbered</span>
+                        <span class="font-label-sm text-[11px] uppercase font-bold text-on-surface" id="manifest-header">Waypoint Manifest</span>
+                    </div>
+                    <div class="flex items-center gap-1">
+                        <button class="font-mono text-[9px] text-on-surface-variant hover:text-secondary px-1.5 py-0.5 rounded-sm bg-surface-container border border-surface-container-high flex items-center gap-1 cursor-pointer" id="btn-export-csv" title="Export Waypoints as CSV" type="button">
+                            <span class="material-symbols-outlined text-[11px]">download</span> CSV
+                        </button>
+                        <span class="font-mono text-[9px] text-secondary">Marnet Grid</span>
+                    </div>
+                </div>
+                <!-- Manifest Table Container -->
+                <div class="border border-surface-container-high rounded-sm bg-surface-container-lowest overflow-x-auto custom-scroll max-h-48">
+                    <table class="w-full text-left font-mono text-[10px] border-collapse">
+                        <thead>
+                            <tr class="bg-surface-container-high/60 text-on-surface-variant border-b border-surface-container-high text-[9px]">
+                                <th class="py-1 px-2 font-semibold">#</th>
+                                <th class="py-1 px-2 font-semibold">Waypoint &amp; Coordinates</th>
+                                <th class="py-1 px-2 font-semibold text-right">Leg</th>
+                                <th class="py-1 px-2 font-semibold text-right">Cumul</th>
+                            </tr>
+                        </thead>
+                        <tbody class="divide-y divide-surface-container-high/50" id="waypoint-rows">
+                            <tr class="text-on-surface-variant text-center">
+                                <td colspan="4" class="py-3 px-2 text-[10px] text-outline font-mono">No route calculated. Choose origin &amp; destination.</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+
+        <!-- Sidebar Footer Export Actions -->
+        <div class="p-3 border-t border-surface-container-high bg-surface-container-lowest shrink-0 flex flex-col gap-2">
+            <div class="flex items-center justify-between text-outline text-[10px] font-mono">
+                <span>EXPORT CALCULATED ROUTE</span>
+                <span class="text-on-surface-variant">JSON / RFC 7946</span>
+            </div>
+            <div class="grid grid-cols-3 gap-1.5">
+                <button class="px-2 py-1.5 rounded-sm bg-surface-container hover:bg-surface-container-high border border-surface-container-high text-on-surface font-mono text-[10px] flex items-center justify-center gap-1 transition-colors cursor-pointer" id="btn-download-geojson" type="button">
+                    <span class="material-symbols-outlined text-[14px] text-primary">download</span> GeoJSON
+                </button>
+                <button class="px-2 py-1.5 rounded-sm bg-surface-container hover:bg-surface-container-high border border-surface-container-high text-on-surface font-mono text-[10px] flex items-center justify-center gap-1 transition-colors cursor-pointer" id="btn-copy-geojson" type="button">
+                    <span class="material-symbols-outlined text-[14px] text-secondary">content_copy</span> Copy
+                </button>
+                <button class="px-2 py-1.5 rounded-sm bg-surface-container hover:bg-surface-container-high border border-surface-container-high text-on-surface font-mono text-[10px] flex items-center justify-center gap-1 transition-colors cursor-pointer" id="btn-share-route" type="button">
+                    <span class="material-symbols-outlined text-[14px] text-tertiary">share</span> Share
+                </button>
+            </div>
+        </div>
+    </aside>
+
+    <!-- RIGHT EXPANSIVE MAP VIEWPORT -->
+    <main class="flex-1 relative flex flex-col bg-surface-container-lowest overflow-hidden h-full">
+        <!-- Map Top Floating HUD: Live Cursor Readout -->
+        <div class="absolute top-3 left-3 z-20 pointer-events-auto bg-surface-container/90 backdrop-blur-md px-3 py-1.5 rounded-sm border border-surface-container-high shadow-lg flex items-center gap-2">
+            <span class="material-symbols-outlined text-secondary text-[16px]">near_me</span>
+            <span class="font-mono text-[10px] text-on-surface-variant">Cursor:</span>
+            <span class="font-mono text-[11px] text-on-surface font-semibold" id="cursor-coords">Lat: -- | Lon: --</span>
+        </div>
+
+        <!-- EXTENDED MAP LAYER & OVERLAYS SWITCHER HUD (Top Right) -->
+        <div class="absolute top-3 right-3 z-20 flex flex-col items-end gap-2 max-w-[calc(100vw-1.5rem)]">
+            <div class="flex flex-col items-end gap-1">
+                <div class="bg-surface-container/95 backdrop-blur-md p-2 rounded-sm border border-surface-container-high shadow-xl flex flex-col gap-2 w-72 sm:w-80 max-h-[82vh] overflow-y-auto custom-scroll transition-all" id="layer-panel-card">
+                    <div class="flex items-center justify-between pb-1 border-b border-surface-container-high/60 shrink-0">
+                        <div class="flex items-center gap-1.5 text-primary">
+                            <span class="material-symbols-outlined text-[16px]">layers</span>
+                            <span class="font-mono text-[10px] font-bold uppercase tracking-wider text-on-surface">Map Layers &amp; Overlays</span>
+                        </div>
+                        <button class="flex items-center justify-center w-6 h-6 rounded-sm hover:bg-surface-bright text-on-surface-variant hover:text-on-surface transition-colors cursor-pointer" id="btn-collapse-layer-panel" title="Collapse layer panel" type="button">
+                            <span class="material-symbols-outlined text-[16px]" id="layer-panel-chevron">expand_less</span>
+                        </button>
+                    </div>
+                    <div class="flex flex-col gap-2" id="layer-panel-body">
+                        <div class="flex flex-col gap-1">
+                            <span class="font-mono text-[9px] uppercase tracking-wider text-on-surface-variant">Base Maritime Chart</span>
+                            <div class="grid grid-cols-4 gap-1 bg-surface-container-lowest p-0.5 rounded-sm border border-surface-container-high">
+                                <button class="base-layer-btn active px-1.5 py-1 rounded-sm text-[10px] font-mono bg-primary-container text-on-primary-container font-semibold transition-colors text-center cursor-pointer" data-layer="carto-dark" type="button">CARTO Dark</button>
+                                <button class="base-layer-btn px-1.5 py-1 rounded-sm text-[10px] font-mono text-on-surface-variant hover:text-on-surface transition-colors text-center cursor-pointer" data-layer="carto-light" type="button">CARTO Light</button>
+                                <button class="base-layer-btn px-1.5 py-1 rounded-sm text-[10px] font-mono text-on-surface-variant hover:text-on-surface transition-colors text-center cursor-pointer" data-layer="osm" type="button">OSM</button>
+                                <button class="base-layer-btn px-1.5 py-1 rounded-sm text-[10px] font-mono text-on-surface-variant hover:text-on-surface transition-colors text-center cursor-pointer" data-layer="satellite" type="button">Satellite</button>
+                            </div>
+                        </div>
+                        <div class="h-px bg-surface-container-high"></div>
+                        <div class="flex flex-col gap-1.5">
+                            <span class="font-mono text-[9px] uppercase tracking-wider text-on-surface-variant">Tactical Overlays &amp; Weather</span>
+                            <div class="grid grid-cols-1 gap-1 text-[10px] font-mono">
+                                <!-- Marnet Network Grid (Unchecked by default) -->
+                                <label class="flex items-center justify-between p-1 rounded-sm hover:bg-surface-container-high/40 cursor-pointer">
+                                    <span class="flex items-center gap-1.5 text-on-surface"><span class="material-symbols-outlined text-[14px] text-primary">hub</span><span>Marnet Network Grid</span></span>
+                                    <input class="rounded-none border-surface-variant bg-surface-container-lowest text-primary focus:ring-0 cursor-pointer" id="toggle-marnet" type="checkbox"/>
+                                </label>
+
+                                <!-- OWM Weather Layer (Master Toggle + 8-Button Matrix) -->
+                                <div class="flex flex-col gap-1.5 p-1 rounded-sm bg-surface-container-low/60 border border-surface-container-high/50">
+                                    <label class="flex items-center justify-between cursor-pointer" for="toggle-owm">
+                                        <span class="flex items-center gap-1.5 text-on-surface">
+                                            <span class="material-symbols-outlined text-[14px] text-secondary">cloud</span>
+                                            <span class="font-medium">OWM Weather Layer</span>
+                                        </span>
+                                        <input class="rounded-none border-surface-variant bg-surface-container-lowest text-secondary focus:ring-0 cursor-pointer" id="toggle-owm" type="checkbox"/>
+                                    </label>
+                                    <div class="grid grid-cols-4 gap-1 bg-surface-container-lowest p-0.5 rounded-sm border border-surface-container-high text-[9px] font-mono" id="weather-sublayers-grid">
+                                        <button class="weather-btn px-1 py-0.5 rounded-sm text-on-surface-variant hover:text-on-surface transition-colors text-center cursor-pointer" data-weather-layer="clouds" type="button">Clouds</button>
+                                        <button class="weather-btn px-1 py-0.5 rounded-sm text-on-surface-variant hover:text-on-surface transition-colors text-center cursor-pointer" data-weather-layer="precip" type="button">Precip</button>
+                                        <button class="weather-btn active px-1 py-0.5 rounded-sm bg-primary-container text-on-primary-container font-semibold transition-colors text-center cursor-pointer" data-weather-layer="wind" type="button">Wind</button>
+                                        <button class="weather-btn px-1 py-0.5 rounded-sm text-on-surface-variant hover:text-on-surface transition-colors text-center cursor-pointer" data-weather-layer="pressure" type="button">Pressure</button>
+                                        <button class="weather-btn px-1 py-0.5 rounded-sm text-on-surface-variant hover:text-on-surface transition-colors text-center cursor-pointer" data-weather-layer="temp" type="button">Temp</button>
+                                        <button class="weather-btn px-1 py-0.5 rounded-sm text-on-surface-variant hover:text-on-surface transition-colors text-center cursor-pointer" data-weather-layer="radar" type="button">Radar</button>
+                                        <button class="weather-btn px-1 py-0.5 rounded-sm text-on-surface-variant hover:text-on-surface transition-colors text-center cursor-pointer" data-weather-layer="waves" type="button">Waves</button>
+                                        <button class="weather-btn px-1 py-0.5 rounded-sm text-on-surface-variant hover:text-on-surface transition-colors text-center cursor-pointer" data-weather-layer="snow" type="button">Snow</button>
+                                    </div>
+                                </div>
+
+                                <!-- High Risk Area (Checked by default) -->
+                                <label class="flex items-center justify-between p-1 rounded-sm hover:bg-surface-container-high/40 cursor-pointer">
+                                    <span class="flex items-center gap-1.5 text-on-surface"><span class="material-symbols-outlined text-[14px] text-warning">gpp_maybe</span><span class="text-warning">High Risk Area (HRA Piracy)</span></span>
+                                    <input checked="" class="rounded-none border-surface-variant bg-surface-container-lowest text-warning focus:ring-0 cursor-pointer" id="toggle-hra" type="checkbox"/>
+                                </label>
+
+                                <!-- Piracy Incidents (IMB/ASAM) -->
+                                <label class="flex items-center justify-between p-1 rounded-sm hover:bg-surface-container-high/40 cursor-pointer">
+                                    <span class="flex items-center gap-1.5 text-on-surface"><span class="material-symbols-outlined text-[14px] text-error">warning</span><span class="text-error font-medium">Piracy Incidents (ASAM)</span></span>
+                                    <div class="flex items-center gap-1.5">
+                                        <span class="text-[9px] px-1 py-0.2 rounded-sm bg-error/20 text-error font-bold border border-error/40">Live Feed</span>
+                                        <input class="rounded-none border-surface-variant bg-surface-container-lowest text-error focus:ring-0 cursor-pointer" id="toggle-piracy" type="checkbox"/>
+                                    </div>
+                                </label>
+
+                                <!-- World Seaports (WPI) -->
+                                <label class="flex items-center justify-between p-1 rounded-sm hover:bg-surface-container-high/40 cursor-pointer">
+                                    <span class="flex items-center gap-1.5 text-on-surface"><span class="material-symbols-outlined text-[14px] text-primary">anchor</span><span class="text-primary font-medium">World Seaports (WPI)</span></span>
+                                    <div class="flex items-center gap-1.5">
+                                        <span class="text-[9px] px-1 py-0.2 rounded-sm bg-primary/10 text-primary font-bold border border-primary/20">3,600+</span>
+                                        <input class="rounded-none border-surface-variant bg-surface-container-lowest text-primary focus:ring-0 cursor-pointer" id="toggle-seaports" type="checkbox"/>
+                                    </div>
+                                </label>
+
+                                <!-- SECA / ECA SOx (IMO 0.10%) -->
+                                <label class="flex items-center justify-between p-1 rounded-sm hover:bg-surface-container-high/40 cursor-pointer">
+                                    <span class="flex items-center gap-1.5 text-on-surface"><span class="material-symbols-outlined text-[14px] text-eca-cyan">water_drop</span><span class="text-eca-cyan">SECA / ECA SOx (IMO 0.10%)</span></span>
+                                    <input class="rounded-none border-surface-variant bg-surface-container-lowest text-eca-cyan focus:ring-0 cursor-pointer" id="toggle-seca" type="checkbox"/>
+                                </label>
+
+                                <!-- ECA NOx (Tier III) -->
+                                <label class="flex items-center justify-between p-1 rounded-sm hover:bg-surface-container-high/40 cursor-pointer">
+                                    <span class="flex items-center gap-1.5 text-on-surface"><span class="material-symbols-outlined text-[14px] text-secondary">air</span><span class="text-secondary font-medium">ECA NOx (Tier III)</span></span>
+                                    <input class="rounded-none border-surface-variant bg-surface-container-lowest text-secondary focus:ring-0 cursor-pointer" id="toggle-eca-nox" type="checkbox"/>
+                                </label>
+
+                                <!-- Baseline & 12 NM -->
+                                <label class="flex items-center justify-between p-1 rounded-sm hover:bg-surface-container-high/40 cursor-pointer">
+                                    <span class="flex items-center gap-1.5 text-on-surface"><span class="material-symbols-outlined text-[14px] text-primary">straighten</span><span>Baseline &amp; 12 NM</span></span>
+                                    <input class="rounded-none border-surface-variant bg-surface-container-lowest text-primary focus:ring-0 cursor-pointer" id="toggle-baseline" type="checkbox"/>
+                                </label>
+
+                                <!-- Exclusive Economic Zones (EEZ) -->
+                                <label class="flex items-center justify-between p-1 rounded-sm hover:bg-surface-container-high/40 cursor-pointer">
+                                    <span class="flex items-center gap-1.5 text-on-surface"><span class="material-symbols-outlined text-[14px] text-tertiary">public</span><span>Exclusive Economic Zones (EEZ)</span></span>
+                                    <input class="rounded-none border-surface-variant bg-surface-container-lowest text-tertiary focus:ring-0 cursor-pointer" id="toggle-eez" type="checkbox"/>
+                                </label>
+
+                                <!-- FAO Fishing Areas -->
+                                <label class="flex items-center justify-between p-1 rounded-sm hover:bg-surface-container-high/40 cursor-pointer">
+                                    <span class="flex items-center gap-1.5 text-on-surface"><span class="material-symbols-outlined text-[14px] text-on-surface-variant">set_meal</span><span class="text-on-surface-variant">FAO Fishing Areas</span></span>
+                                    <input class="rounded-none border-surface-variant bg-surface-container-lowest text-on-surface-variant focus:ring-0 cursor-pointer" id="toggle-fao" type="checkbox"/>
+                                </label>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                <button class="hidden bg-surface-container/95 hover:bg-surface-bright backdrop-blur-md px-2.5 py-1.5 rounded-sm border border-surface-container-high shadow-xl items-center gap-1.5 text-primary text-[11px] font-mono transition-all cursor-pointer" id="btn-expand-layer-panel" title="Open Map Layers" type="button">
+                    <span class="material-symbols-outlined text-[16px]">layers</span>
+                    <span class="font-medium text-on-surface">Layers</span>
+                    <span class="text-[9px] px-1 py-0.2 rounded-sm bg-primary-container text-on-primary-container font-bold" id="layer-active-count">1</span>
+                </button>
+            </div>
+            <!-- Zoom & View Tools -->
+            <div class="flex flex-col gap-1 bg-surface-container/90 backdrop-blur-md p-1 rounded-sm border border-surface-container-high shadow-md">
+                <button aria-label="Zoom In" class="w-7 h-7 rounded-sm hover:bg-surface-bright flex items-center justify-center text-on-surface transition-colors cursor-pointer" id="btn-zoom-in" title="Zoom In" type="button">
+                    <span class="material-symbols-outlined text-[17px]">add</span>
+                </button>
+                <button aria-label="Zoom Out" class="w-7 h-7 rounded-sm hover:bg-surface-bright flex items-center justify-center text-on-surface transition-colors cursor-pointer" id="btn-zoom-out" title="Zoom Out" type="button">
+                    <span class="material-symbols-outlined text-[17px]">remove</span>
+                </button>
+                <button aria-label="Fit Route Bounds" class="w-7 h-7 rounded-sm hover:bg-surface-bright flex items-center justify-center text-primary transition-colors cursor-pointer" id="btn-fit-bounds" title="Fit Entire Route" type="button">
+                    <span class="material-symbols-outlined text-[17px]">crop_free</span>
+                </button>
+            </div>
+        </div>
+
+        <!-- DEDICATED ROUTE SIMULATION CONTROLLER DOCK (HUD Player Bar) -->
+        <div class="absolute bottom-5 inset-x-4 md:inset-x-auto md:left-1/2 md:-translate-x-1/2 z-30 hidden transition-all duration-300" id="simulation-player-dock">
+            <div class="bg-surface-container-lowest/95 backdrop-blur-lg border border-primary/40 rounded-sm shadow-2xl p-3 flex flex-col gap-2.5 w-full md:w-[680px]">
+                <!-- Top bar of simulation dock -->
+                <div class="flex items-center justify-between border-b border-surface-container-high pb-2">
+                    <div class="flex items-center gap-2">
+                        <span class="flex h-2.5 w-2.5 relative">
+                            <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-tertiary opacity-75"></span>
+                            <span class="relative inline-flex rounded-full h-2.5 w-2.5 bg-tertiary"></span>
+                        </span>
+                        <span class="font-mono text-[11px] font-bold text-on-surface tracking-wider uppercase flex items-center gap-1.5">
+                            <span>Transit Simulation</span>
+                            <span class="text-tertiary font-normal" id="sim-leg-name">• Inactive</span>
+                        </span>
+                    </div>
+                    <div class="flex items-center gap-2">
+                        <span class="font-mono text-[10px] text-on-surface-variant" id="sim-vessel-telemetry">ETA: -- • 18.0 kts</span>
+                        <button class="px-2 py-0.5 rounded-sm bg-error/20 hover:bg-error/30 text-error border border-error/40 font-mono text-[10px] flex items-center gap-1 transition-colors cursor-pointer" id="btn-stop-sim" title="Stop Route Simulation" type="button">
+                            <span class="material-symbols-outlined text-[13px]">stop</span>
+                            <span>Stop Simulation</span>
+                        </button>
+                    </div>
+                </div>
+                <!-- Scrubber track & Progress -->
+                <div class="flex flex-col gap-1">
+                    <div class="flex items-center justify-between font-mono text-[10px]">
+                        <span class="text-primary font-semibold" id="sim-progress-dist">0 NM / -- NM</span>
+                        <span class="text-on-surface-variant" id="sim-progress-pct">0% Complete</span>
+                        <span class="text-secondary font-semibold" id="sim-elapsed">Day 0.0</span>
+                    </div>
+                    <input class="w-full accent-primary h-1.5 bg-surface-container-high rounded-none cursor-pointer" id="sim-scrubber" max="100" min="0" step="0.1" type="range" value="0"/>
+                </div>
+                <!-- Player controls row -->
+                <div class="flex items-center justify-between pt-1">
+                    <div class="flex items-center gap-1.5">
+                        <button class="w-8 h-8 rounded-sm bg-primary hover:brightness-110 text-on-primary flex items-center justify-center transition-all shadow cursor-pointer" id="btn-play-pause-sim" title="Play / Pause simulation" type="button">
+                            <span class="material-symbols-outlined text-[18px]" id="sim-play-icon">play_arrow</span>
+                        </button>
+                        <button class="w-7 h-7 rounded-sm bg-surface-container hover:bg-surface-bright text-on-surface flex items-center justify-center transition-colors cursor-pointer" id="btn-restart-sim" title="Restart from Origin" type="button">
+                            <span class="material-symbols-outlined text-[15px]">replay</span>
+                        </button>
+                        <div class="h-4 w-px bg-surface-container-high mx-1"></div>
+                        <!-- Speed multipliers -->
+                        <div class="flex items-center bg-surface-container-low rounded-sm border border-surface-container-high p-0.5 text-[10px] font-mono">
+                            <button class="sim-speed-btn active px-2 py-0.5 rounded-sm bg-primary-container text-on-primary-container font-semibold cursor-pointer" data-speed="1" type="button">1x</button>
+                            <button class="sim-speed-btn px-2 py-0.5 rounded-sm text-on-surface-variant hover:text-on-surface cursor-pointer" data-speed="5" type="button">5x</button>
+                            <button class="sim-speed-btn px-2 py-0.5 rounded-sm text-on-surface-variant hover:text-on-surface cursor-pointer" data-speed="20" type="button">20x</button>
+                        </div>
+                    </div>
+                    <!-- Live simulated position coords -->
+                    <div class="flex items-center gap-2 font-mono text-[10px] text-on-surface-variant bg-surface-container-low px-2 py-1 rounded-sm border border-surface-container-high">
+                        <span class="material-symbols-outlined text-[13px] text-secondary">sailing</span>
+                        <span id="sim-current-pos">Position: --</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Leaflet Map Container (Fills Full Viewport) -->
+        <div id="map" class="w-full h-full absolute inset-0 z-0"></div>
+
+        <!-- Bottom Left Tactical Docks: Maritime Distance Scale & Weather Intensity Legend -->
+        <div class="absolute bottom-3 left-3 z-20 flex items-end gap-2 pointer-events-none" id="bottom-left-map-dock">
+            <!-- Maritime Scale & Projection Legend -->
+            <div class="flex flex-col gap-1 bg-surface-container/90 backdrop-blur-md px-3 py-1.5 rounded-sm border border-surface-container-high shadow-md pointer-events-auto" id="map-scale-dock">
+                <div class="flex items-center justify-between text-on-surface-variant font-mono text-[9px] gap-2">
+                    <span id="scale-min">0</span>
+                    <span id="scale-mid">500 NM</span>
+                    <span id="scale-max">1,000 NM</span>
+                </div>
+                <div class="h-1 bg-surface-container-highest rounded-none flex overflow-hidden border border-surface-variant transition-all duration-150" id="scale-bar-track" style="width: 144px;">
+                    <div class="w-1/2 h-full bg-primary" id="scale-bar-left"></div>
+                    <div class="w-1/2 h-full bg-outline-variant" id="scale-bar-right"></div>
+                </div>
+                <div class="flex items-center justify-between text-[9px] font-mono text-on-surface-variant pt-0.5 gap-2">
+                    <span id="scale-coords-proj">EPSG:3857 (Web Mercator)</span>
+                    <span class="text-tertiary font-semibold" id="scale-metric-dist">1,852 KM</span>
+                </div>
+            </div>
+
+            <!-- Weather Intensity Scale Dock -->
+            <div class="hidden flex-col gap-1 bg-surface-container/90 backdrop-blur-md px-3 py-1.5 rounded-sm border border-surface-container-high shadow-md pointer-events-auto transition-all duration-150" id="weather-scale-dock">
+                <!-- Multi-layer tabs -->
+                <div class="hidden flex-wrap items-center gap-1 font-mono text-[8px] pb-1 border-b border-surface-container-high" id="weather-scale-tabs"></div>
+                <!-- Title & Unit Header -->
+                <div class="flex items-center justify-between text-on-surface-variant font-mono text-[9px] gap-2">
+                    <span class="font-semibold uppercase tracking-wider text-on-surface" id="weather-scale-title">WIND SPEED</span>
+                    <span class="text-secondary font-semibold" id="weather-scale-unit">KTS</span>
+                </div>
+                <!-- Continuous Intensity Gradient Bar -->
+                <div class="h-1.5 bg-surface-container-highest rounded-none flex overflow-hidden border border-surface-variant" style="width: 144px;">
+                    <div class="w-full h-full" id="weather-scale-gradient"></div>
+                </div>
+                <!-- Calibrated Intensity Value Ticks -->
+                <div class="flex items-center justify-between text-[9px] font-mono text-on-surface-variant" id="weather-scale-ticks">
+                    <span>0</span>
+                    <span>15</span>
+                    <span>30</span>
+                    <span>45</span>
+                    <span>60+</span>
+                </div>
+            </div>
+        </div>
+
+        <!-- Notification Toast (For GeoJSON Copy / Avoidance / Theme) -->
+        <div class="absolute bottom-4 right-4 z-50 transform translate-y-12 opacity-0 pointer-events-none transition-all duration-300 bg-surface-container-highest border border-primary text-on-surface text-[11px] font-mono px-3 py-2 rounded-sm shadow-xl flex items-center gap-2" id="toast">
+            <span class="material-symbols-outlined text-primary text-[16px]" id="toast-icon">check_circle</span>
+            <span id="toast-msg">Notification</span>
+        </div>
+    </main>
 </div>
-
-<button type="button" class="btn btn-primary btn-floating" id="download-button" disabled>
-    <i class="fa fa-download"></i>
-</button>
-
-<button type="button" class="btn btn-primary btn-floating" id="clear-button">
-    <i class="fa fa-times"></i>
-</button>
-
-{{/*Map Box*/}}
-<div id="map"></div>
 
 {{template "bottom" .}}

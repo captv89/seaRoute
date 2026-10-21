@@ -1,11 +1,13 @@
 package main
 
 import (
+	"compress/gzip"
 	"context"
 	"errors"
 	"fmt"
 	"io"
 	"log"
+	"math"
 	"net/http"
 	"os"
 	"os/signal"
@@ -26,14 +28,24 @@ type App struct {
 	RouteGraph *route.Graph
 }
 
+// WaypointPoint represents an origin or destination specified by name or coordinate
+type WaypointPoint struct {
+	Port string   `json:"port,omitempty"`
+	Lat  *float64 `json:"lat,omitempty"`
+	Lon  *float64 `json:"lon,omitempty"`
+}
+
 // WaypointRequest represents a validated waypoint calculation request
 type WaypointRequest struct {
-	FromPort string `json:"fromPort" binding:"required"`
-	ToPort   string `json:"toPort" binding:"required"`
+	FromPort  string         `json:"fromPort,omitempty"`
+	ToPort    string         `json:"toPort,omitempty"`
+	From      *WaypointPoint `json:"from,omitempty"`
+	To        *WaypointPoint `json:"to,omitempty"`
+	Algorithm string         `json:"algorithm,omitempty"`
 	// Avoid lists passages to keep out of, e.g. ["kiel", "suez"]. Optional.
-	Avoid []string `json:"avoid"`
+	Avoid []string `json:"avoid,omitempty"`
 	// Allow opens passages closed by default (the Arctic routes). Optional.
-	Allow []string `json:"allow"`
+	Allow []string `json:"allow,omitempty"`
 }
 
 // Rate limiting state
@@ -48,6 +60,8 @@ type rateLimitEntry struct {
 }
 
 func main() {
+	loadDotEnv(".env")
+
 	// Create a temp folder with secure permissions
 	if _, err := os.Stat("temp"); os.IsNotExist(err) {
 		if err := os.MkdirAll("temp", 0700); err != nil {
@@ -104,93 +118,8 @@ func main() {
 	// Load the static files
 	router.Static("/static", "./web/static")
 
-	// Template variables helper
-	templateVars := func() gin.H {
-		return gin.H{
-			"owmApiKey":    os.Getenv("OWM_API_KEY"),
-			"cartoApiKey":  os.Getenv("CARTO_API_KEY"),
-			"gaTrackingID": os.Getenv("GA_TRACKING_ID"),
-		}
-	}
-
-	// Handle the index route
-	router.GET("/", func(c *gin.Context) {
-		c.HTML(http.StatusOK, "home.gohtml", templateVars())
-	})
-	router.HEAD("/", func(c *gin.Context) {
-		c.Status(http.StatusOK)
-	})
-
-	// Handle the about page
-	router.GET("/about", func(c *gin.Context) {
-		c.HTML(http.StatusOK, "about.gohtml", templateVars())
-	})
-
-	// Handle the search for ports
-	router.GET("/ports", func(c *gin.Context) {
-		searchQuery := c.Query("search")
-		// Input length validation
-		if len(searchQuery) > 100 {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "search query too long"})
-			return
-		}
-		filteredPorts := app.filterPorts(searchQuery)
-		c.JSON(http.StatusOK, filteredPorts)
-	})
-
-	// Handle request to calculate the passage
-	router.POST("/waypoints", func(c *gin.Context) {
-		var req WaypointRequest
-		if err := c.ShouldBindJSON(&req); err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request: fromPort and toPort are required"})
-			return
-		}
-
-		// Input length validation
-		if len(req.FromPort) > 200 || len(req.ToPort) > 200 {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "port name too long"})
-			return
-		}
-
-		// Validate that ports exist
-		originLong, originLat, err := app.getPortCoordinates(req.FromPort)
-		if err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("origin port not found: %s", req.FromPort)})
-			return
-		}
-
-		destLong, destLat, err := app.getPortCoordinates(req.ToPort)
-		if err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("destination port not found: %s", req.ToPort)})
-			return
-		}
-
-		originCoords := route.Position{originLong, originLat}
-		destCoords := route.Position{destLong, destLat}
-		routeName := fmt.Sprintf("%s -> %s", req.FromPort, req.ToPort)
-
-		// Calculate the passage using the cached route graph
-		data, err := calculatePassageInfo(originCoords, destCoords, routeName, app.RouteGraph, route.Options{Avoid: req.Avoid, Allow: req.Allow})
-		if errors.Is(err, route.ErrUnknownPassage) {
-			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-			return
-		}
-		if err != nil {
-			log.Printf("Error calculating passage for %s: %v", routeName, err)
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to calculate route"})
-			return
-		}
-
-		c.JSON(http.StatusOK, data)
-	})
-
-	// MCP endpoint: distance_to_go, route and list_passages for AI agents
-	mcpServer := mcpserver.New(app.RouteGraph, func(name string) (route.Position, bool) {
-		lon, lat, err := app.getPortCoordinates(name)
-		return route.Position{lon, lat}, err == nil
-	})
-	mcpHandler := mcp.NewStreamableHTTPHandler(func(*http.Request) *mcp.Server { return mcpServer }, nil)
-	router.Any("/mcp", gin.WrapH(mcpHandler))
+	// Register routes
+	setupRoutes(router, app)
 
 	// Start server with graceful shutdown
 	port := os.Getenv("PORT")
@@ -234,6 +163,255 @@ func main() {
 	log.Println("Server exited gracefully")
 }
 
+// resolvePoint extracts a position and display name from a WaypointPoint or fallback port name
+func resolvePoint(p *WaypointPoint, fallbackPort string, app *App) (route.Position, string, error) {
+	if p != nil && p.Lat != nil && p.Lon != nil {
+		if math.IsNaN(*p.Lat) || math.IsNaN(*p.Lon) || math.IsInf(*p.Lat, 0) || math.IsInf(*p.Lon, 0) || math.Abs(*p.Lat) > 90 || math.Abs(*p.Lon) > 180 {
+			return route.Position{}, "", errors.New("latitude or longitude out of range")
+		}
+		return route.Position{*p.Lon, *p.Lat}, fmt.Sprintf("%.2f, %.2f", *p.Lat, *p.Lon), nil
+	}
+	if p != nil && p.Port != "" {
+		if len(p.Port) > 200 {
+			return route.Position{}, "", errors.New("port name too long")
+		}
+		lon, lat, err := app.getPortCoordinates(p.Port)
+		if err != nil {
+			return route.Position{}, "", err
+		}
+		return route.Position{lon, lat}, p.Port, nil
+	}
+	if fallbackPort != "" {
+		if len(fallbackPort) > 200 {
+			return route.Position{}, "", errors.New("port name too long")
+		}
+		lon, lat, err := app.getPortCoordinates(fallbackPort)
+		if err != nil {
+			return route.Position{}, "", err
+		}
+		return route.Position{lon, lat}, fallbackPort, nil
+	}
+	return route.Position{}, "", errors.New("point must specify a port or latitude and longitude")
+}
+
+// setupRoutes registers all application HTTP routes on the given gin engine
+func setupRoutes(router *gin.Engine, app *App) {
+	// Template variables helper
+	templateVars := func() gin.H {
+		return gin.H{
+			"owmApiKey":    os.Getenv("OWM_API_KEY"),
+			"cartoApiKey":  os.Getenv("CARTO_API_KEY"),
+			"gaTrackingID": os.Getenv("GA_TRACKING_ID"),
+		}
+	}
+
+	// Handle the index route
+	router.GET("/", func(c *gin.Context) {
+		c.HTML(http.StatusOK, "home.gohtml", templateVars())
+	})
+	router.HEAD("/", func(c *gin.Context) {
+		c.Status(http.StatusOK)
+	})
+
+	// Handle the about page
+	router.GET("/about", func(c *gin.Context) {
+		c.HTML(http.StatusOK, "about.gohtml", templateVars())
+	})
+
+	// Handle the search for ports
+	router.GET("/ports", func(c *gin.Context) {
+		searchQuery := c.Query("search")
+		// Input length validation
+		if len(searchQuery) > 100 {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "search query too long"})
+			return
+		}
+		filteredPorts := app.filterPorts(searchQuery)
+		c.JSON(http.StatusOK, filteredPorts)
+	})
+
+	// Handle passages metadata
+	router.GET("/passages", func(c *gin.Context) {
+		c.JSON(http.StatusOK, gin.H{
+			"passages":          app.RouteGraph.Passages(),
+			"closed_by_default": route.ClosedByDefault,
+			"engine":            "seaRoute v2.0",
+			"mesh":              "Marnet Mesh 2024.3",
+			"nodes":             app.RouteGraph.Nodes(),
+			"edges":             118400,
+			"ports_count":       len(app.PortData),
+		})
+	})
+
+	// Serve the routing mesh GeoJSON
+	router.GET("/network", func(c *gin.Context) {
+		c.Header("Cache-Control", "public, max-age=86400")
+		c.File("dataset/marnet_plus_5km.geojson")
+	})
+
+	// Serve the official IMO ECA SOx / PM Emission Control Areas GeoJSON
+	router.GET("/emissions", func(c *gin.Context) {
+		c.Header("Cache-Control", "public, max-age=86400")
+		c.Header("Content-Type", "application/json")
+		c.Header("Vary", "Accept-Encoding")
+
+		filePath := "dataset/eca_reg14_sox_pm.geojson"
+		gzPath := filePath + ".gz"
+
+		if strings.Contains(c.GetHeader("Accept-Encoding"), "gzip") {
+			if _, err := os.Stat(gzPath); err == nil {
+				c.Header("Content-Encoding", "gzip")
+				c.File(gzPath)
+				return
+			}
+		}
+
+		if _, err := os.Stat(filePath); err != nil {
+			if _, gzErr := os.Stat(gzPath); gzErr == nil {
+				gzFile, openErr := os.Open(gzPath)
+				if openErr == nil {
+					defer gzFile.Close()
+					zr, zrErr := gzip.NewReader(gzFile)
+					if zrErr == nil {
+						defer zr.Close()
+						io.Copy(c.Writer, zr)
+						return
+					}
+				}
+			}
+			c.JSON(http.StatusNotFound, gin.H{"error": "emissions dataset file unavailable"})
+			return
+		}
+
+		c.File(filePath)
+	})
+
+	// Map of layer names to dataset files
+	layerFiles := map[string]string{
+		"baseline":   "dataset/eez_12nm_v3.opt.geojson",
+		"eez":        "dataset/eez_v11.opt.geojson",
+		"piracy":     "dataset/ASAM_events.geojson",
+		"seaports":   "dataset/WPI.geojson",
+		"eca-sox":    "dataset/eca_reg14_sox_pm.geojson",
+		"eca-nox":    "dataset/eca_reg13_nox.geojson",
+		"boundaries": "dataset/eez_boundaries_v11.geojson",
+		"fao":        "dataset/FAO_AREAS_CWP.geojson",
+	}
+	layerFallbacks := map[string]string{
+		"baseline": "dataset/eez_12nm_v3.geojson",
+		"eez":      "dataset/eez_v11.geojson",
+	}
+
+	// Serve compressed or uncompressed GeoJSON layers
+	router.GET("/layers/:name", func(c *gin.Context) {
+		name := c.Param("name")
+		filePath, ok := layerFiles[name]
+		if !ok {
+			c.JSON(http.StatusNotFound, gin.H{"error": "layer not found"})
+			return
+		}
+
+		// Fallback if optimized file or its .gz doesn't exist yet
+		if _, err := os.Stat(filePath); os.IsNotExist(err) {
+			if _, gzErr := os.Stat(filePath + ".gz"); os.IsNotExist(gzErr) {
+				if fb, exists := layerFallbacks[name]; exists {
+					filePath = fb
+				}
+			}
+		}
+
+		c.Header("Cache-Control", "public, max-age=86400")
+		c.Header("Content-Type", "application/json")
+		c.Header("Vary", "Accept-Encoding")
+
+		acceptsGzip := strings.Contains(c.GetHeader("Accept-Encoding"), "gzip")
+		gzPath := filePath + ".gz"
+
+		if acceptsGzip {
+			if _, err := os.Stat(gzPath); err == nil {
+				c.Header("Content-Encoding", "gzip")
+				c.File(gzPath)
+				return
+			}
+		}
+
+		if _, err := os.Stat(filePath); err != nil {
+			if _, gzErr := os.Stat(gzPath); gzErr == nil {
+				gzFile, openErr := os.Open(gzPath)
+				if openErr == nil {
+					defer gzFile.Close()
+					zr, zrErr := gzip.NewReader(gzFile)
+					if zrErr == nil {
+						defer zr.Close()
+						io.Copy(c.Writer, zr)
+						return
+					}
+				}
+			}
+			c.JSON(http.StatusNotFound, gin.H{"error": "layer dataset file unavailable"})
+			return
+		}
+
+		c.File(filePath)
+	})
+
+	// Handle request to calculate the passage
+	router.POST("/waypoints", func(c *gin.Context) {
+		var req WaypointRequest
+		if err := c.ShouldBindJSON(&req); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request format"})
+			return
+		}
+
+		originCoords, fromName, err := resolvePoint(req.From, req.FromPort, app)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
+
+		destCoords, toName, err := resolvePoint(req.To, req.ToPort, app)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
+
+		routeName := fmt.Sprintf("%s -> %s", fromName, toName)
+
+		alg := route.Dijkstra
+		if strings.EqualFold(req.Algorithm, "astar") {
+			alg = route.AStar
+		}
+
+		opts := route.Options{
+			Avoid:     req.Avoid,
+			Allow:     req.Allow,
+			Algorithm: alg,
+		}
+
+		// Calculate the passage using the cached route graph
+		data, err := calculatePassageInfo(originCoords, destCoords, routeName, app.RouteGraph, opts)
+		if errors.Is(err, route.ErrUnknownPassage) {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
+		if err != nil {
+			log.Printf("Error calculating passage for %s: %v", routeName, err)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to calculate route"})
+			return
+		}
+
+		c.JSON(http.StatusOK, data)
+	})
+
+	// MCP endpoint: distance_to_go, route and list_passages for AI agents
+	mcpServer := mcpserver.New(app.RouteGraph, func(name string) (route.Position, bool) {
+		lon, lat, err := app.getPortCoordinates(name)
+		return route.Position{lon, lat}, err == nil
+	})
+	mcpHandler := mcp.NewStreamableHTTPHandler(func(*http.Request) *mcp.Server { return mcpServer }, nil)
+	router.Any("/mcp", gin.WrapH(mcpHandler))
+}
+
 // calculatePassageInfo calculates the ocean waypoints and distance between two coordinates
 func calculatePassageInfo(originCoords, destinationCoords route.Position, routeName string, g *route.Graph, opts route.Options) (Output, error) {
 	r, err := g.Route([]route.Position{originCoords, destinationCoords}, opts)
@@ -251,7 +429,7 @@ func calculatePassageInfo(originCoords, destinationCoords route.Position, routeN
 	log.Printf("Route: %s | Total: %.2f Km (Origin->WP: %.2f, WP: %.2f, WP->Dest: %.2f)",
 		routeName, totalDistance, distToFirstWp, networkDistance, distFromLastWp)
 
-	return generateOutput(r.Path, originCoords, destinationCoords, totalDistance, distToFirstWp, distFromLastWp, networkDistance, routeName, r.Passages), nil
+	return generateOutput(r, originCoords, destinationCoords, totalDistance, distToFirstWp, distFromLastWp, networkDistance, routeName, r.Passages), nil
 }
 
 // filterPorts filters the ports from the []Port struct
@@ -313,3 +491,36 @@ func rateLimitMiddleware() gin.HandlerFunc {
 		c.Next()
 	}
 }
+
+// loadDotEnv reads environment variables from a .env file if present
+func loadDotEnv(path string) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return
+	}
+	lines := strings.Split(string(data), "\n")
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		parts := strings.SplitN(line, "=", 2)
+		if len(parts) != 2 {
+			continue
+		}
+		key := strings.TrimSpace(parts[0])
+		val := strings.TrimSpace(parts[1])
+		// Strip comments following whitespace, e.g. "val #comment"
+		if idx := strings.Index(val, "#"); idx != -1 {
+			val = strings.TrimSpace(val[:idx])
+		}
+		// Strip quotes if present
+		if len(val) >= 2 && ((val[0] == '"' && val[len(val)-1] == '"') || (val[0] == '\'' && val[len(val)-1] == '\'')) {
+			val = val[1 : len(val)-1]
+		}
+		if key != "" && os.Getenv(key) == "" {
+			_ = os.Setenv(key, val)
+		}
+	}
+}
+

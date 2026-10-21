@@ -1,147 +1,460 @@
 {{define "top"}}
-    <!DOCTYPE html>
-    <html lang="en">
-    <head>
-        <!-- Required meta tags -->
-        <meta charset="utf-8" />
-        <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+<!DOCTYPE html>
+<html class="dark" lang="en">
+<head>
+    <meta charset="utf-8"/>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no"/>
+    <meta content="web_dashboard" name="shell-type"/>
+    <title>seaRoute - Shortest Sea Route &amp; Waypoint Calculator</title>
 
-        <!-- Cookie Consent by PrivacyPolicies.com https://www.PrivacyPolicies.com -->
-        <script type="text/javascript" src="//www.privacypolicies.com/public/cookie-consent/4.0.0/cookie-consent.js" charset="UTF-8"></script>
-        <script type="text/javascript" charset="UTF-8">
-            document.addEventListener('DOMContentLoaded', function () {
+    <!-- Prevent Flash of Dark Mode if Light Theme is Saved -->
+    <script>
+        try {
+            if (localStorage.getItem('searoute_theme') === 'light') {
+                document.documentElement.classList.remove('dark');
+            }
+        } catch (e) {}
+    </script>
+
+    <!-- Google Fonts: Inter & JetBrains Mono -->
+    <link rel="preconnect" href="https://fonts.googleapis.com"/>
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin/>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&amp;family=JetBrains+Mono:wght@400;500;600&amp;display=swap" rel="stylesheet"/>
+    <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+
+    <!-- Leaflet CSS -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha384-sHL9NAb7lN7rfvG5lfHpm643Xkcjzp4jFvuavGOndn6pjVqS6ny56CAt3nsEVT4H" crossorigin="anonymous" crossorigin=""/>
+
+    <!-- Leaflet.markercluster CSS -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet.markercluster/1.5.3/MarkerCluster.css" integrity="sha384-pmjIAcz2bAn0xukfxADbZIb3t8oRT9Sv0rvO+BR5Csr6Dhqq+nZs59P0pPKQJkEV" crossorigin="anonymous"/>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet.markercluster/1.5.3/MarkerCluster.Default.css" integrity="sha384-wgw+aLYNQ7dlhK47ZPK7FRACiq7ROZwgFNg0m04avm4CaXS+Z9Y7nMu8yNjBKYC+" crossorigin="anonymous"/>
+
+    <!-- Notie Notification CSS -->
+    <link rel="stylesheet" type="text/css" href="https://unpkg.com/notie@4.3.1/dist/notie.min.css" integrity="sha384-Jv3WSys2uSFeLomz0Yj7cvY3du+3jFXWOn97+UCbEUTTTQX8ljqok72pu03WznpC" crossorigin="anonymous"/>
+
+    <!-- Favicon -->
+    <link rel="icon" type="image/x-icon" href="./static/icons/icons8-waypoint-map-96.png"/>
+
+    <!-- App Stylesheet -->
+    <link rel="stylesheet" href="./static/style.css"/>
+
+    <!-- ECDIS Inline Tokens & Custom Scrollbars -->
+    <style>
+        @layer base {
+            html, body { margin: 0; padding: 0; height: 100%; }
+            body { overscroll-behavior: none; }
+        }
+
+        :root {
+            /* Maritime Light Theme (Day ECDIS) */
+            --color-surface: 248 250 252;                   /* #f8fafc */
+            --color-background: 241 245 249;                /* #f1f5f9 */
+            --color-surface-dim: 226 232 240;               /* #e2e8f0 */
+            --color-surface-container-lowest: 255 255 255;  /* #ffffff */
+            --color-surface-container-low: 248 250 252;     /* #f8fafc */
+            --color-surface-container: 241 245 249;         /* #f1f5f9 */
+            --color-surface-container-high: 226 232 240;    /* #e2e8f0 */
+            --color-surface-container-highest: 203 213 225; /* #cbd5e1 */
+            --color-surface-bright: 255 255 255;            /* #ffffff */
+            --color-surface-variant: 226 232 240;           /* #e2e8f0 */
+            --color-primary: 2 132 199;                     /* #0284c7 */
+            --color-primary-container: 14 165 233;          /* #0ea5e9 */
+            --color-on-primary: 255 255 255;                /* #ffffff */
+            --color-on-primary-container: 255 255 255;
+            --color-secondary: 8 145 178;                   /* #0891b2 */
+            --color-secondary-container: 6 182 212;         /* #06b6d4 */
+            --color-on-secondary: 255 255 255;
+            --color-tertiary: 16 185 129;                   /* #10b981 */
+            --color-tertiary-container: 5 150 105;          /* #059669 */
+            --color-on-tertiary: 255 255 255;
+            --color-on-surface: 15 23 42;                   /* #0f172a */
+            --color-on-surface-variant: 71 85 105;          /* #475569 */
+            --color-outline: 148 163 184;                   /* #94a3b8 */
+            --color-outline-variant: 203 213 225;           /* #cbd5e1 */
+            --color-warning: 217 119 6;                     /* #d97706 */
+            --color-warning-container: 254 243 199;         /* #fef3c7 */
+            --color-eca-cyan: 2 132 199;                    /* #0284c7 */
+            --color-error: 220 38 38;                       /* #dc2626 */
+            --color-error-container: 254 226 226;           /* #fee2e2 */
+        }
+
+        html.dark {
+            /* Oceanic Tactical Night ECDIS */
+            --color-surface: 12 20 33;                      /* #0c1421 */
+            --color-background: 12 20 33;                   /* #0c1421 */
+            --color-surface-dim: 12 20 33;                  /* #0c1421 */
+            --color-surface-container-lowest: 7 14 27;      /* #070e1b */
+            --color-surface-container-low: 20 28 41;        /* #141c29 */
+            --color-surface-container: 24 32 45;            /* #18202d */
+            --color-surface-container-high: 34 42 56;       /* #222a38 */
+            --color-surface-container-highest: 45 53 67;    /* #2d3543 */
+            --color-surface-bright: 50 57 72;               /* #323948 */
+            --color-surface-variant: 45 53 67;              /* #2d3543 */
+            --color-primary: 137 206 255;                   /* #89ceff */
+            --color-primary-container: 14 165 233;          /* #0ea5e9 */
+            --color-on-primary: 0 52 77;                    /* #00344d */
+            --color-on-primary-container: 0 55 81;          /* #003751 */
+            --color-secondary: 76 215 246;                  /* #4cd7f6 */
+            --color-secondary-container: 3 181 211;         /* #03b5d3 */
+            --color-on-secondary: 0 54 64;                  /* #003640 */
+            --color-tertiary: 78 222 163;                   /* #4edea3 */
+            --color-tertiary-container: 0 177 123;          /* #00b17b */
+            --color-on-tertiary: 0 56 36;                   /* #003824 */
+            --color-on-surface: 219 226 245;                /* #dbe2f5 */
+            --color-on-surface-variant: 190 200 210;        /* #bec8d2 */
+            --color-outline: 136 146 155;                   /* #88929b */
+            --color-outline-variant: 62 72 80;              /* #3e4850 */
+            --color-warning: 245 158 11;                    /* #f59e0b */
+            --color-warning-container: 120 53 15;           /* #78350f */
+            --color-eca-cyan: 56 189 248;                   /* #38bdf8 */
+            --color-error: 255 180 171;                     /* #ffb4ab */
+            --color-error-container: 147 0 10;              /* #93000a */
+        }
+
+        ::-webkit-scrollbar { width: 5px; height: 5px; }
+        ::-webkit-scrollbar-track { background: rgb(var(--color-surface)); }
+        ::-webkit-scrollbar-thumb { background: rgb(var(--color-surface-container-high)); border-radius: 2px; }
+        ::-webkit-scrollbar-thumb:hover { background: rgb(var(--color-surface-container-highest)); }
+        .custom-scroll::-webkit-scrollbar { width: 4px; }
+        .custom-scroll::-webkit-scrollbar-thumb { background: rgb(var(--color-surface-container-highest)); }
+        @keyframes dash {
+            to { stroke-dashoffset: -40; }
+        }
+        .flow-dash {
+            stroke-dasharray: 6 6;
+            animation: dash 3s linear infinite;
+        }
+        @keyframes pulse-ring {
+            0% { transform: scale(0.6); opacity: 0.9; }
+            100% { transform: scale(2.4); opacity: 0; }
+        }
+        .vessel-beacon {
+            animation: pulse-ring 2s cubic-bezier(0.215, 0.61, 0.355, 1) infinite;
+            transform-origin: center;
+        }
+    </style>
+
+    <!-- Tailwind CDN with forms and container-queries -->
+    <script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+    <script id="tailwind-config">
+        tailwind.config = {
+            darkMode: "class",
+            theme: {
+                extend: {
+                    colors: {
+                        "surface": "rgb(var(--color-surface) / <alpha-value>)",
+                        "background": "rgb(var(--color-background) / <alpha-value>)",
+                        "surface-dim": "rgb(var(--color-surface-dim) / <alpha-value>)",
+                        "surface-container-lowest": "rgb(var(--color-surface-container-lowest) / <alpha-value>)",
+                        "surface-container-low": "rgb(var(--color-surface-container-low) / <alpha-value>)",
+                        "surface-container": "rgb(var(--color-surface-container) / <alpha-value>)",
+                        "surface-container-high": "rgb(var(--color-surface-container-high) / <alpha-value>)",
+                        "surface-container-highest": "rgb(var(--color-surface-container-highest) / <alpha-value>)",
+                        "surface-bright": "rgb(var(--color-surface-bright) / <alpha-value>)",
+                        "surface-variant": "rgb(var(--color-surface-variant) / <alpha-value>)",
+                        "primary": "rgb(var(--color-primary) / <alpha-value>)",
+                        "primary-container": "rgb(var(--color-primary-container) / <alpha-value>)",
+                        "on-primary": "rgb(var(--color-on-primary) / <alpha-value>)",
+                        "on-primary-container": "rgb(var(--color-on-primary-container) / <alpha-value>)",
+                        "secondary": "rgb(var(--color-secondary) / <alpha-value>)",
+                        "secondary-container": "rgb(var(--color-secondary-container) / <alpha-value>)",
+                        "on-secondary": "rgb(var(--color-on-secondary) / <alpha-value>)",
+                        "tertiary": "rgb(var(--color-tertiary) / <alpha-value>)",
+                        "tertiary-container": "rgb(var(--color-tertiary-container) / <alpha-value>)",
+                        "on-tertiary": "rgb(var(--color-on-tertiary) / <alpha-value>)",
+                        "on-surface": "rgb(var(--color-on-surface) / <alpha-value>)",
+                        "on-surface-variant": "rgb(var(--color-on-surface-variant) / <alpha-value>)",
+                        "outline": "rgb(var(--color-outline) / <alpha-value>)",
+                        "outline-variant": "rgb(var(--color-outline-variant) / <alpha-value>)",
+                        "warning": "rgb(var(--color-warning) / <alpha-value>)",
+                        "warning-container": "rgb(var(--color-warning-container) / <alpha-value>)",
+                        "eca-cyan": "rgb(var(--color-eca-cyan) / <alpha-value>)",
+                        "error": "rgb(var(--color-error) / <alpha-value>)",
+                        "error-container": "rgb(var(--color-error-container) / <alpha-value>)"
+                    },
+                    borderRadius: {
+                        DEFAULT: "0.125rem",
+                        sm: "0.125rem",
+                        md: "0.25rem",
+                        lg: "0.25rem",
+                        xl: "0.375rem"
+                    },
+                    fontFamily: {
+                        "body-md": ["JetBrains Mono", "monospace"],
+                        "body-lg": ["JetBrains Mono", "monospace"],
+                        "headline-md": ["Inter", "sans-serif"],
+                        "headline-lg": ["Inter", "sans-serif"],
+                        "label-lg": ["Inter", "sans-serif"],
+                        "label-md": ["JetBrains Mono", "monospace"],
+                        "label-sm": ["JetBrains Mono", "monospace"]
+                    }
+                }
+            }
+        };
+    </script>
+
+    <!-- Leaflet JS -->
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha384-cxOPjt7s7Iz04uaHJceBmS+qpjv2JkIHNVcuOrM+YHwZOmJGBXI00mdUXEq65HTH" crossorigin="anonymous"></script>
+
+    <!-- GeoJSON Vector Tiles (UMD build - creates window.geojsonvt) -->
+    <script src="https://unpkg.com/geojson-vt@3.2.1/geojson-vt-dev.js" integrity="sha384-reHWp7Grs/PhIzUP2t2HDeSx2shtmdtJd6AWWBrSfRDj02d0LO4bdLp8Nr2DAilP" crossorigin="anonymous"></script>
+    <script src="./static/leaflet-geojson-vt.js"></script>
+
+    <!-- Include Leaflet.markercluster JS -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet.markercluster/1.5.3/leaflet.markercluster.js" integrity="sha384-eXVCORTRlv4FUUgS/xmOyr66XBVraen8ATNLMESp92FKXLAMiKkerixTiBvXriZr" crossorigin="anonymous"></script>
+
+    <!-- Spinner -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/spin.js/2.3.2/spin.min.js" integrity="sha384-iExPlOYmpYCl6QdVZIxpaVbrQEPIef7hPsjKoic/UIBkQdY4UYpP6j3C90Dx5G74" crossorigin="anonymous"></script>
+
+    <!-- Cookie Consent by PrivacyPolicies.com -->
+    <script type="text/javascript" src="//www.privacypolicies.com/public/cookie-consent/4.0.0/cookie-consent.js" charset="UTF-8"></script>
+    <script type="text/javascript" charset="UTF-8">
+        document.addEventListener('DOMContentLoaded', function () {
+            if (typeof cookieconsent !== 'undefined') {
                 cookieconsent.run({"notice_banner_type":"simple","consent_type":"implied","palette":"light","language":"en","page_load_consent_levels":["strictly-necessary","functionality","tracking","targeting"],"notice_banner_reject_button_hide":false,"preferences_center_close_button_hide":false,"page_refresh_confirmation_buttons":false,"website_name":"Searoute"});
-            });
-        </script>
+            }
+        });
+    </script>
 
-        <!-- App Configuration -->
-        <script>
-            window.__APP_CONFIG__ = {
-                owmApiKey: "{{ .owmApiKey }}",
-                cartoApiKey: "{{ .cartoApiKey }}",
-            };
-        </script>
+    <!-- App Configuration -->
+    <script>
+        window.__APP_CONFIG__ = {
+            owmApiKey: "{{ .owmApiKey }}",
+            cartoApiKey: "{{ .cartoApiKey }}"
+        };
+    </script>
 
-        <!-- Google Analytics (only if tracking ID is configured) -->
-        {{ if .gaTrackingID }}
-        <script type="text/plain" cookie-consent="tracking" async src="https://www.googletagmanager.com/gtag/js?id={{ .gaTrackingID }}"></script>
-        <script type="text/plain" cookie-consent="tracking">
-            window.dataLayer = window.dataLayer || [];
-            function gtag(){dataLayer.push(arguments);}
-            gtag('js', new Date());
-            gtag('config', '{{ .gaTrackingID }}');
-        </script>
-        {{ end }}
+    <!-- Google Analytics (only if tracking ID is configured) -->
+    {{ if .gaTrackingID }}
+    <script type="text/plain" cookie-consent="tracking" async src="https://www.googletagmanager.com/gtag/js?id={{ .gaTrackingID }}"></script>
+    <script type="text/plain" cookie-consent="tracking">
+        window.dataLayer = window.dataLayer || [];
+        function gtag(){dataLayer.push(arguments);}
+        gtag('js', new Date());
+        gtag('config', '{{ .gaTrackingID }}');
+    </script>
+    {{ end }}
 
+    <!-- GoatCounter -->
+    <script data-goatcounter="https://searoute.goatcounter.com/count" async src="//gc.zgo.at/count.js"></script>
 
-        <!-- Goat counter -->
-        <script data-goatcounter="https://searoute.goatcounter.com/count" async src="//gc.zgo.at/count.js"></script>
+    <noscript>Cookie Consent by <a href="https://www.privacypolicies.com/" rel="noopener">Privacy Policies website</a></noscript>
+</head>
+<body class="bg-background font-body-md text-on-surface antialiased flex flex-col h-screen overflow-hidden select-none">
 
-
-        <noscript>Cookie Consent by <a href="https://www.privacypolicies.com/" rel="noopener">Privacy Policies website</a></noscript>
-        <!-- End Cookie Consent -->
-
-        <!-- Bootstrap CSS -->
-        <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.8/dist/css/bootstrap.min.css" integrity="sha384-sRIl4kxILFvY47J16cr9ZwB07vP4J8+LH7qKQnuqkuIAvNWLzeN8tE5YBujZqJLB" crossorigin="anonymous" rel="stylesheet">
-
-        <!-- Leaflet CSS -->
-        <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha384-sHL9NAb7lN7rfvG5lfHpm643Xkcjzp4jFvuavGOndn6pjVqS6ny56CAt3nsEVT4H" crossorigin="anonymous"
-              crossorigin=""/>
-
-        <!-- Leaflet JS -->
-        <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha384-cxOPjt7s7Iz04uaHJceBmS+qpjv2JkIHNVcuOrM+YHwZOmJGBXI00mdUXEq65HTH" crossorigin="anonymous"
-                crossorigin=""></script>
-
-        <!-- GeoJSON Vector Tiles (UMD build - creates window.geojsonvt) -->
-        <script src="https://unpkg.com/geojson-vt@3.2.1/geojson-vt-dev.js" integrity="sha384-reHWp7Grs/PhIzUP2t2HDeSx2shtmdtJd6AWWBrSfRDj02d0LO4bdLp8Nr2DAilP" crossorigin="anonymous"></script>
-        <script src="./static/leaflet-geojson-vt.js"></script>
-
-        <!-- Include Leaflet.markercluster CSS and JS -->
-        <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet.markercluster/1.5.3/MarkerCluster.css" integrity="sha384-pmjIAcz2bAn0xukfxADbZIb3t8oRT9Sv0rvO+BR5Csr6Dhqq+nZs59P0pPKQJkEV" crossorigin="anonymous" />
-        <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet.markercluster/1.5.3/MarkerCluster.Default.css" integrity="sha384-wgw+aLYNQ7dlhK47ZPK7FRACiq7ROZwgFNg0m04avm4CaXS+Z9Y7nMu8yNjBKYC+" crossorigin="anonymous" />
-        <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet.markercluster/1.5.3/leaflet.markercluster.js" integrity="sha384-eXVCORTRlv4FUUgS/xmOyr66XBVraen8ATNLMESp92FKXLAMiKkerixTiBvXriZr" crossorigin="anonymous"></script>
-
-        <!-- Spinner -->
-        <script src="https://cdnjs.cloudflare.com/ajax/libs/spin.js/2.3.2/spin.min.js" integrity="sha384-iExPlOYmpYCl6QdVZIxpaVbrQEPIef7hPsjKoic/UIBkQdY4UYpP6j3C90Dx5G74" crossorigin="anonymous"></script>
-
-        <!-- Font Awesome -->
-        <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.7.2/css/all.min.css" integrity="sha384-nRgPTkuX86pH8yjPJUAFuASXQSSl2/bBUiNV47vSYpKFxHJhbcrGnmlYpYJMeD7a" crossorigin="anonymous" />
-
-        <!-- Notie Notification CSS -->
-        <link rel="stylesheet" type="text/css" href="https://unpkg.com/notie@4.3.1/dist/notie.min.css" integrity="sha384-Jv3WSys2uSFeLomz0Yj7cvY3du+3jFXWOn97+UCbEUTTTQX8ljqok72pu03WznpC" crossorigin="anonymous">
-
-        <!-- Own Styles -->
-        <link rel="stylesheet" href="./static/style.css">
-
-        <!-- Favicon -->
-        <link rel="icon" type="image/x-icon" href="./static/icons/icons8-waypoint-map-96.png">
-
-        <!-- Google Fonts -->
-        <link rel="preconnect" href="https://fonts.googleapis.com">
-        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-        <link href="https://fonts.googleapis.com/css2?family=Montserrat&display=swap" rel="stylesheet">
-
-        <!-- Title -->
-        <title>Short Sea Route</title>
-
-    </head>
-    <body>
-    <header>
-        <!-- Bootstrap navbar -->
-        <nav class="navbar navbar-dark bg-primary">
-            <div class="container-fluid">
-                <a class="navbar-brand d-flex align-items-center" href="/">
-                    <img src="./static/icons/logo.png" width="40" height="40" class="me-2" alt="Logo">
-                    <span>Short Sea Route</span>
-                </a>
-                <ul class="navbar-nav ms-auto d-flex flex-row">
-                    <li class="nav-item"><a class="nav-link text-white" href="/about">About Me</a></li>
-                </ul>
+<!-- Top Navigation Header (h-14) -->
+<header class="h-14 w-full z-40 bg-surface-container-lowest/95 backdrop-blur-md border-b border-surface-container-high px-4 flex items-center justify-between gap-3 shrink-0">
+    <div class="flex items-center gap-3">
+        <a href="/" class="flex items-center gap-2.5 group">
+            <img src="./static/icons/logo.png" alt="seaRoute Logo" class="w-8 h-8 rounded-sm object-contain shadow-sm group-hover:scale-105 transition-transform" width="32" height="32" />
+            <div>
+                <div class="flex items-center gap-2">
+                    <span class="font-headline-md text-[17px] font-bold tracking-tight text-on-surface group-hover:text-primary transition-colors">sea<span class="text-primary">Route</span></span>
+                </div>
+                <p class="font-label-sm text-[10px] text-on-surface-variant hidden md:block">Shortest Sea Route Calculator</p>
             </div>
-        </nav>
-    </header>
-    <main>
-{{ end }}
+        </a>
+    </div>
 
-{{define "bottom"}}
-    </main>
-    <footer>
-        <div class="page-footer bg-primary text-white">
-            <div class="container d-flex justify-content-between align-items-center h-100">
-                <span>&copy; 2022 CaptV89</span>
-                <div>
-                    <a class="text-white-50" href="https://github.com/captv89/seaRoute" target="_blank">Github</a>
-                    <span class="text-white-50 mx-1">|</span>
-                    <a class="text-white-50" href="#" id="open_preferences_center">Update cookies preferences</a>
+    <!-- Center stats / route quick badge (Desktop) -->
+    <div class="hidden xl:flex items-center gap-2.5 bg-surface-container-low px-3 py-1 rounded-sm border border-surface-container-high text-label-sm text-[11px] font-mono shadow-inner" id="header-quick-badge">
+        <span class="flex items-center gap-1.5 text-on-surface-variant" id="header-origin-badge"><span class="w-1.5 h-1.5 rounded-none bg-primary animate-pulse"></span> NLRTM (Rotterdam)</span>
+        <span class="text-outline-variant text-[10px]">➜</span>
+        <span class="text-tertiary" id="header-dest-badge">SGSIN (Singapore)</span>
+        <span class="text-surface-bright">|</span>
+        <span class="text-primary font-bold" id="header-dist-badge">8,420 NM</span>
+        <span class="text-surface-bright">|</span>
+        <span class="text-on-surface-variant" id="header-duration-badge">19d 11h @ 18.0 kts</span>
+    </div>
+
+    <!-- Right Controls -->
+    <div class="flex items-center gap-1.5 relative">
+        <!-- System Info Popover Trigger -->
+        <div class="relative" id="info-popover-wrapper">
+            <button class="flex items-center justify-center w-7 h-7 rounded-sm bg-surface-container hover:bg-surface-container-high border border-surface-container-high text-on-surface-variant hover:text-primary transition-colors cursor-pointer" id="btn-system-info" title="Dataset &amp; System Info" type="button">
+                <span class="material-symbols-outlined text-[16px]">info</span>
+            </button>
+            <!-- Dropdown info card -->
+            <div class="hidden absolute right-0 top-full mt-2 w-72 bg-surface-container-low border border-surface-container-high rounded-sm shadow-2xl p-3 z-50 flex flex-col gap-2 font-mono text-[10px]" id="info-popover-card">
+                <div class="flex items-center justify-between pb-1.5 border-b border-surface-container-high">
+                    <span class="text-primary font-bold uppercase tracking-wider flex items-center gap-1">
+                        <span class="material-symbols-outlined text-[14px]">terminal</span> System Metadata
+                    </span>
+                    <span class="text-[9px] text-tertiary px-1 py-0.2 rounded-sm bg-tertiary/10 border border-tertiary/20">ONLINE</span>
+                </div>
+                <div class="flex flex-col gap-1.5 text-on-surface-variant">
+                    <div class="flex justify-between py-0.5 border-b border-surface-container/50">
+                        <span>Core Engine</span>
+                        <span class="text-on-surface font-semibold" id="sys-info-engine">seaRoute v2.0</span>
+                    </div>
+                    <div class="flex justify-between py-0.5 border-b border-surface-container/50">
+                        <span>Mesh Graph</span>
+                        <span class="text-secondary font-semibold" id="sys-info-mesh">Marnet Mesh 2024.3</span>
+                    </div>
+                    <div class="flex justify-between py-0.5 border-b border-surface-container/50">
+                        <span>Graph Nodes / Edges</span>
+                        <span class="text-on-surface" id="sys-info-nodes-edges">42,800 / 118,400</span>
+                    </div>
+                    <div class="flex justify-between py-0.5 border-b border-surface-container/50">
+                        <span>DataSource</span>
+                        <span class="text-on-surface">Eurostat / Maritime GIS</span>
+                    </div>
+                    <div class="flex justify-between py-0.5 border-b border-surface-container/50">
+                        <span>Algorithm Mode</span>
+                        <span class="text-tertiary">Dijkstra &amp; A* Heuristic</span>
+                    </div>
+                    <div class="pt-1 flex justify-between items-center text-[9px]">
+                        <a href="#" id="open_preferences_center" class="text-on-surface-variant hover:text-primary transition-colors underline">Cookie Preferences</a>
+                        <a href="/about" class="text-secondary hover:underline">About</a>
+                    </div>
                 </div>
             </div>
         </div>
 
-        <!-- Bootstrap JS -->
-        <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.8/dist/js/bootstrap.bundle.min.js" integrity="sha384-FKyoEForCGlyvwx9Hj09JcYn3nv7wiPVlz7YYwJrWVcXK/BmnVDxM+D2scQbITxI" crossorigin="anonymous"></script>
+        <!-- GitHub link -->
+        <a class="flex items-center gap-1.5 px-2.5 py-1 rounded-sm bg-surface-container hover:bg-surface-container-high border border-surface-container-high text-on-surface text-label-sm text-[11px] transition-colors" href="https://github.com/captv89/seaRoute" rel="noreferrer" target="_blank">
+            <span class="material-symbols-outlined text-[15px]">code</span>
+            <span class="hidden sm:inline font-mono">GitHub</span>
+        </a>
 
-        <!-- Notie Notification JS -->
-        <script src="https://unpkg.com/notie@4.3.1/dist/notie.min.js" integrity="sha384-Ulw8y0TpoFZw3cNSRM88s1+p9O/TL6qMFIzDn9Bs+qETYhMp0UwMiv+vCylRfZVI" crossorigin="anonymous"></script>
+        <!-- API Specs button -->
+        <button class="flex items-center gap-1 px-2.5 py-1 rounded-sm bg-surface-container hover:bg-surface-container-high border border-surface-container-high text-on-surface text-label-sm text-[11px] transition-colors cursor-pointer" id="api-docs-btn" title="View seaRoute API Specs" type="button">
+            <span class="material-symbols-outlined text-[15px] text-secondary">api</span>
+            <span class="hidden sm:inline">API</span>
+        </button>
 
-        <!-- Custom JS -->
-        <script src="./static/script.js"></script>
+        <!-- Theme Switcher (Dark / Light) -->
+        <button class="flex items-center gap-1.5 px-2.5 py-1 rounded-sm bg-surface-container hover:bg-surface-container-high border border-surface-container-high text-on-surface transition-colors text-label-sm text-[11px] cursor-pointer" id="theme-toggle-btn" title="Toggle Light / Dark mode" type="button">
+            <span class="material-symbols-outlined text-[15px] text-primary" id="theme-icon">light_mode</span>
+            <span class="hidden md:inline font-mono" id="theme-text">Light</span>
+        </button>
 
-        <!-- Notifications -->
-        <script>
-            {{with .Error}}
-            notie.alert({type: 'error', text: '{{.}}', time: 5});
-            {{end}}
+        <!-- Mobile Sidebar Toggle -->
+        <button class="lg:hidden flex items-center justify-center w-8 h-8 rounded-sm bg-primary-container text-on-primary-container font-bold cursor-pointer" id="mobile-sidebar-toggle" title="Toggle Control Panel" type="button">
+            <span class="material-symbols-outlined text-[18px]">tune</span>
+        </button>
+    </div>
+</header>
+{{ end }}
 
-            {{with .Flash}}
-            notie.alert({type: 'success', text: '{{.}}', time: 5});
-            {{end}}
+{{define "bottom"}}
+<!-- API Specifications Modal Dialog -->
+<div class="fixed inset-0 z-50 bg-surface-container-lowest/80 backdrop-blur-sm hidden items-center justify-center p-4" id="api-specs-modal">
+    <div class="bg-surface-container-low border border-surface-container-high rounded-sm shadow-2xl w-full max-w-2xl max-h-[85vh] flex flex-col font-mono text-[11px]">
+        <div class="p-3 border-b border-surface-container-high flex items-center justify-between bg-surface-container-lowest">
+            <div class="flex items-center gap-2 text-primary font-bold">
+                <span class="material-symbols-outlined text-[18px] text-secondary">api</span>
+                <span class="font-headline-md text-sm text-on-surface">seaRoute API Specifications</span>
+            </div>
+            <button class="w-6 h-6 rounded-sm hover:bg-surface-bright text-on-surface-variant flex items-center justify-center cursor-pointer" id="btn-close-api-modal" type="button">
+                <span class="material-symbols-outlined text-[16px]">close</span>
+            </button>
+        </div>
+        <div class="p-4 overflow-y-auto custom-scroll flex flex-col gap-3 text-on-surface-variant">
+            <div class="p-2.5 rounded-sm bg-surface-container-lowest border border-surface-container-high">
+                <div class="flex items-center justify-between">
+                    <span class="text-tertiary font-bold">POST /waypoints</span>
+                    <span class="text-[9px] px-1 py-0.2 rounded-sm bg-tertiary/10 text-tertiary border border-tertiary/20">JSON</span>
+                </div>
+                <p class="text-[10px] mt-1 text-on-surface">Calculate optimal shortest sea route between ports or coordinates.</p>
+                <pre class="bg-surface-container p-2 rounded-sm border border-surface-container-high mt-1 text-[10px] text-primary overflow-x-auto"><code>{
+  "from": { "lat": 51.95, "lon": 4.05 },
+  "to": { "port": "Singapore" },
+  "algorithm": "dijkstra", // or "astar"
+  "avoid": ["suez"]
+}</code></pre>
+            </div>
+            <div class="p-2.5 rounded-sm bg-surface-container-lowest border border-surface-container-high">
+                <div class="flex items-center justify-between">
+                    <span class="text-secondary font-bold">GET /passages</span>
+                    <span class="text-[9px] px-1 py-0.2 rounded-sm bg-secondary/10 text-secondary border border-secondary/20">JSON</span>
+                </div>
+                <p class="text-[10px] mt-1 text-on-surface">Returns list of supported choke point avoidances and mesh metadata.</p>
+            </div>
+            <div class="p-2.5 rounded-sm bg-surface-container-lowest border border-surface-container-high">
+                <div class="flex items-center justify-between">
+                    <span class="text-secondary font-bold">GET /network</span>
+                    <span class="text-[9px] px-1 py-0.2 rounded-sm bg-secondary/10 text-secondary border border-secondary/20">GeoJSON</span>
+                </div>
+                <p class="text-[10px] mt-1 text-on-surface">Streams full Marnet navigation mesh GeoJSON for vector tile rendering.</p>
+            </div>
+            <div class="p-2.5 rounded-sm bg-surface-container-lowest border border-surface-container-high">
+                <div class="flex items-center justify-between">
+                    <span class="text-secondary font-bold">GET /ports?search=:query</span>
+                    <span class="text-[9px] px-1 py-0.2 rounded-sm bg-secondary/10 text-secondary border border-secondary/20">JSON</span>
+                </div>
+                <p class="text-[10px] mt-1 text-on-surface">Search world maritime ports by name or UN/LOCODE.</p>
+            </div>
+        </div>
+    </div>
+</div>
 
-            {{with .Warning}}
-            notie.alert({type: 'warning', text: '{{.}}', time: 5});
-            {{end}}
-        </script>
+<!-- Header Popovers & API Modal Handler -->
+<script>
+    (function () {
+        // System Info Popover
+        const btnSystemInfo = document.getElementById('btn-system-info');
+        const infoPopoverCard = document.getElementById('info-popover-card');
+        if (btnSystemInfo && infoPopoverCard) {
+            btnSystemInfo.addEventListener('click', function (e) {
+                e.stopPropagation();
+                infoPopoverCard.classList.toggle('hidden');
+            });
+            document.addEventListener('click', function (e) {
+                if (!infoPopoverCard.contains(e.target) && e.target !== btnSystemInfo) {
+                    infoPopoverCard.classList.add('hidden');
+                }
+            });
+        }
 
-    </footer>
-    </body>
+        // API Specs Modal
+        const btnApi = document.getElementById('api-docs-btn');
+        const modalApi = document.getElementById('api-specs-modal');
+        const btnCloseApi = document.getElementById('btn-close-api-modal');
+        if (btnApi && modalApi) {
+            btnApi.addEventListener('click', function () {
+                modalApi.classList.remove('hidden');
+                modalApi.classList.add('flex');
+            });
+        }
+        if (btnCloseApi && modalApi) {
+            btnCloseApi.addEventListener('click', function () {
+                modalApi.classList.add('hidden');
+                modalApi.classList.remove('flex');
+            });
+        }
+        if (modalApi) {
+            modalApi.addEventListener('click', function (e) {
+                if (e.target === modalApi) {
+                    modalApi.classList.add('hidden');
+                    modalApi.classList.remove('flex');
+                }
+            });
+        }
+    })();
+</script>
+
+<!-- Notie Notification JS -->
+<script src="https://unpkg.com/notie@4.3.1/dist/notie.min.js" integrity="sha384-Ulw8y0TpoFZw3cNSRM88s1+p9O/TL6qMFIzDn9Bs+qETYhMp0UwMiv+vCylRfZVI" crossorigin="anonymous"></script>
+
+<!-- Custom Application Scripts -->
+<script src="./static/script.js"></script>
+
+<!-- Notifications from Go Backend -->
+<script>
+    {{with .Error}}
+    notie.alert({type: 'error', text: '{{.}}', time: 5});
+    {{end}}
+
+    {{with .Flash}}
+    notie.alert({type: 'success', text: '{{.}}', time: 5});
+    {{end}}
+
+    {{with .Warning}}
+    notie.alert({type: 'warning', text: '{{.}}', time: 5});
+    {{end}}
+</script>
+
+</body>
 </html>
 {{end}}

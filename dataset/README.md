@@ -20,3 +20,26 @@
   for Trade and Transport Locations), https://unece.org/trade/cefact/unlocode-code-list-country-and-territory
 - UNECE publishes UN/LOCODE free of charge. No formal licence text was found;
   UNECE's website terms of use apply. Credit: "Source: UN/LOCODE, UNECE".
+
+## ASAM_events.geojson — Piracy & Anti-Shipping Incidents
+- Source: National Geospatial-Intelligence Agency (NGA) Anti-Shipping Activity Messages (ASAM)
+- Licence: U.S. Government Work / Public Domain
+- Pre-compressed with gzip for streaming over `GET /layers/piracy`
+
+## WPI.geojson — World Port Index
+- Source: National Geospatial-Intelligence Agency (NGA) Pub 150 World Port Index (3,600+ major maritime ports)
+- Licence: U.S. Government Work / Public Domain
+- Pre-compressed with gzip for streaming over `GET /layers/seaports`
+
+## eez_v11 & eez_12nm_v3 — Exclusive Economic Zones & Territorial Sea Baseline
+- Source: Flanders Marine Institute (VLIZ) Marine Regions (https://marineregions.org)
+- Licence: CC-BY 4.0
+- Optimized with coordinate quantization and pre-compressed with gzip (`GET /layers/eez`, `GET /layers/baseline`)
+
+## eca_reg13_nox & eca_reg14_sox_pm — IMO Emission Control Areas
+- Source: International Maritime Organization (IMO) MARPOL Annex VI Reg 13 (NOx Tier III) & Reg 14 (SOx 0.10% fuel sulfur)
+- Optimized and pre-compressed with gzip for streaming over `GET /layers/eca-nox` and `GET /layers/eca-sox`
+
+## FAO_AREAS_CWP.geojson — FAO Major Fishing Areas
+- Source: Food and Agriculture Organization of the United Nations (FAO / CWP)
+- Pre-compressed with gzip for streaming over `GET /layers/fao`

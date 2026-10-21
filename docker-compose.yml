@@ -1,13 +1,14 @@
 services:
   searoute:
+    image: searoute:latest
     build: .
     env_file:
       - .env
     ports:
-      - "8080:8080"
+      - "${PORT:-8080}:8080"
     environment:
       - PORT=8080
-      - APP_ENV=development
+      - APP_ENV=production
       - OWM_API_KEY=${OWM_API_KEY:-}
       - CARTO_API_KEY=${CARTO_API_KEY:-}
       - GA_TRACKING_ID=${GA_TRACKING_ID:-}
@@ -15,8 +16,4 @@ services:
       # - APP_ENV=prod
       # - CERT_PATH=/certs/cert.pem
       # - KEY_PATH=/certs/key.pem
-    volumes:
-      - ./dataset:/app/dataset
-      - ./web/static/data:/app/web/static/data
-      - ./temp:/app/temp
     restart: unless-stopped

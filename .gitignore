@@ -7,3 +7,9 @@ seaRoute
 /web/static/data/
 
 .DS_Store
+
+# Datasets: Keep only marnet_plus_5km.geojson and compressed .gz files
+dataset/*.geojson
+!dataset/marnet_plus_5km.geojson
+
+

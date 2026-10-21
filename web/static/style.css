@@ -1,183 +1,420 @@
-body {
-    display: flex;
-    min-height: 100vh;
-    flex-direction: column;
+/* ==========================================================================
+   seaRoute ECDIS Tactical Stylesheet
+   Design System: Oceanic Tactical ECDIS
+   ========================================================================== */
+
+/* Custom Scrollbars */
+::-webkit-scrollbar {
+    width: 5px;
+    height: 5px;
+}
+::-webkit-scrollbar-track {
+    background: #0c1421;
+}
+::-webkit-scrollbar-thumb {
+    background: #222a38;
+    border-radius: 2px;
+}
+::-webkit-scrollbar-thumb:hover {
+    background: #3e4850;
+}
+.custom-scroll::-webkit-scrollbar {
+    width: 4px;
+}
+.custom-scroll::-webkit-scrollbar-thumb {
+    background: #2d3543;
 }
 
-main {
-    flex: 1 0 auto;
+html:not(.dark) ::-webkit-scrollbar-track {
+    background: #f1f5f9;
+}
+html:not(.dark) ::-webkit-scrollbar-thumb {
+    background: #cbd5e1;
+}
+html:not(.dark) ::-webkit-scrollbar-thumb:hover {
+    background: #94a3b8;
 }
 
-html, body {
-    height: 100%;
-    margin: 0;
-    padding: 0;
+/* Route Animation Keyframes */
+@keyframes dash {
+    to {
+        stroke-dashoffset: -40;
+    }
 }
 
+.flow-dash {
+    stroke-dasharray: 6 6;
+    animation: dash 3s linear infinite;
+}
+
+/* Vessel Beacon Pulse Animation */
+@keyframes pulse-ring {
+    0% {
+        transform: scale(0.6);
+        opacity: 0.9;
+    }
+    100% {
+        transform: scale(2.4);
+        opacity: 0;
+    }
+}
+
+.vessel-beacon {
+    animation: pulse-ring 2s cubic-bezier(0.215, 0.61, 0.355, 1) infinite;
+    transform-origin: center;
+}
+
+.vessel-marker-container {
+    background: transparent !important;
+    border: none !important;
+}
+
+/* Map Canvas Container */
 #map {
-    height: calc(100vh - 176px);
-    width: 100%;
-    position: fixed;
-    top: 126px;
-    left: 0;
-    z-index: 0;
-}
-
-/*:root {*/
-/*    --map-tiles-filter: brightness(0.6) invert(1) contrast(3) hue-rotate(200deg) saturate(0.3) brightness(0.7);*/
-/*}*/
-
-/*@media (prefers-color-scheme: dark) {*/
-/*    .map-tiles {*/
-/*        filter:var(--map-tiles-filter, none);*/
-/*    }*/
-/*}*/
-
-
-.form {
-    position: relative;
-    z-index: 2;
-    padding: 10px 0;
-    background: #fff;
-}
-
-.page-footer {
-    height: 50px;
-    padding-top: 0;
-    position: fixed;
-    bottom: 0;
-    width: 100%;
-    z-index: 1;
-}
-
-.autocomplete-items {
-    position: absolute;
-    z-index: 9999;
-    top: 100%;
-    left: 0;
-    right: 0;
-    max-height: 200px;
-    overflow-y: auto;
-    background-color: #fff;
-    color: #000000;
-    border: 1px solid #ddd;
-    border-radius: 0 0 4px 4px;
-    box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
-}
-
-.autocomplete-items div {
-    padding: 10px;
-    cursor: pointer;
-}
-
-.autocomplete-items div:hover {
-    background-color: #cecdcd;
-    cursor: pointer;
-}
-
-.autocomplete-active {
-    background-color: DodgerBlue !important;
-    color: #ffffff;
-}
-
-.btn-floating {
-    width: 48px;
-    height: 48px;
-    position: fixed;
-    bottom: 80px;
-    right: 80px;
-    border-radius: 50%;
-    display: inline-flex;
-    justify-content: center;
-    align-items: center;
-    z-index: 500;
-    box-shadow: 0 2px 5px rgba(0, 0, 0, 0.3);
-}
-
-.btn-floating i {
-    display: block;
     width: 100%;
     height: 100%;
-    text-align: center;
-    line-height: 34px;
+    background-color: #0c1421;
 }
 
-.btn-floating i.fa-download {
-    font-size: 24px;
+html:not(.dark) #map {
+    background-color: #f8fafc;
 }
 
-#clear-button {
-    position: fixed;
-    bottom: 80px;
-    right: 20px;
+/* Map Crosshair Picking Cursor */
+.cursor-crosshair,
+.cursor-crosshair .leaflet-container {
+    cursor: crosshair !important;
 }
 
-.notie-alert {
-    z-index: 9999;
+/* Leaflet Popups - ECDIS Nautical Theme */
+.leaflet-popup-content-wrapper {
+    background: #141c29 !important;
+    color: #dbe2f5 !important;
+    border: 1px solid #0ea5e9 !important;
+    border-radius: 2px !important;
+    box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.6), 0 8px 10px -6px rgba(0, 0, 0, 0.6) !important;
+    font-family: 'JetBrains Mono', monospace !important;
+    font-size: 11px !important;
+    line-height: 1.4 !important;
 }
 
-a {
-    font-family: 'Montserrat', sans-serif;
-    text-decoration: none;
-    transition: color 0.2s ease-in-out;
+.leaflet-popup-tip {
+    background: #141c29 !important;
+    border: 1px solid #0ea5e9 !important;
 }
 
-.leaflet-control-color-scale {
-    display: block;
-    background: none;
-    box-shadow: none;
-    border-width: 0px;
-    margin-right: 10px;
-    width: 360px;
-    height: 27px;
+.leaflet-popup-content {
+    margin: 10px 12px !important;
+    line-height: 1.4 !important;
 }
 
-.leaflet-control-color-scale-line {
-    background-image: none;
-    position: relative;
-    border-width: 0px;
-    margin: 0px;
+.leaflet-popup-close-button {
+    color: #88929b !important;
 }
 
-.scale-details {
-    font-size: 12px;
-    font-weight: bold;
-    color: #000;
-    margin: 0 5px;
+.leaflet-popup-close-button:hover {
+    color: #89ceff !important;
 }
 
-.scale-details div {
-    display: inline-block;
-    vertical-align: middle;
+html:not(.dark) .leaflet-popup-content-wrapper {
+    background: #ffffff !important;
+    color: #1e293b !important;
+    border: 1px solid #0284c7 !important;
 }
 
-.scale-details .scale-gradient {
-    display: inline-block;
-    width: 260px;
-    height: 20px;
-    vertical-align: middle;
-    margin-left: 5px;
+html:not(.dark) .leaflet-popup-tip {
+    background: #ffffff !important;
+    border: 1px solid #0284c7 !important;
 }
 
-.scale-details .scale-gradient .scale-dividers {
-    display: flex;
-    justify-content: space-between;
-    margin-top: 5px;
-}
-
-.scale-details .scale-gradient .scale-dividers div {
-    font-size: 10px;
-    color: #000;
-    text-align: center;
-    width: 30px;
-    margin: 0;
-}
-
-.scale-details .scale-gradient .horizontal-gradient-line {
-    width: 100%;
-    height: 10px;
-}
-
+/* Leaflet Tooltips */
 .leaflet-tooltip {
-    visibility: visible;
+    background: #0c1421 !important;
+    color: #89ceff !important;
+    border: 1px solid #222a38 !important;
+    border-radius: 2px !important;
+    font-family: 'JetBrains Mono', monospace !important;
+    font-size: 10px !important;
+    padding: 3px 6px !important;
+    box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.3) !important;
 }
+
+html:not(.dark) .leaflet-tooltip {
+    background: #ffffff !important;
+    color: #0284c7 !important;
+    border: 1px solid #cbd5e1 !important;
+    box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1) !important;
+}
+html:not(.dark) .leaflet-tooltip-top:before {
+    border-top-color: #cbd5e1 !important;
+}
+html:not(.dark) .leaflet-tooltip-bottom:before {
+    border-bottom-color: #cbd5e1 !important;
+}
+html:not(.dark) .leaflet-tooltip-left:before {
+    border-left-color: #cbd5e1 !important;
+}
+html:not(.dark) .leaflet-tooltip-right:before {
+    border-right-color: #cbd5e1 !important;
+}
+
+.leaflet-tooltip-top:before {
+    border-top-color: #222a38 !important;
+}
+.leaflet-tooltip-bottom:before {
+    border-bottom-color: #222a38 !important;
+}
+.leaflet-tooltip-left:before {
+    border-left-color: #222a38 !important;
+}
+.leaflet-tooltip-right:before {
+    border-right-color: #222a38 !important;
+}
+
+/* Leaflet Attribution & Scale Controls */
+.leaflet-control-attribution {
+    background: rgba(12, 20, 33, 0.85) !important;
+    color: #88929b !important;
+    font-family: 'JetBrains Mono', monospace !important;
+    font-size: 9px !important;
+    border: 1px solid #222a38 !important;
+    border-radius: 2px !important;
+    padding: 2px 6px !important;
+    backdrop-filter: blur(4px) !important;
+}
+
+.leaflet-control-attribution a {
+    color: #89ceff !important;
+    text-decoration: none !important;
+}
+
+.leaflet-control-attribution a:hover {
+    text-decoration: underline !important;
+}
+
+html:not(.dark) .leaflet-control-attribution {
+    background: rgba(255, 255, 255, 0.85) !important;
+    color: #64748b !important;
+    border-color: #cbd5e1 !important;
+}
+
+html:not(.dark) .leaflet-control-attribution a {
+    color: #0284c7 !important;
+}
+
+.leaflet-control-scale-line {
+    background: rgba(12, 20, 33, 0.85) !important;
+    color: #dbe2f5 !important;
+    border: 1px solid #3e4850 !important;
+    border-top: none !important;
+    font-family: 'JetBrains Mono', monospace !important;
+    font-size: 9px !important;
+    padding: 1px 4px !important;
+    backdrop-filter: blur(4px) !important;
+}
+
+html:not(.dark) .leaflet-control-scale-line {
+    background: rgba(255, 255, 255, 0.85) !important;
+    color: #0f172a !important;
+    border-color: #94a3b8 !important;
+}
+
+/* Marker Cluster Customization */
+.marker-cluster-small,
+.marker-cluster-medium,
+.marker-cluster-large {
+    background-color: rgba(14, 165, 233, 0.25) !important;
+}
+
+.marker-cluster-small div,
+.marker-cluster-medium div,
+.marker-cluster-large div {
+    background-color: rgba(14, 165, 233, 0.8) !important;
+    color: #ffffff !important;
+    font-family: 'JetBrains Mono', monospace !important;
+    font-weight: 600 !important;
+    font-size: 11px !important;
+    border-radius: 50% !important;
+}
+
+/* Select Dropdown Options */
+select option {
+    background-color: #070e1b;
+    color: #dbe2f5;
+}
+
+html:not(.dark) select option {
+    background-color: #ffffff;
+    color: #0f172a;
+}
+
+/* Port Autocomplete Dropdown Items */
+.autocomplete-item {
+    padding: 6px 10px;
+    cursor: pointer;
+    border-bottom: 1px solid rgba(34, 42, 56, 0.6);
+    transition: background-color 0.15s ease;
+}
+
+.autocomplete-item:hover,
+.autocomplete-item.active {
+    background-color: #222a38;
+    color: #89ceff;
+}
+
+html:not(.dark) .autocomplete-item {
+    border-bottom: 1px solid #e2e8f0;
+    color: #0f172a;
+}
+
+html:not(.dark) .autocomplete-item:hover,
+html:not(.dark) .autocomplete-item.active {
+    background-color: #e2e8f0;
+    color: #0284c7;
+}
+
+/* Notie Notification Integration */
+.notie-alert {
+    z-index: 99999 !important;
+    font-family: 'Inter', sans-serif !important;
+    font-size: 12px !important;
+}
+
+/* ==========================================================================
+   Tactical Clusters & Markers (Piracy & World Seaports)
+   ========================================================================== */
+
+/* Piracy Incident Warning Pin */
+.piracy-marker-pin {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 20px;
+    height: 20px;
+    border-radius: 50%;
+    background-color: #ef4444;
+    border: 1.5px solid #ffffff;
+    box-shadow: 0 0 10px rgba(239, 68, 68, 0.7);
+    color: #ffffff;
+    cursor: pointer;
+    font-size: 12px;
+}
+
+/* Piracy Marker Clusters */
+.piracy-cluster {
+    background-color: rgba(239, 68, 68, 0.22) !important;
+    border-radius: 50% !important;
+}
+
+.piracy-cluster div {
+    background: linear-gradient(135deg, #ef4444, #991b1b) !important;
+    color: #ffffff !important;
+    font-family: 'JetBrains Mono', monospace !important;
+    font-weight: 700 !important;
+    font-size: 11px !important;
+    border: 1.5px solid #ef4444 !important;
+    border-radius: 50% !important;
+    box-shadow: 0 0 12px rgba(239, 68, 68, 0.5) !important;
+}
+
+/* Piracy Incident Alert Popup */
+.piracy-popup .leaflet-popup-content-wrapper {
+    background: #0f172a !important;
+    color: #f8fafc !important;
+    border: 1px solid #ef4444 !important;
+    box-shadow: 0 10px 25px -5px rgba(239, 68, 68, 0.3) !important;
+}
+
+.piracy-popup .leaflet-popup-tip {
+    background: #0f172a !important;
+    border: 1px solid #ef4444 !important;
+}
+
+html:not(.dark) .piracy-popup .leaflet-popup-content-wrapper {
+    background: #ffffff !important;
+    color: #0f172a !important;
+    border: 1.5px solid #dc2626 !important;
+}
+
+html:not(.dark) .piracy-popup .leaflet-popup-tip {
+    background: #ffffff !important;
+    border: 1.5px solid #dc2626 !important;
+}
+
+/* World Seaport Pin */
+.seaport-marker-pin {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 20px;
+    height: 20px;
+    border-radius: 50%;
+    background-color: #0ea5e9;
+    border: 1.5px solid #ffffff;
+    box-shadow: 0 0 8px rgba(14, 165, 233, 0.6);
+    color: #ffffff;
+    cursor: pointer;
+    font-size: 12px;
+}
+
+/* World Seaport Clusters */
+.seaport-cluster {
+    background-color: rgba(14, 165, 233, 0.22) !important;
+    border-radius: 50% !important;
+}
+
+.seaport-cluster div {
+    background: linear-gradient(135deg, #0ea5e9, #0369a1) !important;
+    color: #ffffff !important;
+    font-family: 'JetBrains Mono', monospace !important;
+    font-weight: 700 !important;
+    font-size: 11px !important;
+    border: 1.5px solid #38bdf8 !important;
+    border-radius: 50% !important;
+    box-shadow: 0 0 10px rgba(14, 165, 233, 0.4) !important;
+}
+
+/* Weather Sub-Layer Buttons */
+.weather-btn.active {
+    background-color: #0ea5e9 !important;
+    color: #ffffff !important;
+    font-weight: 600 !important;
+}
+
+html:not(.dark) .weather-btn.active {
+    background-color: #0284c7 !important;
+    color: #ffffff !important;
+}
+
+/* Maritime Sector Tactical Feature Popup */
+.tactical-feature-popup .leaflet-popup-content-wrapper {
+    background: #0c1421 !important;
+    color: #dbe2f5 !important;
+    border: 1px solid #222a38 !important;
+    border-radius: 2px !important;
+    box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.7) !important;
+    padding: 0 !important;
+}
+
+.tactical-feature-popup .leaflet-popup-tip {
+    background: #0c1421 !important;
+    border: 1px solid #222a38 !important;
+}
+
+.tactical-feature-popup .leaflet-popup-content {
+    margin: 0 !important;
+}
+
+html:not(.dark) .tactical-feature-popup .leaflet-popup-content-wrapper {
+    background: #ffffff !important;
+    color: #0f172a !important;
+    border: 1px solid #cbd5e1 !important;
+    box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.15) !important;
+}
+
+html:not(.dark) .tactical-feature-popup .leaflet-popup-tip {
+    background: #ffffff !important;
+    border: 1px solid #cbd5e1 !important;
+}
+
+

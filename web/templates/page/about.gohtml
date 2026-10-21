@@ -1,7 +1,41 @@
 {{template "top" .}}
-    <div class="container mt-5">
-        <h1>About Me</h1>
-        <p>This web app was built by CaptV89 with the help of ChatGPT, a powerful chatbot powered by OpenAI.</p>
+<div class="flex-1 overflow-y-auto custom-scroll p-6 md:p-12 flex justify-center items-start">
+    <div class="w-full max-w-2xl bg-surface-container-low border border-surface-container-high rounded-sm shadow-2xl p-6 md:p-8 flex flex-col gap-4 font-mono text-[12px] text-on-surface">
+        <div class="flex items-center gap-2 pb-3 border-b border-surface-container-high">
+            <span class="material-symbols-outlined text-[24px] text-primary">sailing</span>
+            <h1 class="font-headline-md text-xl font-bold tracking-tight text-on-surface">About seaRoute</h1>
+        </div>
+        <p class="leading-relaxed text-on-surface-variant">
+            seaRoute is a tactical maritime ECDIS route and waypoint calculator built for maritime navigators, voyage planners, and developers. It calculates shortest feasible sea passages across global maritime shipping routes using Dijkstra and A* heuristics over high-resolution ocean graph networks.
+        </p>
+        <div class="bg-surface-container-lowest p-4 rounded-sm border border-surface-container-high flex flex-col gap-2">
+            <span class="text-primary font-bold text-[11px] uppercase tracking-wider">Engine Specifications</span>
+            <div class="flex justify-between border-b border-surface-container/50 py-1 text-on-surface-variant">
+                <span>Core Algorithm</span>
+                <span class="text-on-surface font-semibold">Dijkstra &amp; A* (Heuristic Graph Engine)</span>
+            </div>
+            <div class="flex justify-between border-b border-surface-container/50 py-1 text-on-surface-variant">
+                <span>Passage Constraints</span>
+                <span class="text-on-surface font-semibold">Suez, Panama, Malacca, Kiel, Dover &amp; 9 Chokepoints</span>
+            </div>
+            <div class="flex justify-between border-b border-surface-container/50 py-1 text-on-surface-variant">
+                <span>Marine Regulations</span>
+                <span class="text-tertiary font-semibold">IMO MARPOL Annex VI Reg 14 ECA / SECA</span>
+            </div>
+            <div class="flex justify-between py-1 text-on-surface-variant">
+                <span>Developer</span>
+                <span class="text-primary font-semibold">CaptV89</span>
+            </div>
+        </div>
+        <div class="pt-2 flex items-center justify-between">
+            <a href="/" class="flex items-center gap-1 text-primary hover:underline">
+                <span class="material-symbols-outlined text-[16px]">arrow_back</span> Return to Chart
+            </a>
+            <a href="https://github.com/captv89/seaRoute" target="_blank" rel="noreferrer" class="flex items-center gap-1 text-on-surface-variant hover:text-on-surface">
+                <span class="material-symbols-outlined text-[16px]">code</span> GitHub Repository
+            </a>
+        </div>
     </div>
+</div>
 {{template "bottom" .}}
 

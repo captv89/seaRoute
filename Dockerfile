@@ -33,8 +33,8 @@ WORKDIR /app
 COPY --from=builder /searoute /app/searoute
 
 # Copy required data and web assets
-COPY --from=builder /app/dataset /app/dataset
-COPY --from=builder /app/web /app/web
+COPY dataset /app/dataset
+COPY web /app/web
 
 # Create temp directory with proper permissions
 RUN mkdir -p /app/temp && chown -R appuser:appgroup /app
