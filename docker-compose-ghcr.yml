@@ -8,6 +8,9 @@ services:
     environment:
       - PORT=8080
       - APP_ENV=production
+      - OWM_API_KEY=${OWM_API_KEY:-}
+      - CARTO_API_KEY=${CARTO_API_KEY:-}
+      - GA_TRACKING_ID=${GA_TRACKING_ID:-}
     volumes:
       - ./temp:/app/temp
     healthcheck:

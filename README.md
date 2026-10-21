@@ -11,6 +11,8 @@
 ## Screenshot
 ![](https://i.ibb.co/KcD1zv6G/sea-Route-v2.png)
 
+![](https://i.ibb.co/pv4P78nc/Screenshot-2026-10-21-at-21-18-04.png)
+
 
 ## Key Features
 
