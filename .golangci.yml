@@ -18,3 +18,4 @@ linters:
         - fmt.Fprint
         - fmt.Fprintf
         - io.Copy
+

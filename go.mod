@@ -2,8 +2,6 @@ module github.com/captv89/seaRoute
 
 go 1.26.0
 
-toolchain go1.26.9
-
 require (
 	github.com/gin-gonic/gin v1.12.0
 	github.com/mattn/go-sqlite3 v1.14.52
