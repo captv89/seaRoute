@@ -5,7 +5,7 @@
 [![Docker Image](https://img.shields.io/badge/docker-ghcr.io%2Fcaptv89%2Fsearoute-blue?logo=docker)](https://github.com/captv89/seaRoute/pkgs/container/searoute)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-**seaRoute** is a high-performance maritime navigation, ECDIS visualizer, and optimal sea route computation engine written in Go and Leaflet. Built on top of the Eurostat Marnet navigation mesh (42,800+ nodes, 118,400+ nautical edges), it calculates fuel-efficient, navigable sea passages between any two global ports or arbitrary marine coordinates, accounting for maritime boundaries, piracy risk zones, emissions control areas, and live weather conditions.
+**seaRoute** is a high-performance maritime navigation, ECDIS like visualizer, and optimal sea route computation engine written in Go and Leaflet. Built on top of the Eurostat Marnet navigation mesh (42,800+ nodes, 118,400+ nautical edges), it calculates shortest, navigable sea passages between any two global ports or arbitrary marine coordinates. Layers include maritime boundaries, piracy risk zones, emissions control areas, and live weather conditions.
 
 ---
 ## Screenshot
