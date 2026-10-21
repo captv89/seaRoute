@@ -270,11 +270,11 @@ func setupRoutes(router *gin.Engine, app *App) {
 			if _, gzErr := os.Stat(gzPath); gzErr == nil {
 				gzFile, openErr := os.Open(gzPath)
 				if openErr == nil {
-					defer gzFile.Close()
+					defer func() { _ = gzFile.Close() }()
 					zr, zrErr := gzip.NewReader(gzFile)
 					if zrErr == nil {
-						defer zr.Close()
-						io.Copy(c.Writer, zr)
+						defer func() { _ = zr.Close() }()
+						_, _ = io.Copy(c.Writer, zr)
 						return
 					}
 				}
@@ -339,11 +339,11 @@ func setupRoutes(router *gin.Engine, app *App) {
 			if _, gzErr := os.Stat(gzPath); gzErr == nil {
 				gzFile, openErr := os.Open(gzPath)
 				if openErr == nil {
-					defer gzFile.Close()
+					defer func() { _ = gzFile.Close() }()
 					zr, zrErr := gzip.NewReader(gzFile)
 					if zrErr == nil {
-						defer zr.Close()
-						io.Copy(c.Writer, zr)
+						defer func() { _ = zr.Close() }()
+						_, _ = io.Copy(c.Writer, zr)
 						return
 					}
 				}

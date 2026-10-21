@@ -278,6 +278,67 @@ func TestLayersEndpoint(t *testing.T) {
 	}
 }
 
+func TestSecurityHeadersMiddleware(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	r := gin.New()
+	r.Use(securityHeadersMiddleware())
+	r.GET("/ping", func(c *gin.Context) {
+		c.String(http.StatusOK, "pong")
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/ping", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", w.Code)
+	}
+	if got := w.Header().Get("X-Content-Type-Options"); got != "nosniff" {
+		t.Errorf("expected nosniff, got %s", got)
+	}
+	if got := w.Header().Get("X-Frame-Options"); got != "DENY" {
+		t.Errorf("expected DENY, got %s", got)
+	}
+	if got := w.Header().Get("X-XSS-Protection"); got != "1; mode=block" {
+		t.Errorf("expected 1; mode=block, got %s", got)
+	}
+	if got := w.Header().Get("Referrer-Policy"); got != "strict-origin-when-cross-origin" {
+		t.Errorf("expected strict-origin-when-cross-origin, got %s", got)
+	}
+}
+
+func TestRateLimitMiddleware(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	r := gin.New()
+	r.Use(rateLimitMiddleware())
+	r.GET("/ping", func(c *gin.Context) {
+		c.String(http.StatusOK, "pong")
+	})
+
+	testIP := "198.51.100.99:12345"
+
+	// 60 requests should pass
+	for i := 0; i < 60; i++ {
+		req := httptest.NewRequest(http.MethodGet, "/ping", nil)
+		req.RemoteAddr = testIP
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, req)
+		if w.Code != http.StatusOK {
+			t.Fatalf("request %d expected 200, got %d", i+1, w.Code)
+		}
+	}
+
+	// 61st request should be rate-limited (429)
+	req := httptest.NewRequest(http.MethodGet, "/ping", nil)
+	req.RemoteAddr = testIP
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusTooManyRequests {
+		t.Fatalf("expected 429 Too Many Requests, got %d", w.Code)
+	}
+}
+
+
 
 
 

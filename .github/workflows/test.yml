@@ -1,0 +1,53 @@
+name: test
+
+on:
+  push:
+    branches: [ master ]
+  pull_request:
+    branches: [ master ]
+
+permissions:
+  contents: write
+
+jobs:
+  test:
+    name: test & coverage
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: 'go.mod'
+
+      - name: Run tests with coverage
+        run: |
+          go test -v -covermode=count -coverprofile=coverage.out ./...
+
+      - name: Update Go Coverage Badge in README
+        run: |
+          COVERAGE=$(go tool cover -func=coverage.out | grep "total:" | awk '{print $3}')
+          echo "Total Coverage: $COVERAGE"
+          python3 -c "
+          import re, sys
+          cov = '$COVERAGE'
+          num = float(cov.replace('%', ''))
+          color = 'brightgreen' if num >= 80 else ('yellow' if num >= 60 else 'red')
+          repo = '${{ github.repository }}'
+          badge = f'[![go-coverage-badge](https://img.shields.io/badge/Coverage-{cov}-{color})](https://github.com/{repo}/actions/workflows/test.yml)'
+          with open('README.md', 'r') as f:
+              content = f.read()
+          pattern = r'(\[!\[go-coverage-badge\].*?\]\(.*?\)|\!\[go-coverage-badge\]\(.*?\)|\!\[Coverage\]\(https:\/\/img\.shields\.io\/badge\/Coverage-[^)]+\)|\[!\[Coverage\].*?\]\([^)]+\))'
+          new_content = re.sub(pattern, badge, content)
+          with open('README.md', 'w') as f:
+              f.write(new_content)
+          "
+
+      - name: Commit Coverage Badge
+        if: github.event_name == 'push' && github.ref == 'refs/heads/master'
+        uses: stefanzweifel/git-auto-commit-action@v5
+        with:
+          commit_message: "chore: update go-coverage-badge [skip ci]"
+          file_pattern: README.md

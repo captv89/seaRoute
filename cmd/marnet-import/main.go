@@ -41,7 +41,7 @@ func run(in, out string) error {
 	if err != nil {
 		return err
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	var table string
 	if err := db.QueryRow(`SELECT table_name FROM gpkg_contents WHERE data_type = 'features' LIMIT 1`).Scan(&table); err != nil {
@@ -59,13 +59,13 @@ func run(in, out string) error {
 	if err != nil {
 		return err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	f, err := os.Create(out)
 	if err != nil {
 		return err
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	w := bufio.NewWriter(f)
 	fmt.Fprint(w, `{"type":"FeatureCollection","features":[`)
 

@@ -1,12 +1,16 @@
 # seaRoute — Tactical Maritime ECDIS & Route Optimization Engine
 
-[![Go Report Card](https://goreportcard.com/badge/github.com/captv89/seaRoute)](https://goreportcard.com/report/github.com/captv89/seaRoute)
+[![golangci-lint](https://github.com/captv89/seaRoute/actions/workflows/lint.yml/badge.svg)](https://github.com/captv89/seaRoute/actions/workflows/lint.yml)
+[![go-coverage-badge](https://img.shields.io/badge/Coverage-63.7%25-yellow)](https://github.com/captv89/seaRoute/actions/workflows/test.yml)
 [![Docker Image](https://img.shields.io/badge/docker-ghcr.io%2Fcaptv89%2Fsearoute-blue?logo=docker)](https://github.com/captv89/seaRoute/pkgs/container/searoute)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
 **seaRoute** is a high-performance maritime navigation, ECDIS visualizer, and optimal sea route computation engine written in Go and Leaflet. Built on top of the Eurostat Marnet navigation mesh (42,800+ nodes, 118,400+ nautical edges), it calculates fuel-efficient, navigable sea passages between any two global ports or arbitrary marine coordinates, accounting for maritime boundaries, piracy risk zones, emissions control areas, and live weather conditions.
 
 ---
+## Screenshot
+![](https://i.ibb.co/KcD1zv6G/sea-Route-v2.png)
+
 
 ## Key Features
 
