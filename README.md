@@ -130,6 +130,7 @@ Open `http://localhost:8080` in your web browser.
 | `OWM_API_KEY` | OpenWeatherMap API key for live radar and weather matrix | _Optional_ |
 | `CARTO_API_KEY` | CARTO vector basemap key (uses OpenStreetMap if omitted) | _Optional_ |
 | `GA_TRACKING_ID`| Google Analytics tracking identifier | _Optional_ |
+| `CSP_MODE` | `report-only` sends the Content-Security-Policy as `Content-Security-Policy-Report-Only` (fallback if the enforced policy blocks something) | enforced |
 | `TRUSTED_PROXIES` | Comma-separated proxy CIDRs allowed to set `X-Forwarded-For` (used for per-client rate limiting); `none` to ignore the header | loopback + private ranges |
 
 `/waypoints`, `/ports` and `/mcp` are rate limited to 60 requests per minute per client IP. Pages, static files and map layers are not.
