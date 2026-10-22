@@ -36,7 +36,8 @@ jobs:
           num = float(cov.replace('%', ''))
           color = 'brightgreen' if num >= 80 else ('yellow' if num >= 60 else 'red')
           repo = '${{ github.repository }}'
-          badge = f'[![go-coverage-badge](https://img.shields.io/badge/Coverage-{cov}-{color})](https://github.com/{repo}/actions/workflows/test.yml)'
+          # '%' must be URL-encoded as %25 or shields.io renders a broken badge
+          badge = f'[![go-coverage-badge](https://img.shields.io/badge/Coverage-{num}%25-{color})](https://github.com/{repo}/actions/workflows/test.yml)'
           with open('README.md', 'r') as f:
               content = f.read()
           pattern = r'(\[!\[go-coverage-badge\].*?\]\(.*?\)|\!\[go-coverage-badge\]\(.*?\)|\!\[Coverage\]\(https:\/\/img\.shields\.io\/badge\/Coverage-[^)]+\)|\[!\[Coverage\].*?\]\([^)]+\))'
