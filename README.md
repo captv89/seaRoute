@@ -1,7 +1,7 @@
 # seaRoute — Tactical Maritime ECDIS & Route Optimization Engine
 
 [![golangci-lint](https://github.com/captv89/seaRoute/actions/workflows/lint.yml/badge.svg)](https://github.com/captv89/seaRoute/actions/workflows/lint.yml)
-[![go-coverage-badge](https://img.shields.io/badge/Coverage-68.4%25-yellow)](https://github.com/captv89/seaRoute/actions/workflows/test.yml)
+[![go-coverage-badge](https://img.shields.io/badge/Coverage-68.9%25-yellow)](https://github.com/captv89/seaRoute/actions/workflows/test.yml)
 [![Docker Image](https://img.shields.io/badge/docker-ghcr.io%2Fcaptv89%2Fsearoute-blue?logo=docker)](https://github.com/captv89/seaRoute/pkgs/container/searoute)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
