@@ -8,3 +8,4 @@ runtime.log
 # Raw uncompressed GeoJSON layers (compressed .gz and optimized datasets are used by the app)
 dataset/*.geojson
 !dataset/marnet_plus_5km.geojson
+/web/tailwind/node_modules/

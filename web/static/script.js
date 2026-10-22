@@ -104,6 +104,16 @@
     }
 
     /**
+     * Escapes a value for safe interpolation into HTML strings
+     * (popups, innerHTML). Dataset and API fields must pass through this.
+     */
+    function escapeHtml(val) {
+        return String(val ?? '').replace(/[&<>"']/g, ch => ({
+            '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+        })[ch]);
+    }
+
+    /**
      * Formats decimal degrees into standard nautical DMS and decimal string.
      * Example: 51.95 -> "51° 57.00' N (51.9500)"
      */
@@ -496,9 +506,9 @@
             cardsHtml = features.map(f => {
                 let details = '';
                 if (f.type === 'baseline' || f.type === 'eez') {
-                    const sovereign = f.sovereign || 'Coastal State';
-                    const territory = f.territory && f.territory !== f.sovereign ? ` (${f.territory})` : '';
-                    const iso = f.iso ? ` [${f.iso}]` : '';
+                    const sovereign = escapeHtml(f.sovereign || 'Coastal State');
+                    const territory = f.territory && f.territory !== f.sovereign ? ` (${escapeHtml(f.territory)})` : '';
+                    const iso = f.iso ? ` [${escapeHtml(f.iso)}]` : '';
                     const area = f.areaKm2 ? `<div><b>Area:</b> ${Math.round(f.areaKm2).toLocaleString()} km²</div>` : '';
                     details = `
                         <div><b>Sovereign / State:</b> <span class="text-on-surface font-semibold">${sovereign}${territory}${iso}</span></div>
@@ -507,8 +517,8 @@
                     `;
                 } else if (f.type === 'fao') {
                     details = `
-                        <div><b>Ocean Basin:</b> <span class="text-on-surface font-semibold">${f.ocean || 'Global Oceans'}</span></div>
-                        <div><b>Classification:</b> ${f.level}</div>
+                        <div><b>Ocean Basin:</b> <span class="text-on-surface font-semibold">${escapeHtml(f.ocean || 'Global Oceans')}</span></div>
+                        <div><b>Classification:</b> ${escapeHtml(f.level)}</div>
                         <div class="text-[9px] text-on-surface-variant/80 italic mt-0.5">${f.legal}</div>
                     `;
                 } else if (f.type === 'seca' || f.type === 'eca-nox') {
@@ -523,9 +533,9 @@
                         <div class="flex items-center justify-between border-b border-surface-container/60 pb-1">
                             <span class="font-bold text-on-surface flex items-center gap-1">
                                 <span class="material-symbols-outlined text-[13px] text-primary">${f.icon}</span>
-                                <span>${f.title}</span>
+                                <span>${escapeHtml(f.title)}</span>
                             </span>
-                            <span class="text-[9px] px-1 py-0.2 rounded-sm border font-bold ${f.badgeClass}">${f.badge}</span>
+                            <span class="text-[9px] px-1 py-0.2 rounded-sm border font-bold ${f.badgeClass}">${escapeHtml(f.badge)}</span>
                         </div>
                         ${details}
                     </div>
@@ -1050,11 +1060,11 @@
                     },
                     onEachFeature: function (feature, layer) {
                         const p = feature.properties || {};
-                        const dateStr = p.date ? p.date.slice(0, 10) : 'N/A';
-                        const victim = p.victim || 'Vessel in transit';
-                        const aggressor = p.aggressor || 'Armed Pirates';
-                        const narrative = p.narrative || 'Incident reported to Maritime Security Centre.';
-                        const subreg = p.subreg || 'ASAM';
+                        const dateStr = escapeHtml(p.date ? String(p.date).slice(0, 10) : 'N/A');
+                        const victim = escapeHtml(p.victim || 'Vessel in transit');
+                        const aggressor = escapeHtml(p.aggressor || 'Armed Pirates');
+                        const narrative = escapeHtml(p.narrative || 'Incident reported to Maritime Security Centre.');
+                        const subreg = escapeHtml(p.subreg || 'ASAM');
                         const popupHtml = `
                             <div class="p-2 font-mono text-[10px] leading-tight select-text flex flex-col gap-1 w-[260px]">
                                 <div class="flex items-center justify-between border-b border-error/40 pb-1">
@@ -1139,13 +1149,13 @@
                     },
                     onEachFeature: function (feature, layer) {
                         const p = feature.properties || {};
-                        const portName = p.PORT_NAME || 'Seaport';
-                        const country = p.COUNTRY || 'N/A';
-                        const harborSize = p.HARBORSIZE || 'Medium';
-                        const harborType = p.HARBORTYPE || 'Coastal';
-                        const depth = p.CHAN_DEPTH ? `${p.CHAN_DEPTH}m` : '--';
-                        const maxDraft = p.MAX_DRAFT ? `${p.MAX_DRAFT}m` : '--';
-                        const indexNo = p.INDEX_NO || 'WPI';
+                        const portName = escapeHtml(p.PORT_NAME || 'Seaport');
+                        const country = escapeHtml(p.COUNTRY || 'N/A');
+                        const harborSize = escapeHtml(p.HARBORSIZE || 'Medium');
+                        const harborType = escapeHtml(p.HARBORTYPE || 'Coastal');
+                        const depth = p.CHAN_DEPTH ? `${escapeHtml(p.CHAN_DEPTH)}m` : '--';
+                        const maxDraft = p.MAX_DRAFT ? `${escapeHtml(p.MAX_DRAFT)}m` : '--';
+                        const indexNo = escapeHtml(p.INDEX_NO || 'WPI');
                         const popupHtml = `
                             <div class="p-2 font-mono text-[10px] leading-tight select-text flex flex-col gap-1 w-[250px]">
                                 <div class="flex items-center justify-between border-b border-primary/40 pb-1">
@@ -1602,7 +1612,7 @@
                 if (sysEngine && data.engine) sysEngine.textContent = data.engine;
                 if (sysMesh && data.mesh) sysMesh.textContent = data.mesh;
                 if (sysNodes && data.nodes) {
-                    sysNodes.textContent = `${Number(data.nodes).toLocaleString()} / ${Number(data.edges || 118400).toLocaleString()}`;
+                    sysNodes.textContent = `${Number(data.nodes).toLocaleString()} / ${Number(data.edges).toLocaleString()}`;
                 }
 
                 // Render dynamic avoid pills if supported, preserving any active selections
@@ -1626,10 +1636,10 @@
                         btn.setAttribute('data-avoid', pass);
                         if (isActive) {
                             btn.className = 'avoid-pill active px-2 py-1 rounded-sm text-[10px] font-mono flex items-center gap-1 transition-all border bg-warning/20 border-warning text-warning shadow-sm font-semibold cursor-pointer';
-                            btn.innerHTML = `<span class="material-symbols-outlined text-[12px]">do_not_disturb_on</span><span>${PASSAGE_LABELS[pass] || pass}</span>`;
+                            btn.innerHTML = `<span class="material-symbols-outlined text-[12px]">do_not_disturb_on</span><span>${escapeHtml(PASSAGE_LABELS[pass] || pass)}</span>`;
                         } else {
                             btn.className = 'avoid-pill px-2 py-1 rounded-sm text-[10px] font-mono flex items-center gap-1 transition-all border bg-surface-container-lowest border-surface-container-high text-on-surface hover:border-surface-variant cursor-pointer';
-                            btn.innerHTML = `<span class="material-symbols-outlined text-[12px] opacity-40">circle</span><span>${PASSAGE_LABELS[pass] || pass}</span>`;
+                            btn.innerHTML = `<span class="material-symbols-outlined text-[12px] opacity-40">circle</span><span>${escapeHtml(PASSAGE_LABELS[pass] || pass)}</span>`;
                         }
                         btn.addEventListener('click', () => toggleAvoidPill(btn));
                         avoidTagsContainer.appendChild(btn);
@@ -1831,9 +1841,9 @@
                             item.className = 'autocomplete-item flex items-center justify-between text-[10px] p-2 hover:bg-surface-container cursor-pointer border-b border-surface-container-high/40';
                             item.innerHTML = `
                                 <div>
-                                    <span class="font-bold text-on-surface">${p.port}</span>
-                                    <span class="text-on-surface-variant font-normal">(${p.country})</span>
-                                    <div class="text-[9px] text-outline font-mono">${p.code || ''} • ${p.latitude.toFixed(2)}°, ${p.longitude.toFixed(2)}°</div>
+                                    <span class="font-bold text-on-surface">${escapeHtml(p.port)}</span>
+                                    <span class="text-on-surface-variant font-normal">(${escapeHtml(p.country)})</span>
+                                    <div class="text-[9px] text-outline font-mono">${escapeHtml(p.code || '')} • ${p.latitude.toFixed(2)}°, ${p.longitude.toFixed(2)}°</div>
                                 </div>
                                 <span class="material-symbols-outlined text-primary text-[14px]">arrow_forward</span>
                             `;
@@ -2111,7 +2121,7 @@
                     });
                     const marker = L.marker([wp.coordinates[1], wp.coordinates[0]], { icon: wpIcon });
                     marker.bindPopup(
-                        `<b>#${wp.index} ${wp.name}</b>${wp.passage ? '<br><span style="color:#f59e0b;font-weight:bold;">Passage: ' + wp.passage + '</span>' : ''}<br>Leg: ${wp.leg_distance_nm.toFixed(1)} NM<br>Cumul: ${wp.cum_distance_nm.toFixed(1)} NM<br>${formatCoordDMS(wp.coordinates[1], true)}, ${formatCoordDMS(wp.coordinates[0], false)}`
+                        `<b>#${wp.index} ${escapeHtml(wp.name)}</b>${wp.passage ? '<br><span style="color:#f59e0b;font-weight:bold;">Passage: ' + escapeHtml(wp.passage) + '</span>' : ''}<br>Leg: ${wp.leg_distance_nm.toFixed(1)} NM<br>Cumul: ${wp.cum_distance_nm.toFixed(1)} NM<br>${formatCoordDMS(wp.coordinates[1], true)}, ${formatCoordDMS(wp.coordinates[0], false)}`
                     );
                     routeLayerGroup.addLayer(marker);
                 }
@@ -2158,7 +2168,7 @@
         if (headerDistBadge) headerDistBadge.textContent = `${Math.round(totalDistNM).toLocaleString()} NM`;
         if (headerOriginBadge) {
             const originLabel = props.route_name ? props.route_name.split('->')[0].trim() : 'Origin';
-            headerOriginBadge.innerHTML = `<span class="w-1.5 h-1.5 rounded-none bg-primary animate-pulse"></span> ${originLabel}`;
+            headerOriginBadge.innerHTML = `<span class="w-1.5 h-1.5 rounded-none bg-primary animate-pulse"></span> ${escapeHtml(originLabel)}`;
         }
         if (headerDestBadge) {
             const destLabel = props.route_name ? props.route_name.split('->')[1].trim() : 'Destination';
@@ -2200,8 +2210,8 @@
                 <td class="py-1 px-2">
                     <div class="flex flex-col">
                         <span class="font-medium text-on-surface flex items-center gap-1">
-                            ${wp.name}
-                            ${wp.passage ? '<span class="text-[8px] px-1 py-0.2 rounded-sm bg-warning/20 text-warning uppercase font-semibold">' + wp.passage + '</span>' : ''}
+                            ${escapeHtml(wp.name)}
+                            ${wp.passage ? '<span class="text-[8px] px-1 py-0.2 rounded-sm bg-warning/20 text-warning uppercase font-semibold">' + escapeHtml(wp.passage) + '</span>' : ''}
                         </span>
                         <span class="text-[9px] text-on-surface-variant font-mono">
                             ${formatCoordDMS(wp.coordinates[1], true)}, ${formatCoordDMS(wp.coordinates[0], false)}

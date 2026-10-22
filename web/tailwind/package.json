@@ -1,0 +1,14 @@
+{
+  "name": "searoute-tailwind",
+  "private": true,
+  "description": "Builds web/static/tailwind.css from the templates and script.js",
+  "scripts": {
+    "build": "tailwindcss -c tailwind.config.js -i input.css -o ../static/tailwind.css --minify",
+    "watch": "tailwindcss -c tailwind.config.js -i input.css -o ../static/tailwind.css --watch"
+  },
+  "devDependencies": {
+    "@tailwindcss/container-queries": "^0.1.1",
+    "@tailwindcss/forms": "^0.5.10",
+    "tailwindcss": "^3.4.17"
+  }
+}

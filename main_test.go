@@ -2,7 +2,9 @@ package main
 
 import (
 	"bytes"
+	"compress/gzip"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -180,6 +182,7 @@ func TestPassagesAndNetworkEndpoints(t *testing.T) {
 		ClosedByDefault []string `json:"closed_by_default"`
 		Engine          string   `json:"engine"`
 		Nodes           int      `json:"nodes"`
+		Edges           int      `json:"edges"`
 		PortsCount      int      `json:"ports_count"`
 	}
 	if err := json.Unmarshal(w.Body.Bytes(), &pData); err != nil {
@@ -187,6 +190,9 @@ func TestPassagesAndNetworkEndpoints(t *testing.T) {
 	}
 	if len(pData.Passages) == 0 {
 		t.Error("expected non-empty passages list")
+	}
+	if pData.Edges <= 0 || pData.Edges == 118400 {
+		t.Errorf("edges should be computed from the graph, got %d", pData.Edges)
 	}
 	if pData.Nodes <= 0 || pData.PortsCount <= 0 {
 		t.Errorf("invalid nodes (%d) or portsCount (%d)", pData.Nodes, pData.PortsCount)
@@ -203,6 +209,29 @@ func TestPassagesAndNetworkEndpoints(t *testing.T) {
 		t.Error("expected Cache-Control header on /network")
 	}
 
+	// /network is gzip-compressed for clients that accept it
+	reqGz := httptest.NewRequest(http.MethodGet, "/network", nil)
+	reqGz.Header.Set("Accept-Encoding", "gzip, deflate, br")
+	wGz := httptest.NewRecorder()
+	r.ServeHTTP(wGz, reqGz)
+	if wGz.Code != http.StatusOK || wGz.Header().Get("Content-Encoding") != "gzip" {
+		t.Fatalf("GET /network gzip: status %d, encoding %q", wGz.Code, wGz.Header().Get("Content-Encoding"))
+	}
+	zr, err := gzip.NewReader(wGz.Body)
+	if err != nil {
+		t.Fatalf("gzip reader: %v", err)
+	}
+	plain, err := io.ReadAll(zr)
+	if err != nil {
+		t.Fatalf("gunzip: %v", err)
+	}
+	if !bytes.Equal(plain, wNet.Body.Bytes()) {
+		t.Error("gzip /network body differs from uncompressed body")
+	}
+	if wGz.Body.Len() >= wNet.Body.Len()/2 {
+		t.Errorf("gzip body %d bytes, uncompressed %d: expected strong compression", wGz.Body.Len(), wNet.Body.Len())
+	}
+
 	// Test /emissions
 	reqEmissions := httptest.NewRequest(http.MethodGet, "/emissions", nil)
 	wEmissions := httptest.NewRecorder()
@@ -216,13 +245,82 @@ func TestPassagesAndNetworkEndpoints(t *testing.T) {
 }
 
 func TestLoadDotEnv(t *testing.T) {
-	loadDotEnv(".env")
-	// If .env contains CARTO_API_KEY, verify it was loaded
-	cartoKey := os.Getenv("CARTO_API_KEY")
-	if cartoKey == "" {
-		t.Log("No CARTO_API_KEY in environment or .env")
-	} else if strings.Contains(cartoKey, "#") {
-		t.Errorf("CARTO_API_KEY should not contain inline comments: %q", cartoKey)
+	want := map[string]string{
+		"DOTENV_PLAIN":     "abc123",
+		"DOTENV_COMMENT":   "abc123",
+		"DOTENV_HASH":      "ab#c123",
+		"DOTENV_DQUOTE":    "a b #c",
+		"DOTENV_SQUOTE":    "xyz",
+		"DOTENV_QUOTE_CMT": "q#1",
+	}
+	for k := range want {
+		t.Setenv(k, "")
+	}
+	t.Setenv("DOTENV_PRESET", "kept")
+
+	path := t.TempDir() + "/.env"
+	content := `# comment line
+DOTENV_PLAIN=abc123
+DOTENV_COMMENT=abc123 # trailing comment
+DOTENV_HASH=ab#c123
+DOTENV_DQUOTE="a b #c"
+DOTENV_SQUOTE='xyz'
+DOTENV_QUOTE_CMT="q#1" # comment
+DOTENV_PRESET=overwritten
+not a pair
+`
+	if err := os.WriteFile(path, []byte(content), 0600); err != nil {
+		t.Fatal(err)
+	}
+	loadDotEnv(path)
+
+	for k, v := range want {
+		if got := os.Getenv(k); got != v {
+			t.Errorf("%s = %q, want %q", k, got, v)
+		}
+	}
+	if got := os.Getenv("DOTENV_PRESET"); got != "kept" {
+		t.Errorf("existing env var overwritten: got %q", got)
+	}
+}
+
+func TestTrustedProxies(t *testing.T) {
+	t.Setenv("TRUSTED_PROXIES", "")
+	if got := trustedProxies(); len(got) != len(defaultTrustedProxies) {
+		t.Errorf("default: got %v", got)
+	}
+	t.Setenv("TRUSTED_PROXIES", "none")
+	if got := trustedProxies(); got != nil {
+		t.Errorf("none: got %v, want nil", got)
+	}
+	t.Setenv("TRUSTED_PROXIES", " 10.1.0.0/16 , 127.0.0.1 ")
+	got := trustedProxies()
+	if len(got) != 2 || got[0] != "10.1.0.0/16" || got[1] != "127.0.0.1" {
+		t.Errorf("custom: got %v", got)
+	}
+}
+
+func TestClientIPBehindProxy(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	r := gin.New()
+	if err := r.SetTrustedProxies(defaultTrustedProxies); err != nil {
+		t.Fatal(err)
+	}
+	r.GET("/ip", func(c *gin.Context) { c.String(http.StatusOK, c.ClientIP()) })
+
+	cases := []struct{ remote, xff, want string }{
+		{"172.18.0.1:5000", "203.0.113.7", "203.0.113.7"},    // via proxy on the Docker bridge
+		{"198.51.100.2:5000", "203.0.113.7", "198.51.100.2"}, // direct client cannot spoof
+	}
+	for _, tc := range cases {
+		req := httptest.NewRequest(http.MethodGet, "/ip", nil)
+		req.RemoteAddr = tc.remote
+		req.Header.Set("X-Forwarded-For", tc.xff)
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, req)
+		if got := w.Body.String(); got != tc.want {
+			t.Errorf("remote %s: ClientIP = %s, want %s", tc.remote, got, tc.want)
+		}
 	}
 }
 
@@ -299,6 +397,9 @@ func TestSecurityHeadersMiddleware(t *testing.T) {
 	if got := w.Header().Get("X-Frame-Options"); got != "DENY" {
 		t.Errorf("expected DENY, got %s", got)
 	}
+	if got := w.Header().Get("Content-Security-Policy"); !strings.Contains(got, "frame-ancestors 'none'") || !strings.Contains(got, "object-src 'none'") {
+		t.Errorf("unexpected CSP: %s", got)
+	}
 	if got := w.Header().Get("X-XSS-Protection"); got != "1; mode=block" {
 		t.Errorf("expected 1; mode=block, got %s", got)
 	}
@@ -338,7 +439,31 @@ func TestRateLimitMiddleware(t *testing.T) {
 	}
 }
 
+func TestRateLimitScopedToAPI(t *testing.T) {
+	r := setupTestRouter(t)
+	testIP := "198.51.100.77:4000"
 
+	// Map layers are not rate limited
+	for i := range 70 {
+		req := httptest.NewRequest(http.MethodGet, "/passages", nil)
+		req.RemoteAddr = testIP
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, req)
+		if w.Code != http.StatusOK {
+			t.Fatalf("/passages request %d: got %d", i+1, w.Code)
+		}
+	}
 
-
-
+	// The port search API is
+	var last int
+	for range 61 {
+		req := httptest.NewRequest(http.MethodGet, "/ports?search=rot", nil)
+		req.RemoteAddr = testIP
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, req)
+		last = w.Code
+	}
+	if last != http.StatusTooManyRequests {
+		t.Fatalf("61st /ports request: got %d, want 429", last)
+	}
+}

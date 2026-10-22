@@ -17,3 +17,4 @@ dataset/*.geojson
 !dataset/marnet_plus_5km.geojson
 
 
+.codegraph/

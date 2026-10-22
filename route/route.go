@@ -115,6 +115,10 @@ func (g *Graph) Passages() []string {
 // Nodes returns the number of network nodes.
 func (g *Graph) Nodes() int { return len(g.nodes) }
 
+// Edges returns the number of network segments. Each segment is stored
+// once per direction, so this is half the directed edge count.
+func (g *Graph) Edges() int { return len(g.to) / 2 }
+
 type geojsonFC struct {
 	Features []struct {
 		Properties map[string]any `json:"properties"`

@@ -18,18 +18,18 @@ type WaypointItem struct {
 }
 
 type FeatureProperties struct {
-	OCoords     route.Position   `json:"o_coords"`
-	DCoords     route.Position   `json:"d_coords"`
-	OToWpDist   float64          `json:"o_to_wp_dist"`
-	WpToDDist   float64          `json:"wp_to_d_dist"`
-	WpDist      float64          `json:"wp_dist"`
-	TotalDist   float64          `json:"total_dist"`
-	TotalDistNM float64          `json:"total_dist_nm"`
-	TotalDistMI float64          `json:"total_dist_mi"`
-	NodeCount   int              `json:"node_count"`
-	RouteName   string           `json:"route_name"`
-	Passages    []string         `json:"passages"`
-	Waypoints   []WaypointItem   `json:"waypoints"`
+	OCoords     route.Position `json:"o_coords"`
+	DCoords     route.Position `json:"d_coords"`
+	OToWpDist   float64        `json:"o_to_wp_dist"`
+	WpToDDist   float64        `json:"wp_to_d_dist"`
+	WpDist      float64        `json:"wp_dist"`
+	TotalDist   float64        `json:"total_dist"`
+	TotalDistNM float64        `json:"total_dist_nm"`
+	TotalDistMI float64        `json:"total_dist_mi"`
+	NodeCount   int            `json:"node_count"`
+	RouteName   string         `json:"route_name"`
+	Passages    []string       `json:"passages"`
+	Waypoints   []WaypointItem `json:"waypoints"`
 }
 
 type Feature struct {
@@ -127,4 +127,3 @@ func generateOutput(r route.Route, oCoords route.Position, dCoords route.Positio
 
 	return output
 }
-

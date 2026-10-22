@@ -1,7 +1,7 @@
 # seaRoute — Tactical Maritime ECDIS & Route Optimization Engine
 
 [![golangci-lint](https://github.com/captv89/seaRoute/actions/workflows/lint.yml/badge.svg)](https://github.com/captv89/seaRoute/actions/workflows/lint.yml)
-[![go-coverage-badge](https://img.shields.io/badge/Coverage-64.9%-yellow)](https://github.com/captv89/seaRoute/actions/workflows/test.yml)
+[![go-coverage-badge](https://img.shields.io/badge/Coverage-64.9%25-yellow)](https://github.com/captv89/seaRoute/actions/workflows/test.yml)
 [![Docker Image](https://img.shields.io/badge/docker-ghcr.io%2Fcaptv89%2Fsearoute-blue?logo=docker)](https://github.com/captv89/seaRoute/pkgs/container/searoute)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
@@ -130,6 +130,17 @@ Open `http://localhost:8080` in your web browser.
 | `OWM_API_KEY` | OpenWeatherMap API key for live radar and weather matrix | _Optional_ |
 | `CARTO_API_KEY` | CARTO vector basemap key (uses OpenStreetMap if omitted) | _Optional_ |
 | `GA_TRACKING_ID`| Google Analytics tracking identifier | _Optional_ |
+| `TRUSTED_PROXIES` | Comma-separated proxy CIDRs allowed to set `X-Forwarded-For` (used for per-client rate limiting); `none` to ignore the header | loopback + private ranges |
+
+`/waypoints`, `/ports` and `/mcp` are rate limited to 60 requests per minute per client IP. Pages, static files and map layers are not.
+
+### Rebuilding the CSS
+
+The UI uses Tailwind CSS v3, prebuilt into `web/static/tailwind.css` (committed, so Go and Docker builds need no Node). After changing classes in the templates or `web/static/script.js`, rebuild it:
+
+```bash
+cd web/tailwind && npm ci && npm run build
+```
 
 ---
 
@@ -141,7 +152,7 @@ Open `http://localhost:8080` in your web browser.
 | `/waypoints` | `POST` | Calculate optimal sea route between ports or coordinates |
 | `/ports` | `GET` | Query commercial seaport database with UN/LOCODEs |
 | `/passages` | `GET` | List available choke-point passages and routing graph stats |
-| `/network` | `GET` | Stream raw Marnet navigation graph GeoJSON |
+| `/network` | `GET` | Stream raw Marnet navigation graph GeoJSON (gzip when accepted) |
 | `/layers/:name` | `GET` | Serve gzip-compressed tactical GIS overlays (`baseline`, `eez`, `piracy`, `seaports`, `eca-sox`, `eca-nox`, `boundaries`, `fao`) |
 | `/emissions` | `GET` | Stream IMO Emission Control Area (ECA) GeoJSON |
 | `/mcp` | `GET/POST` | Model Context Protocol endpoint for AI agent integration |

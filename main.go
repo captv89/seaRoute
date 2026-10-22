@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"compress/gzip"
 	"context"
 	"errors"
@@ -50,8 +51,9 @@ type WaypointRequest struct {
 
 // Rate limiting state
 var (
-	rateLimitMu sync.Mutex
-	visitors    = make(map[string]*rateLimitEntry)
+	rateLimitMu      sync.Mutex
+	visitors         = make(map[string]*rateLimitEntry)
+	nextVisitorSweep time.Time
 )
 
 type rateLimitEntry struct {
@@ -105,13 +107,14 @@ func main() {
 	// Set the router as the default one provided by Gin
 	router := gin.Default()
 
-	if err := router.SetTrustedProxies(nil); err != nil {
+	// Trust X-Forwarded-For only from the reverse proxy, so ClientIP() is the
+	// real visitor and not the proxy. Override with TRUSTED_PROXIES (comma-separated).
+	if err := router.SetTrustedProxies(trustedProxies()); err != nil {
 		log.Fatalf("Error setting trusted proxies: %v", err)
 	}
 
 	// Add security middleware
 	router.Use(securityHeadersMiddleware())
-	router.Use(rateLimitMiddleware())
 
 	// Serve html template files
 	router.LoadHTMLGlob("web/templates/**/*.gohtml")
@@ -218,8 +221,12 @@ func setupRoutes(router *gin.Engine, app *App) {
 		c.HTML(http.StatusOK, "about.gohtml", templateVars())
 	})
 
+	// API endpoints are rate limited per client IP; pages, static files and
+	// cacheable map layers are not, so loading the map does not use up the budget.
+	limit := rateLimitMiddleware()
+
 	// Handle the search for ports
-	router.GET("/ports", func(c *gin.Context) {
+	router.GET("/ports", limit, func(c *gin.Context) {
 		searchQuery := c.Query("search")
 		// Input length validation
 		if len(searchQuery) > 100 {
@@ -238,7 +245,7 @@ func setupRoutes(router *gin.Engine, app *App) {
 			"engine":            "seaRoute v2.0",
 			"mesh":              "Marnet Mesh 2024.3",
 			"nodes":             app.RouteGraph.Nodes(),
-			"edges":             118400,
+			"edges":             app.RouteGraph.Edges(),
 			"ports_count":       len(app.PortData),
 		})
 	})
@@ -246,7 +253,19 @@ func setupRoutes(router *gin.Engine, app *App) {
 	// Serve the routing mesh GeoJSON
 	router.GET("/network", func(c *gin.Context) {
 		c.Header("Cache-Control", "public, max-age=86400")
-		c.File("dataset/marnet_plus_5km.geojson")
+		c.Header("Content-Type", "application/json")
+		c.Header("Vary", "Accept-Encoding")
+		if !strings.Contains(c.GetHeader("Accept-Encoding"), "gzip") {
+			c.File("dataset/marnet_plus_5km.geojson")
+			return
+		}
+		data, err := networkGzip()
+		if err != nil {
+			c.File("dataset/marnet_plus_5km.geojson")
+			return
+		}
+		c.Header("Content-Encoding", "gzip")
+		c.Data(http.StatusOK, "application/json", data)
 	})
 
 	// Serve the official IMO ECA SOx / PM Emission Control Areas GeoJSON
@@ -356,7 +375,7 @@ func setupRoutes(router *gin.Engine, app *App) {
 	})
 
 	// Handle request to calculate the passage
-	router.POST("/waypoints", func(c *gin.Context) {
+	router.POST("/waypoints", limit, func(c *gin.Context) {
 		var req WaypointRequest
 		if err := c.ShouldBindJSON(&req); err != nil {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request format"})
@@ -409,7 +428,7 @@ func setupRoutes(router *gin.Engine, app *App) {
 		return route.Position{lon, lat}, err == nil
 	})
 	mcpHandler := mcp.NewStreamableHTTPHandler(func(*http.Request) *mcp.Server { return mcpServer }, nil)
-	router.Any("/mcp", gin.WrapH(mcpHandler))
+	router.Any("/mcp", limit, gin.WrapH(mcpHandler))
 }
 
 // calculatePassageInfo calculates the ocean waypoints and distance between two coordinates
@@ -461,6 +480,9 @@ func securityHeadersMiddleware() gin.HandlerFunc {
 		c.Header("X-XSS-Protection", "1; mode=block")
 		c.Header("Referrer-Policy", "strict-origin-when-cross-origin")
 		c.Header("Permissions-Policy", "geolocation=(), microphone=(), camera=()")
+		// Locks down plugins, <base> and framing. Script and style sources are
+		// left open because the page loads several CDNs and inline scripts.
+		c.Header("Content-Security-Policy", "object-src 'none'; base-uri 'self'; frame-ancestors 'none'; form-action 'self'")
 		c.Next()
 	}
 }
@@ -472,6 +494,15 @@ func rateLimitMiddleware() gin.HandlerFunc {
 		rateLimitMu.Lock()
 
 		now := time.Now()
+		// Drop expired entries now and then so the map does not grow without bound
+		if now.After(nextVisitorSweep) {
+			for k, e := range visitors {
+				if now.After(e.resetAt) {
+					delete(visitors, k)
+				}
+			}
+			nextVisitorSweep = now.Add(time.Minute)
+		}
 		entry, exists := visitors[ip]
 		if !exists || now.After(entry.resetAt) {
 			visitors[ip] = &rateLimitEntry{count: 1, resetAt: now.Add(time.Minute)}
@@ -492,6 +523,62 @@ func rateLimitMiddleware() gin.HandlerFunc {
 	}
 }
 
+// defaultTrustedProxies covers loopback and private networks, where a reverse
+// proxy such as Caddy or a Docker bridge gateway connects from.
+var defaultTrustedProxies = []string{"127.0.0.1/8", "::1/128", "10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "fc00::/7"}
+
+// trustedProxies returns the proxy CIDRs from TRUSTED_PROXIES, or the defaults.
+// Set TRUSTED_PROXIES=none to ignore X-Forwarded-For entirely.
+func trustedProxies() []string {
+	v := strings.TrimSpace(os.Getenv("TRUSTED_PROXIES"))
+	if v == "" {
+		return defaultTrustedProxies
+	}
+	if strings.EqualFold(v, "none") {
+		return nil
+	}
+	var out []string
+	for _, p := range strings.Split(v, ",") {
+		if p = strings.TrimSpace(p); p != "" {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
+var (
+	networkGzOnce sync.Once
+	networkGzData []byte
+	networkGzErr  error
+)
+
+// networkGzip returns the routing mesh GeoJSON gzip-compressed, built once and kept in memory.
+func networkGzip() ([]byte, error) {
+	networkGzOnce.Do(func() {
+		raw, err := os.ReadFile("dataset/marnet_plus_5km.geojson")
+		if err != nil {
+			networkGzErr = err
+			return
+		}
+		var buf bytes.Buffer
+		zw, err := gzip.NewWriterLevel(&buf, gzip.BestCompression)
+		if err != nil {
+			networkGzErr = err
+			return
+		}
+		if _, err := zw.Write(raw); err != nil {
+			networkGzErr = err
+			return
+		}
+		if err := zw.Close(); err != nil {
+			networkGzErr = err
+			return
+		}
+		networkGzData = buf.Bytes()
+	})
+	return networkGzData, networkGzErr
+}
+
 // loadDotEnv reads environment variables from a .env file if present
 func loadDotEnv(path string) {
 	data, err := os.ReadFile(path)
@@ -510,17 +597,18 @@ func loadDotEnv(path string) {
 		}
 		key := strings.TrimSpace(parts[0])
 		val := strings.TrimSpace(parts[1])
-		// Strip comments following whitespace, e.g. "val #comment"
-		if idx := strings.Index(val, "#"); idx != -1 {
+		if len(val) >= 2 && (val[0] == '"' || val[0] == '\'') {
+			// Quoted value: keep everything inside the quotes, including '#'
+			if end := strings.IndexByte(val[1:], val[0]); end != -1 {
+				val = val[1 : end+1]
+			}
+		} else if idx := strings.Index(val, " #"); idx != -1 {
+			// Strip comments following whitespace, e.g. "val #comment"; a bare
+			// '#' inside a value such as an API key is kept
 			val = strings.TrimSpace(val[:idx])
-		}
-		// Strip quotes if present
-		if len(val) >= 2 && ((val[0] == '"' && val[len(val)-1] == '"') || (val[0] == '\'' && val[len(val)-1] == '\'')) {
-			val = val[1 : len(val)-1]
 		}
 		if key != "" && os.Getenv(key) == "" {
 			_ = os.Setenv(key, val)
 		}
 	}
 }
-
