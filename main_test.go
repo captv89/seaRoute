@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -397,8 +398,11 @@ func TestSecurityHeadersMiddleware(t *testing.T) {
 	if got := w.Header().Get("X-Frame-Options"); got != "DENY" {
 		t.Errorf("expected DENY, got %s", got)
 	}
-	if got := w.Header().Get("Content-Security-Policy"); !strings.Contains(got, "frame-ancestors 'none'") || !strings.Contains(got, "object-src 'none'") {
-		t.Errorf("unexpected CSP: %s", got)
+	csp := w.Header().Get("Content-Security-Policy")
+	for _, want := range []string{"frame-ancestors 'none'", "object-src 'none'", "'strict-dynamic'", "script-src 'nonce-"} {
+		if !strings.Contains(csp, want) {
+			t.Errorf("CSP missing %q: %s", want, csp)
+		}
 	}
 	if got := w.Header().Get("X-XSS-Protection"); got != "1; mode=block" {
 		t.Errorf("expected 1; mode=block, got %s", got)
@@ -465,5 +469,69 @@ func TestRateLimitScopedToAPI(t *testing.T) {
 	}
 	if last != http.StatusTooManyRequests {
 		t.Fatalf("61st /ports request: got %d, want 429", last)
+	}
+}
+
+func TestCSPNonceInPages(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	app := &App{}
+	ports, err := LoadPorts()
+	if err != nil {
+		t.Fatalf("failed to load ports: %v", err)
+	}
+	app.PortData = ports
+	rg, err := route.Load("dataset/marnet_plus_5km.geojson")
+	if err != nil {
+		t.Fatalf("failed to load route graph: %v", err)
+	}
+	app.RouteGraph = rg
+
+	r := gin.New()
+	r.Use(securityHeadersMiddleware())
+	r.LoadHTMLGlob("web/templates/**/*.gohtml")
+	setupRoutes(r, app)
+
+	nonceRe := regexp.MustCompile(`script-src 'nonce-([A-Za-z0-9_-]+)'`)
+	seen := map[string]bool{}
+	for _, path := range []string{"/", "/", "/about"} {
+		req := httptest.NewRequest(http.MethodGet, path, nil)
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, req)
+		if w.Code != http.StatusOK {
+			t.Fatalf("GET %s: %d", path, w.Code)
+		}
+		m := nonceRe.FindStringSubmatch(w.Header().Get("Content-Security-Policy"))
+		if m == nil {
+			t.Fatalf("GET %s: no nonce in CSP", path)
+		}
+		nonce := m[1]
+		if seen[nonce] {
+			t.Errorf("nonce %s reused across requests", nonce)
+		}
+		seen[nonce] = true
+
+		body := w.Body.String()
+		scripts := strings.Count(body, "<script")
+		tagged := strings.Count(body, `<script nonce="`+nonce+`"`)
+		if scripts == 0 || scripts != tagged {
+			t.Errorf("GET %s: %d of %d <script> tags carry the response nonce", path, tagged, scripts)
+		}
+	}
+}
+
+func TestCSPReportOnlyMode(t *testing.T) {
+	t.Setenv("CSP_MODE", "report-only")
+	gin.SetMode(gin.TestMode)
+	r := gin.New()
+	r.Use(securityHeadersMiddleware())
+	r.GET("/ping", func(c *gin.Context) { c.String(http.StatusOK, "pong") })
+
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/ping", nil))
+	if w.Header().Get("Content-Security-Policy") != "" {
+		t.Error("enforcing CSP header set in report-only mode")
+	}
+	if !strings.Contains(w.Header().Get("Content-Security-Policy-Report-Only"), "'strict-dynamic'") {
+		t.Error("missing Content-Security-Policy-Report-Only header")
 	}
 }

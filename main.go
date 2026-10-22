@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"compress/gzip"
 	"context"
+	"crypto/rand"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"io"
@@ -200,8 +202,9 @@ func resolvePoint(p *WaypointPoint, fallbackPort string, app *App) (route.Positi
 // setupRoutes registers all application HTTP routes on the given gin engine
 func setupRoutes(router *gin.Engine, app *App) {
 	// Template variables helper
-	templateVars := func() gin.H {
+	templateVars := func(c *gin.Context) gin.H {
 		return gin.H{
+			"cspNonce":     c.GetString(cspNonceKey),
 			"owmApiKey":    os.Getenv("OWM_API_KEY"),
 			"cartoApiKey":  os.Getenv("CARTO_API_KEY"),
 			"gaTrackingID": os.Getenv("GA_TRACKING_ID"),
@@ -210,7 +213,7 @@ func setupRoutes(router *gin.Engine, app *App) {
 
 	// Handle the index route
 	router.GET("/", func(c *gin.Context) {
-		c.HTML(http.StatusOK, "home.gohtml", templateVars())
+		c.HTML(http.StatusOK, "home.gohtml", templateVars(c))
 	})
 	router.HEAD("/", func(c *gin.Context) {
 		c.Status(http.StatusOK)
@@ -218,7 +221,7 @@ func setupRoutes(router *gin.Engine, app *App) {
 
 	// Handle the about page
 	router.GET("/about", func(c *gin.Context) {
-		c.HTML(http.StatusOK, "about.gohtml", templateVars())
+		c.HTML(http.StatusOK, "about.gohtml", templateVars(c))
 	})
 
 	// API endpoints are rate limited per client IP; pages, static files and
@@ -472,17 +475,59 @@ func (app *App) getPortCoordinates(portName string) (float64, float64, error) {
 	return 0, 0, fmt.Errorf("port not found: %s", portName)
 }
 
-// securityHeadersMiddleware adds security headers to all responses
+// cspNonceKey is the gin context key holding the per-request CSP script nonce
+const cspNonceKey = "cspNonce"
+
+// cspPolicy builds the Content-Security-Policy for one response. Scripts run
+// only with the nonce; 'strict-dynamic' lets those scripts load others (the
+// cookie-consent tool injects Google Analytics). 'unsafe-inline' and https:
+// are ignored by browsers that support nonces and only apply to old ones.
+func cspPolicy(nonce string) string {
+	return strings.Join([]string{
+		"default-src 'self'",
+		"script-src 'nonce-" + nonce + "' 'strict-dynamic' 'unsafe-inline' https:",
+		"style-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://unpkg.com https://cdnjs.cloudflare.com https://www.privacypolicies.com",
+		"font-src 'self' https://fonts.gstatic.com",
+		"img-src 'self' data: blob: https:",
+		"connect-src 'self' https://searoute.goatcounter.com https://*.google-analytics.com https://*.analytics.google.com https://www.googletagmanager.com https://www.privacypolicies.com",
+		"object-src 'none'",
+		"base-uri 'self'",
+		"frame-ancestors 'none'",
+		"form-action 'self'",
+	}, "; ")
+}
+
+// newCSPNonce returns a random 128-bit nonce, URL-safe base64 so html/template
+// writes it into the nonce attribute unchanged.
+func newCSPNonce() (string, error) {
+	b := make([]byte, 16)
+	if _, err := rand.Read(b); err != nil {
+		return "", err
+	}
+	return base64.RawURLEncoding.EncodeToString(b), nil
+}
+
+// securityHeadersMiddleware adds security headers to all responses.
+// CSP_MODE=report-only sends the CSP as Content-Security-Policy-Report-Only,
+// a fallback if the enforced policy breaks something in production.
 func securityHeadersMiddleware() gin.HandlerFunc {
+	cspHeader := "Content-Security-Policy"
+	if strings.EqualFold(os.Getenv("CSP_MODE"), "report-only") {
+		cspHeader = "Content-Security-Policy-Report-Only"
+	}
 	return func(c *gin.Context) {
 		c.Header("X-Content-Type-Options", "nosniff")
 		c.Header("X-Frame-Options", "DENY")
 		c.Header("X-XSS-Protection", "1; mode=block")
 		c.Header("Referrer-Policy", "strict-origin-when-cross-origin")
 		c.Header("Permissions-Policy", "geolocation=(), microphone=(), camera=()")
-		// Locks down plugins, <base> and framing. Script and style sources are
-		// left open because the page loads several CDNs and inline scripts.
-		c.Header("Content-Security-Policy", "object-src 'none'; base-uri 'self'; frame-ancestors 'none'; form-action 'self'")
+		nonce, err := newCSPNonce()
+		if err != nil {
+			c.AbortWithStatus(http.StatusInternalServerError)
+			return
+		}
+		c.Set(cspNonceKey, nonce)
+		c.Header(cspHeader, cspPolicy(nonce))
 		c.Next()
 	}
 }

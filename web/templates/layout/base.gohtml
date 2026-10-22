@@ -8,7 +8,7 @@
     <title>seaRoute - Shortest Sea Route &amp; Waypoint Calculator</title>
 
     <!-- Prevent Flash of Dark Mode if Light Theme is Saved -->
-    <script>
+    <script nonce="{{ $.cspNonce }}">
         try {
             if (localStorage.getItem('searoute_theme') === 'light') {
                 document.documentElement.classList.remove('dark');
@@ -138,21 +138,21 @@
     <link rel="stylesheet" href="./static/tailwind.css"/>
 
     <!-- Leaflet JS -->
-    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha384-cxOPjt7s7Iz04uaHJceBmS+qpjv2JkIHNVcuOrM+YHwZOmJGBXI00mdUXEq65HTH" crossorigin="anonymous"></script>
+    <script nonce="{{ $.cspNonce }}" src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha384-cxOPjt7s7Iz04uaHJceBmS+qpjv2JkIHNVcuOrM+YHwZOmJGBXI00mdUXEq65HTH" crossorigin="anonymous"></script>
 
     <!-- GeoJSON Vector Tiles (UMD build - creates window.geojsonvt) -->
-    <script src="https://unpkg.com/geojson-vt@3.2.1/geojson-vt-dev.js" integrity="sha384-reHWp7Grs/PhIzUP2t2HDeSx2shtmdtJd6AWWBrSfRDj02d0LO4bdLp8Nr2DAilP" crossorigin="anonymous"></script>
-    <script src="./static/leaflet-geojson-vt.js"></script>
+    <script nonce="{{ $.cspNonce }}" src="https://unpkg.com/geojson-vt@3.2.1/geojson-vt-dev.js" integrity="sha384-reHWp7Grs/PhIzUP2t2HDeSx2shtmdtJd6AWWBrSfRDj02d0LO4bdLp8Nr2DAilP" crossorigin="anonymous"></script>
+    <script nonce="{{ $.cspNonce }}" src="./static/leaflet-geojson-vt.js"></script>
 
     <!-- Include Leaflet.markercluster JS -->
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet.markercluster/1.5.3/leaflet.markercluster.js" integrity="sha384-eXVCORTRlv4FUUgS/xmOyr66XBVraen8ATNLMESp92FKXLAMiKkerixTiBvXriZr" crossorigin="anonymous"></script>
+    <script nonce="{{ $.cspNonce }}" src="https://cdnjs.cloudflare.com/ajax/libs/leaflet.markercluster/1.5.3/leaflet.markercluster.js" integrity="sha384-eXVCORTRlv4FUUgS/xmOyr66XBVraen8ATNLMESp92FKXLAMiKkerixTiBvXriZr" crossorigin="anonymous"></script>
 
     <!-- Spinner -->
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/spin.js/2.3.2/spin.min.js" integrity="sha384-iExPlOYmpYCl6QdVZIxpaVbrQEPIef7hPsjKoic/UIBkQdY4UYpP6j3C90Dx5G74" crossorigin="anonymous"></script>
+    <script nonce="{{ $.cspNonce }}" src="https://cdnjs.cloudflare.com/ajax/libs/spin.js/2.3.2/spin.min.js" integrity="sha384-iExPlOYmpYCl6QdVZIxpaVbrQEPIef7hPsjKoic/UIBkQdY4UYpP6j3C90Dx5G74" crossorigin="anonymous"></script>
 
     <!-- Cookie Consent by PrivacyPolicies.com -->
-    <script type="text/javascript" src="//www.privacypolicies.com/public/cookie-consent/4.0.0/cookie-consent.js" charset="UTF-8"></script>
-    <script type="text/javascript" charset="UTF-8">
+    <script nonce="{{ $.cspNonce }}" type="text/javascript" src="//www.privacypolicies.com/public/cookie-consent/4.0.0/cookie-consent.js" charset="UTF-8"></script>
+    <script nonce="{{ $.cspNonce }}" type="text/javascript" charset="UTF-8">
         document.addEventListener('DOMContentLoaded', function () {
             if (typeof cookieconsent !== 'undefined') {
                 cookieconsent.run({"notice_banner_type":"simple","consent_type":"implied","palette":"light","language":"en","page_load_consent_levels":["strictly-necessary","functionality","tracking","targeting"],"notice_banner_reject_button_hide":false,"preferences_center_close_button_hide":false,"page_refresh_confirmation_buttons":false,"website_name":"Searoute"});
@@ -161,7 +161,7 @@
     </script>
 
     <!-- App Configuration -->
-    <script>
+    <script nonce="{{ $.cspNonce }}">
         window.__APP_CONFIG__ = {
             owmApiKey: "{{ .owmApiKey }}",
             cartoApiKey: "{{ .cartoApiKey }}"
@@ -170,8 +170,8 @@
 
     <!-- Google Analytics (only if tracking ID is configured) -->
     {{ if .gaTrackingID }}
-    <script type="text/plain" cookie-consent="tracking" async src="https://www.googletagmanager.com/gtag/js?id={{ .gaTrackingID }}"></script>
-    <script type="text/plain" cookie-consent="tracking">
+    <script nonce="{{ $.cspNonce }}" type="text/plain" cookie-consent="tracking" async src="https://www.googletagmanager.com/gtag/js?id={{ .gaTrackingID }}"></script>
+    <script nonce="{{ $.cspNonce }}" type="text/plain" cookie-consent="tracking">
         window.dataLayer = window.dataLayer || [];
         function gtag(){dataLayer.push(arguments);}
         gtag('js', new Date());
@@ -180,7 +180,7 @@
     {{ end }}
 
     <!-- GoatCounter -->
-    <script data-goatcounter="https://searoute.goatcounter.com/count" async src="//gc.zgo.at/count.js"></script>
+    <script nonce="{{ $.cspNonce }}" data-goatcounter="https://searoute.goatcounter.com/count" async src="//gc.zgo.at/count.js"></script>
 
     <noscript>Cookie Consent by <a href="https://www.privacypolicies.com/" rel="noopener">Privacy Policies website</a></noscript>
 </head>
@@ -334,7 +334,7 @@
 </div>
 
 <!-- Header Popovers & API Modal Handler -->
-<script>
+<script nonce="{{ $.cspNonce }}">
     (function () {
         // System Info Popover
         const btnSystemInfo = document.getElementById('btn-system-info');
@@ -379,13 +379,13 @@
 </script>
 
 <!-- Notie Notification JS -->
-<script src="https://unpkg.com/notie@4.3.1/dist/notie.min.js" integrity="sha384-Ulw8y0TpoFZw3cNSRM88s1+p9O/TL6qMFIzDn9Bs+qETYhMp0UwMiv+vCylRfZVI" crossorigin="anonymous"></script>
+<script nonce="{{ $.cspNonce }}" src="https://unpkg.com/notie@4.3.1/dist/notie.min.js" integrity="sha384-Ulw8y0TpoFZw3cNSRM88s1+p9O/TL6qMFIzDn9Bs+qETYhMp0UwMiv+vCylRfZVI" crossorigin="anonymous"></script>
 
 <!-- Custom Application Scripts -->
-<script src="./static/script.js"></script>
+<script nonce="{{ $.cspNonce }}" src="./static/script.js"></script>
 
 <!-- Notifications from Go Backend -->
-<script>
+<script nonce="{{ $.cspNonce }}">
     {{with .Error}}
     notie.alert({type: 'error', text: '{{.}}', time: 5});
     {{end}}
