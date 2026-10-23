@@ -270,7 +270,7 @@
     - `SegmentTouchesArea`;
     - `SegmentClearance(…, C+T) ≤ T`;
     - the shortcut is not shorter by > 1 m.
-  - **auto** if `SegmentClearance ≥ C+T` and every densified point is either in coverage or farther than 20 NM from land.
+  - **auto** if `SegmentClearance ≥ C+T` and the whole leg is either inside coverage or farther than 20 NM from land (sample the rhumb line every 5 NM for this test only).
   - **proposal** otherwise, with reason "below clearance" if the clearance is < C+T, else "no TSS data", and saved ≥ 0.1 NM. A proposal with a smaller saving is never offered.
   - `min_clearance_nm` = (clearance − T) / 1852, rounded to 0.1.
 - Pipeline per leg (network vertices only, connector edges excluded):
