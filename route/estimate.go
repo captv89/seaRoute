@@ -28,8 +28,10 @@ func (a vec3) chord2(b vec3) float64 {
 // the remaining distance. Sea routes bend round continents, so this bound
 // is much tighter than the straight great-circle line.
 //
-// Distances are computed with every passage open. Avoiding passages only
-// removes edges, which can only make routes longer, so the bound still holds.
+// Distances are computed on the relaxed graph: every passage open, every
+// MARNET edge, and lane and join edges in both directions (their wrong-way
+// twins included), with all TSS blocks ignored. The relaxed graph is
+// symmetric and every request graph is a subset of it, so the bound holds.
 type landmarks struct {
 	dist [][]float64 // dist[i][v]: network distance from landmark i to node v
 }
@@ -68,7 +70,8 @@ func (g *Graph) buildLandmarks(k int) landmarks {
 	return lm
 }
 
-// allDistances runs Dijkstra from s over the whole network, all passages open.
+// allDistances runs Dijkstra from s over the relaxed graph: all passages open,
+// all edge flags ignored.
 func (g *Graph) allDistances(s int32) []float64 {
 	dist := make([]float64, len(g.nodes))
 	for i := range dist {

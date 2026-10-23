@@ -5,6 +5,8 @@
 package route
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -12,6 +14,7 @@ import (
 	"os"
 	"slices"
 	"sort"
+	"time"
 )
 
 // ErrUnknownPassage is returned when Avoid or Allow names a passage the network lacks.
@@ -45,6 +48,10 @@ type Options struct {
 	// Allow opens passages that are closed by default (ClosedByDefault).
 	Allow     []string
 	Algorithm Algorithm
+	// NoTSS routes on the plain MARNET network: lane, join and wrong-way
+	// edges are skipped and TSS blocks are ignored. Internal; not exposed in
+	// the UI or APIs.
+	NoTSS bool
 }
 
 // ClosedByDefault are passages a route avoids unless Options.Allow opens
@@ -103,6 +110,27 @@ type Graph struct {
 	usable []bool    // node is in the largest connected component
 	unit   []vec3    // node position on the unit sphere, for trig-free distance bounds
 	lm     landmarks // precomputed distances for the A* estimate
+
+	// Nodes 0..marnetNodes-1 are MARNET nodes; the rest are TSS lane vertices
+	// and access nodes (applyTSS). Only MARNET nodes are snapped to.
+	marnetNodes int
+	flags       []uint8 // per directed edge: edgeLane, edgeJoin, edgeWrongWay, edgeTSSBlocked
+	scheme      []int32 // per directed edge: responsible scheme (index into tss.Schemes), -1 for none
+	twin        []int32 // per directed edge: the reverse edge
+	land        *Land
+	tss         *TSS
+	version     string
+	stats       tssStats
+}
+
+// edge is a directed edge before the CSR build. New appends edges in
+// forward/reverse pairs, so the twin of slice index i is i^1.
+type edge struct {
+	from, to int32
+	w        float64
+	pass     uint8
+	flags    uint8
+	scheme   int32
 }
 
 // Passages returns the passage tags present in the network, sorted.
@@ -135,13 +163,47 @@ type Segment struct {
 	Pass string
 }
 
+// Datasets names the files LoadAll reads. An empty Land or TSS path turns
+// that feature off.
+type Datasets struct {
+	Network, Land, TSS string
+}
+
 // Load reads a GeoJSON network of LineStrings. A "pass" property tags
-// every segment of the line with that passage.
+// every segment of the line with that passage. It equals
+// LoadAll(Datasets{Network: path}).
 func Load(path string) (*Graph, error) {
-	data, err := os.ReadFile(path)
+	return LoadAll(Datasets{Network: path})
+}
+
+// LoadAll reads the network and, when named, the land and TSS datasets, and
+// builds the TSS-aware graph.
+func LoadAll(d Datasets) (*Graph, error) {
+	data, err := os.ReadFile(d.Network)
 	if err != nil {
 		return nil, fmt.Errorf("read network: %w", err)
 	}
+	segs, err := parseNetwork(data)
+	if err != nil {
+		return nil, err
+	}
+	var land *Land
+	if d.Land != "" {
+		if land, err = LoadLand(d.Land); err != nil {
+			return nil, err
+		}
+	}
+	var tss *TSS
+	if d.TSS != "" {
+		if tss, err = LoadTSS(d.TSS); err != nil {
+			return nil, err
+		}
+	}
+	sum := sha256.Sum256(data)
+	return newGraph(segs, land, tss, hex.EncodeToString(sum[:])[:8]), nil
+}
+
+func parseNetwork(data []byte) ([]Segment, error) {
 	var fc geojsonFC
 	if err := json.Unmarshal(data, &fc); err != nil {
 		return nil, fmt.Errorf("parse network: %w", err)
@@ -157,7 +219,7 @@ func Load(path string) (*Graph, error) {
 			segs = append(segs, Segment{A: cs[j], B: cs[j+1], Pass: pass})
 		}
 	}
-	return New(segs), nil
+	return segs, nil
 }
 
 // nodeKey rounds to about 0.1 m and joins the antimeridian (-180 = 180),
@@ -171,8 +233,19 @@ func nodeKey(p Position) [2]int64 {
 }
 
 // New builds the graph from segments. Zero-length segments are dropped.
-func New(segs []Segment) *Graph {
-	g := &Graph{passes: []string{""}}
+// It equals NewWith(segs, nil, nil).
+func New(segs []Segment) *Graph { return NewWith(segs, nil, nil) }
+
+// NewWith builds the graph from segments with optional land and TSS data.
+// With TSS, lanes become one-way edges joined to the network, and MARNET
+// edges that cross a separation zone or line, or run against a lane, are
+// blocked (see applyTSS). Land is used only to drop joins that touch land.
+func NewWith(segs []Segment, land *Land, tss *TSS) *Graph {
+	return newGraph(segs, land, tss, segmentsHash(segs))
+}
+
+func newGraph(segs []Segment, land *Land, tss *TSS, netHash string) *Graph {
+	g := &Graph{passes: []string{""}, land: land, tss: tss}
 	ids := map[[2]int64]int32{}
 	node := func(p Position) int32 {
 		k := nodeKey(p)
@@ -186,11 +259,6 @@ func New(segs []Segment) *Graph {
 	}
 	passID := map[string]uint8{"": 0}
 
-	type edge struct {
-		from, to int32
-		w        float64
-		pass     uint8
-	}
 	var edges []edge
 	for _, s := range segs {
 		a, b := node(s.A), node(s.B)
@@ -207,7 +275,14 @@ func New(segs []Segment) *Graph {
 			g.passes = append(g.passes, s.Pass)
 		}
 		w := Distance(g.nodes[a], g.nodes[b])
-		edges = append(edges, edge{a, b, w, pid}, edge{b, a, w, pid})
+		edges = append(edges, edge{a, b, w, pid, 0, -1}, edge{b, a, w, pid, 0, -1})
+	}
+	g.marnetNodes = len(g.nodes)
+	g.stats.marnet = len(edges) / 2
+	if tss != nil {
+		start := time.Now()
+		g.applyTSS(&edges)
+		g.stats.tssBuild = time.Since(start)
 	}
 
 	n := len(g.nodes)
@@ -221,12 +296,21 @@ func New(segs []Segment) *Graph {
 	g.to = make([]int32, len(edges))
 	g.weight = make([]float64, len(edges))
 	g.pass = make([]uint8, len(edges))
+	g.flags = make([]uint8, len(edges))
+	g.scheme = make([]int32, len(edges))
+	g.twin = make([]int32, len(edges))
 	fill := slices.Clone(g.first[:n])
-	for _, e := range edges {
+	pos := make([]int32, len(edges)) // slice index -> CSR index
+	for k, e := range edges {
 		i := fill[e.from]
 		fill[e.from]++
-		g.to[i], g.weight[i], g.pass[i] = e.to, e.w, e.pass
+		pos[k] = i
+		g.to[i], g.weight[i], g.pass[i], g.flags[i], g.scheme[i] = e.to, e.w, e.pass, e.flags, e.scheme
 	}
+	for k := range edges {
+		g.twin[pos[k]] = pos[k^1]
+	}
+	g.version = netHash + "/" + landVersion(land) + "/" + tssVersion(tss)
 	g.markLargestComponent()
 	g.unit = make([]vec3, len(g.nodes))
 	for i, p := range g.nodes {
@@ -276,7 +360,8 @@ func (x Area) crosses(a, b Position) bool {
 	return true
 }
 
-// markLargestComponent marks the nodes of the largest connected component.
+// markLargestComponent marks the nodes of the largest connected component of
+// the relaxed graph (all edges, flags ignored).
 // Points snap only to these, so a route never starts on a stray island.
 func (g *Graph) markLargestComponent() {
 	n := len(g.nodes)
@@ -326,10 +411,11 @@ func (g *Graph) Route(points []Position, opts Options) (Route, error) {
 	if err != nil {
 		return Route{}, err
 	}
+	var lifted []bool // Task 6 lifts schemes when TSS data leaves no route
 
 	snapped := make([]int32, len(points))
 	for i, p := range points {
-		v, ok := g.nearest(p, blocked)
+		v, ok := g.nearest(p, blocked, lifted, opts.NoTSS)
 		if !ok {
 			return Route{}, errors.New("network has no usable nodes")
 		}
@@ -345,7 +431,7 @@ func (g *Graph) Route(points []Position, opts Options) (Route, error) {
 		if i+2 < len(points) {
 			to = g.nodes[snapped[i+1]]
 		}
-		leg, err := g.leg(from, to, snapped[i], snapped[i+1], blocked, opts.Algorithm)
+		leg, err := g.leg(from, to, snapped[i], snapped[i+1], blocked, lifted, opts.NoTSS, opts.Algorithm)
 		if err != nil {
 			return Route{}, fmt.Errorf("leg %d: %w", i+1, err)
 		}
@@ -399,14 +485,15 @@ func (g *Graph) blockedPasses(avoid, allow []string) ([]bool, error) {
 	return blocked, nil
 }
 
-// nearest returns the closest usable node that has at least one open edge.
-func (g *Graph) nearest(p Position, blocked []bool) (int32, bool) {
+// nearest returns the closest usable MARNET node that has at least one open
+// edge. Lane nodes are never snapped to.
+func (g *Graph) nearest(p Position, blocked, lifted []bool, noTSS bool) (int32, bool) {
 	// Chord length on the unit sphere rises with great-circle distance,
 	// so the nearest by chord is the nearest by distance.
 	q := toUnit(p)
 	best, bestC := int32(-1), math.Inf(1)
-	for v := range g.nodes {
-		if !g.usable[v] || !g.hasOpenEdge(int32(v), blocked) {
+	for v := range g.marnetNodes {
+		if !g.usable[v] || !g.hasOpenEdge(int32(v), blocked, lifted, noTSS) {
 			continue
 		}
 		if c := q.chord2(g.unit[v]); c < bestC {
@@ -416,17 +503,17 @@ func (g *Graph) nearest(p Position, blocked []bool) (int32, bool) {
 	return best, best >= 0
 }
 
-func (g *Graph) hasOpenEdge(v int32, blocked []bool) bool {
+func (g *Graph) hasOpenEdge(v int32, blocked, lifted []bool, noTSS bool) bool {
 	for e := g.first[v]; e < g.first[v+1]; e++ {
-		if !blocked[g.pass[e]] {
+		if g.open(e, blocked, lifted, noTSS) {
 			return true
 		}
 	}
 	return false
 }
 
-func (g *Graph) leg(from, to Position, s, t int32, blocked []bool, alg Algorithm) (Leg, error) {
-	nodes, edges, networkM, ok := g.search(s, t, blocked, alg)
+func (g *Graph) leg(from, to Position, s, t int32, blocked, lifted []bool, noTSS bool, alg Algorithm) (Leg, error) {
+	nodes, edges, networkM, ok := g.search(s, t, blocked, lifted, noTSS, alg)
 	if !ok {
 		return Leg{}, errors.New("no path on the network with these passages avoided")
 	}
