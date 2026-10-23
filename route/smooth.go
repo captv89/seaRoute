@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"math"
 	"runtime"
+	"slices"
 	"sync"
 	"sync/atomic"
 )
@@ -151,10 +152,8 @@ func (s *smoother) clearance(a, b Position) float64 {
 // the clearance beyond the land tolerance, capped at C.
 func (s *smoother) classify(a, b Position, replaced []Position, edges []int32) (class int, minClearM float64) {
 	g := s.g
-	for _, e := range edges {
-		if g.skipSeg(e) {
-			return classNever, 0
-		}
+	if slices.ContainsFunc(edges, g.skipSeg) {
+		return classNever, 0
 	}
 	if math.Abs(b[0]-a[0]) > 180 {
 		return classNever, 0

@@ -277,22 +277,31 @@ func kinks(p []Position) (n int) {
 	return n
 }
 
-// freeKinks counts kinks whose two segments are both open to smoothing, i.e.
-// not a connector, passage, TSS lane or join. Informational.
+// freeKinks counts path vertices with local detour > 3 % whose two adjacent
+// segments are both smoothable: flagged marnet, smoothed, user-accepted or
+// tss-unknown, and not passage-tagged. Kinks on lanes, passages and connectors
+// are kept on purpose.
 func freeKinks(g *Graph, r Route) (n int) {
-	var path []Position
-	var segs []int32
-	for i, l := range r.Legs {
-		if i == 0 {
-			path = append(path, l.Path...)
-		} else {
-			path = append(path, l.Path[1:]...)
+	flags := make([]string, len(r.Path)-1)
+	for _, s := range r.Stretches {
+		for k := s.From; k < s.To; k++ {
+			flags[k] = s.Flag
 		}
+	}
+	var segs []int32
+	for _, l := range r.Legs {
 		segs = append(segs, l.segs...)
 	}
-	for i := 1; i+1 < len(path); i++ {
-		if (Distance(path[i-1], path[i])+Distance(path[i], path[i+1]))/Distance(path[i-1], path[i+1]) > 1.03 &&
-			!g.skipSeg(segs[i-1]) && !g.skipSeg(segs[i]) {
+	free := func(k int) bool {
+		switch flags[k] {
+		case "marnet", "smoothed", "user-accepted", "tss-unknown":
+			return segs[k] < 0 || g.pass[segs[k]] == 0
+		}
+		return false
+	}
+	for i := 1; i+1 < len(r.Path); i++ {
+		if (Distance(r.Path[i-1], r.Path[i])+Distance(r.Path[i], r.Path[i+1]))/Distance(r.Path[i-1], r.Path[i+1]) > 1.03 &&
+			free(i-1) && free(i) {
 			n++
 		}
 	}
@@ -310,11 +319,17 @@ func TestRealKinksReduced(t *testing.T) {
 	}{{"Rotterdam-Singapore", rotterdam, singapore}, {"Southampton-Hamburg", southampt, hamburg}} {
 		base := routeOn(t, g, Options{NoTSS: true}, c.from, c.to)
 		tssOnly := routeOn(t, g, Options{}, c.from, c.to)
-		r := routeOn(t, g, Options{Kinks: true}, c.from, c.to)
-		t.Logf("%s: kinks NoTSS %d, TSS %d, smoothed %d (%d with a free neighbouring segment); %.1f -> %.1f nm; %d proposals", c.name,
-			kinks(base.Path), kinks(tssOnly.Path), kinks(r.Path), freeKinks(g, r), tssOnly.DistanceNM(), r.DistanceNM(), len(r.Proposals))
-		if got, want := kinks(r.Path), kinks(base.Path); got*2 > want {
-			t.Errorf("%s: %d kinks, NoTSS baseline %d", c.name, got, want)
+		first := routeOn(t, g, Options{Kinks: true}, c.from, c.to)
+		var ids []string
+		for _, p := range first.Proposals {
+			ids = append(ids, p.ID)
+		}
+		r := routeOn(t, g, Options{Kinks: true, Accept: ids}, c.from, c.to)
+		got, want := freeKinks(g, r), freeKinks(g, tssOnly)
+		t.Logf("%s: raw kinks NoTSS %d, TSS-only %d, smoothed %d; free kinks TSS-only %d, smoothed+accepted %d; %.1f -> %.1f nm; %d proposals", c.name,
+			kinks(base.Path), kinks(tssOnly.Path), kinks(r.Path), want, got, tssOnly.DistanceNM(), r.DistanceNM(), len(ids))
+		if got*2 > want {
+			t.Errorf("%s: %d free kinks, TSS-only baseline %d", c.name, got, want)
 		}
 		if r.DistanceM > tssOnly.DistanceM {
 			t.Errorf("%s: %.1f nm longer than TSS-only %.1f", c.name, r.DistanceNM(), tssOnly.DistanceNM())
