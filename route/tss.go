@@ -20,9 +20,12 @@ const (
 	TSSCoverageNM = 20.0
 
 	tssCirclePoints = 16
-	tssMaxFeatures  = 200_000
-	tssMaxCoords    = 5_000_000
-	tssMaxBytes     = 256 << 20
+	// tssCircleScale pushes the 16 circle vertices out to r/cos(pi/16) so the
+	// polygon edges, not just the vertices, stay at least r from the feature.
+	tssCircleScale = 1.0196136 // 1/cos(pi/16)
+	tssMaxFeatures = 200_000
+	tssMaxCoords   = 5_000_000
+	tssMaxBytes    = 256 << 20
 )
 
 // Scheme is one traffic separation scheme (a group of OSM ways within 3 NM of
@@ -123,6 +126,16 @@ func buildScheme(id string, fs []TSSFeature) Scheme {
 		s.Name = id
 	}
 	s.wrap = maxLon-minLon > 180
+	// Also wrap when either buffered hull would cross +-180, so queries on
+	// both sides of the antimeridian see the same continuous range.
+	for _, f := range fs {
+		for _, p := range f.Coords {
+			m := tssCoverageDegLon(p[1])
+			if p[0]+m > 180 || p[0]-m < -180 {
+				s.wrap = true
+			}
+		}
+	}
 
 	var pts []Position
 	for _, f := range fs {
@@ -156,6 +169,13 @@ func buildScheme(id string, fs []TSSFeature) Scheme {
 		s.lanesM = append(s.lanesM, s.merc(l))
 	}
 	return s
+}
+
+// tssCoverageDegLon is the longitude half-width in degrees of the (padded)
+// coverage buffer at latitude lat.
+func tssCoverageDegLon(lat float64) float64 {
+	d := TSSCoverageNM * MetresPerNM / earthRadiusM * 180 / math.Pi / tssCircleScale
+	return d * tssCircleScale / math.Max(math.Cos(lat*math.Pi/180), 0.01)
 }
 
 // norm maps p into the scheme's continuous longitude range.
@@ -209,7 +229,7 @@ func ringBox(r []Position) bbox {
 // is the same in both.
 func bufferedHull(pts []Position, rNM float64) []Position {
 	rM := rNM * MetresPerNM
-	dLat := rM / earthRadiusM * 180 / math.Pi
+	dLat := rM / earthRadiusM * 180 / math.Pi * tssCircleScale
 	circle := make([]Position, 0, len(pts)*tssCirclePoints)
 	var sin, cos [tssCirclePoints]float64
 	for k := range sin {

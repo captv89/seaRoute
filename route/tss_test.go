@@ -1,6 +1,7 @@
 package route
 
 import (
+	"math"
 	"strings"
 	"testing"
 )
@@ -36,6 +37,36 @@ func TestSchemeAreaBuffer(t *testing.T) {
 	}
 	if tss.SegmentTouchesArea(Position{0.05, 2 * nmDeg}, Position{0.05, 5 * nmDeg}) {
 		t.Error("segment 2+ NM away should not touch the area")
+	}
+}
+
+func TestSchemeBufferBetweenVertices(t *testing.T) {
+	tss := NewTSS([]TSSFeature{{Type: "lane", Scheme: "tss-p", OSMID: 1,
+		Coords: []Position{{0, 0}, {0, 0}}}}, "v")
+	r := TSSAreaNM * MetresPerNM / earthRadiusM * 180 / math.Pi
+	b := 11.25 * math.Pi / 180
+	if _, ok := tss.InArea(Position{r * math.Sin(b), r * math.Cos(b)}); !ok {
+		t.Error("point exactly 1 NM away between hull vertices should be in area")
+	}
+	rc := TSSCoverageNM * MetresPerNM / earthRadiusM * 180 / math.Pi
+	if !tss.InCoverage(Position{rc * math.Sin(b), rc * math.Cos(b)}) {
+		t.Error("point exactly 20 NM away between hull vertices should be in coverage")
+	}
+}
+
+func TestSchemeAntimeridianNear(t *testing.T) {
+	for _, c := range []struct{ lon, q float64 }{{179.995, -179.995}, {-179.995, 179.995}} {
+		tss := NewTSS([]TSSFeature{{Type: "lane", Scheme: "tss-n", OSMID: 1,
+			Coords: []Position{{c.lon, 0}, {c.lon, 0.01}}}}, "v")
+		if _, ok := tss.InArea(Position{c.q, 0.005}); !ok {
+			t.Errorf("lane %v: InArea miss at %v", c.lon, c.q)
+		}
+		if !tss.InCoverage(Position{c.q, 0.005}) {
+			t.Errorf("lane %v: InCoverage miss at %v", c.lon, c.q)
+		}
+		if !tss.SegmentTouchesArea(Position{c.q, 0.005}, Position{c.q, 0.2}) {
+			t.Errorf("lane %v: SegmentTouchesArea miss at %v", c.lon, c.q)
+		}
 	}
 }
 
