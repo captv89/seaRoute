@@ -93,7 +93,7 @@ func generateOutput(r route.Route, kinks bool, clearanceNM float64, oCoords rout
 		// stretch whose segment ends there.
 		flag := "connector"
 		if i > 0 {
-			flag = ""
+			flag = "marnet"
 			for _, st := range r.Stretches {
 				if st.From < i && i <= st.To {
 					flag = st.Flag

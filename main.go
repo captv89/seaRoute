@@ -64,6 +64,8 @@ const (
 	maxClearanceNM     = 10.0
 	maxAcceptIDs       = 200
 	maxAcceptIDLen     = 32
+	// maxWaypointsBody caps the /waypoints body; 200 IDs of 32 chars is under 10 KB.
+	maxWaypointsBody = 64 << 10
 )
 
 // Rate limiting state
@@ -411,6 +413,7 @@ func setupRoutes(router *gin.Engine, app *App) {
 	// Handle request to calculate the passage
 	router.POST("/waypoints", limit, func(c *gin.Context) {
 		var req WaypointRequest
+		c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, maxWaypointsBody)
 		if err := c.ShouldBindJSON(&req); err != nil {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request format"})
 			return

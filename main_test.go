@@ -12,6 +12,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/captv89/seaRoute/route"
 	"github.com/gin-gonic/gin"
@@ -617,11 +618,18 @@ func TestWaypointsAcceptLimits(t *testing.T) {
 		"201 ids":    many,
 		"33 chars":   []string{strings.Repeat("a", 33)},
 		"bind error": []int{1},
+		"mixed":      []any{"ok", 1},
+		"10000 ids":  make([]string, 10000),
+		"1MB id":     []string{strings.Repeat("a", 1<<20)},
 	}
 	for name, accept := range cases {
+		start := time.Now()
 		w := postWaypoints(t, r, map[string]any{"fromPort": "Rotterdam", "toPort": "Hamburg", "accept": accept})
 		if w.Code != http.StatusBadRequest {
 			t.Errorf("%s: status %d, want 400", name, w.Code)
+		}
+		if d := time.Since(start); d > 100*time.Millisecond {
+			t.Errorf("%s: rejection took %v, want < 100ms", name, d)
 		}
 	}
 	ok := make([]string, 200)
@@ -684,5 +692,35 @@ func TestLayersTSS(t *testing.T) {
 	}
 	if ce := w.Header().Get("Content-Encoding"); ce != "gzip" {
 		t.Errorf("Content-Encoding = %q, want gzip", ce)
+	}
+}
+
+func TestWaypointsKinksOff(t *testing.T) {
+	r := setupTestRouter(t)
+	w := postWaypoints(t, r, map[string]any{"fromPort": "Rotterdam", "toPort": "Singapore", "kinks": false, "accept": []string{"k-abc"}})
+	if w.Code != http.StatusOK {
+		t.Fatalf("status %d: %s", w.Code, w.Body.String())
+	}
+	var res struct {
+		Features []struct {
+			Properties struct {
+				Kinks         bool     `json:"kinks"`
+				Proposals     []any    `json:"proposals"`
+				IgnoredAccept []string `json:"ignored_accept"`
+			} `json:"properties"`
+		} `json:"features"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &res); err != nil {
+		t.Fatal(err)
+	}
+	p := res.Features[0].Properties
+	if p.Kinks {
+		t.Error("kinks echoed true, want false")
+	}
+	if len(p.Proposals) != 0 {
+		t.Errorf("got %d proposals, want 0", len(p.Proposals))
+	}
+	if len(p.IgnoredAccept) != 1 || p.IgnoredAccept[0] != "k-abc" {
+		t.Errorf("ignored_accept = %v, want [k-abc]", p.IgnoredAccept)
 	}
 }
