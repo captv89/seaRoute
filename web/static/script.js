@@ -24,6 +24,7 @@
     let acceptedProposalIds = new Set();
     let rejectedProposalIds = new Set();
     let routeInputSig = '';
+    let routeRequestSeq = 0; // monotonically increasing; only the latest response is rendered
     let mapPickingMode = null; // null | 'origin' | 'dest'
     let currentGlowPolyline = null;
     let currentFlowPolyline = null;
@@ -2107,6 +2108,8 @@
             if (isLoading) iconCompute.classList.add('hidden');
             else iconCompute.classList.remove('hidden');
         }
+        // Proposal actions would race the in-flight request
+        document.querySelectorAll('#proposals-card button').forEach(b => { b.disabled = isLoading; });
         if (btnComputeText) {
             btnComputeText.textContent = isLoading ? 'Computing Optimal Route...' : 'Compute Optimal Sea Route';
         }
@@ -2152,7 +2155,7 @@
     syncClearanceState();
 
     /**
-     * opts.accept: keep the in-memory accepted set (re-POST after Accept/Undo)
+     * opts.acceptDelta: {ids, on} Accept/Undo change, committed only after the response succeeds
      * opts.keepView: do not re-fit the map to the route
      */
     function computeRoute(opts = {}) {
@@ -2179,11 +2182,23 @@
 
         // Accepted proposals belong to one route: reset them when its inputs change.
         const sig = JSON.stringify([fromLat, fromLon, toLat, toLon, [...avoidList].sort(), kinks, clearanceNM]);
+        let acceptDelta = opts.acceptDelta || null;
         if (sig !== routeInputSig) {
+            const hadState = acceptedProposalIds.size > 0 || rejectedProposalIds.size > 0;
             routeInputSig = sig;
             acceptedProposalIds = new Set();
             rejectedProposalIds = new Set();
+            if (acceptDelta) {
+                // Stale proposal IDs belong to the previous inputs: recompute without them
+                acceptDelta = null;
+                opts = Object.assign({}, opts, { keepView: false });
+                showToast('Route inputs changed \u2014 proposals recomputed', 'info');
+            } else if (hadState) {
+                showToast('Route inputs changed \u2014 accepted shortcuts reset', 'info');
+            }
         }
+        const candidate = new Set(acceptedProposalIds);
+        if (acceptDelta) acceptDelta.ids.forEach(id => acceptDelta.on ? candidate.add(id) : candidate.delete(id));
 
         const requestPayload = {
             from: { lat: fromLat, lon: fromLon },
@@ -2192,9 +2207,10 @@
             avoid: avoidList,
             kinks: kinks,
             clearance_nm: clearanceNM,
-            accept: Array.from(acceptedProposalIds)
+            accept: Array.from(candidate)
         };
 
+        const reqId = ++routeRequestSeq;
         setComputeLoading(true);
 
         fetch('/waypoints', {
@@ -2211,10 +2227,14 @@
                 return res.json();
             })
             .then(data => {
+                if (reqId !== routeRequestSeq) return; // superseded by a newer request
                 setComputeLoading(false);
+                // Commit the accepted set only now, so the list always matches the drawn route
+                acceptedProposalIds = candidate;
                 renderRoute(data, { keepView: Boolean(opts.keepView) });
             })
             .catch(err => {
+                if (reqId !== routeRequestSeq) return;
                 setComputeLoading(false);
                 console.error('Route calculation error:', err);
                 showToast(`Routing Failed: ${err.message}`, 'error');
@@ -2395,7 +2415,7 @@
     // =========================================================================
     const FLAG_STYLES = {
         'tss-unresolved': 'text-error font-semibold',
-        'tss-unknown': 'text-warning',
+        'tss-unknown': 'text-on-surface-variant italic',
         'user-accepted': 'text-secondary',
         'osm-tss': 'text-tss',
         'smoothed': 'text-primary',
@@ -2484,8 +2504,7 @@
     }
 
     function setProposalAccepted(ids, accepted) {
-        ids.forEach(id => accepted ? acceptedProposalIds.add(id) : acceptedProposalIds.delete(id));
-        computeRoute({ accept: true, keepView: true });
+        computeRoute({ acceptDelta: { ids, on: accepted }, keepView: true });
     }
 
     (function bindProposalActions() {
