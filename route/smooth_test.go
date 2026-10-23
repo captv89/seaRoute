@@ -221,8 +221,8 @@ func TestSmoothingPerLegKeepsViaPoints(t *testing.T) {
 	if !slices.Equal(r.Path, []Position{{0, 0}, {1, 0}, {2, 0}}) {
 		t.Errorf("path %v", r.Path)
 	}
-	if want := []string{"smoothed", "smoothed"}; len(r.Stretches) != 1 || r.Stretches[0].To != 2 {
-		t.Errorf("stretches %v (want one merged stretch over %v)", r.Stretches, want)
+	if want := []Stretch{{From: 0, To: 2, Flag: "smoothed", Severity: "label"}}; !slices.Equal(r.Stretches, want) {
+		t.Errorf("stretches %v, want %v", r.Stretches, want)
 	}
 	if len(r.Legs) != 2 || len(r.Legs[0].Path) != 2 || len(r.Legs[1].Path) != 2 {
 		t.Errorf("legs %v", r.Legs)
@@ -374,8 +374,23 @@ func TestNarrowPassagesSafe(t *testing.T) {
 			t.Errorf("%s: passages %v, TSS-only %v", c.name, r.Passages, tssOnly.Passages)
 		}
 		checkSmoothedClear(t, g, r)
+		lifted := map[string]bool{}
+		for _, l := range r.Legs {
+			for _, k := range l.liftOrder {
+				lifted[g.tss.Schemes[k].ID] = true
+			}
+		}
+		if v := g.tss.violations(r.Path, lifted); len(v) > 0 {
+			t.Errorf("%s: TSS violations: %v", c.name, v)
+		}
+		for _, s := range r.Stretches {
+			if (s.Flag == "smoothed" || s.Flag == "user-accepted") && g.tss.SegmentTouchesArea(r.Path[s.From], r.Path[s.To]) {
+				t.Errorf("%s: %s stretch %v touches a scheme area", c.name, s.Flag, s)
+			}
+		}
+		tol := g.land.Tolerance
 		for _, p := range r.Proposals {
-			if g.land.SegmentClearance(p.Path[0], p.Path[1], 1000) <= g.land.Tolerance {
+			if g.land.SegmentClearance(p.Path[0], p.Path[1], tol+1) <= tol {
 				t.Errorf("%s: proposal %v within land tolerance", c.name, p)
 			}
 		}
@@ -420,21 +435,26 @@ func TestStretchFlags(t *testing.T) {
 		}
 		return Stretch{}, false
 	}
+	checkBounds := func(r Route) {
+		for _, s := range r.Stretches {
+			if s.From < 0 || s.To <= s.From || s.To >= len(r.Path) {
+				t.Errorf("bad stretch %v for %d vertices", s, len(r.Path))
+			}
+		}
+	}
 	r := routeOn(t, g, Options{Kinks: true}, rotterdam, singapore)
+	checkBounds(r)
 	if s, ok := has(r, "connector"); !ok || s.Severity != "label" {
 		t.Errorf("no connector stretch: %v", r.Stretches)
 	}
 	r = routeOn(t, g, Options{Kinks: true}, rotterdam, bilbao)
+	checkBounds(r)
 	if _, ok := has(r, "osm-tss"); !ok {
 		t.Errorf("Dover transit has no osm-tss stretch: %v", r.Stretches)
 	}
 	r = routeOn(t, g, Options{Kinks: true}, chesapeake, newYork)
+	checkBounds(r)
 	if s, ok := has(r, "tss-unknown"); !ok || s.Severity != "info" {
 		t.Errorf("no tss-unknown stretch: %v", r.Stretches)
-	}
-	for _, s := range r.Stretches {
-		if s.From < 0 || s.To <= s.From || s.To >= len(r.Path) {
-			t.Errorf("bad stretch %v for %d vertices", s, len(r.Path))
-		}
 	}
 }
