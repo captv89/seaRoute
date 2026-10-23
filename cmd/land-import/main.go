@@ -208,25 +208,19 @@ func touchesCorridor(ring [][2]float64, cells map[[2]int32]bool) bool {
 	return false
 }
 
-// simplify runs Douglas-Peucker with tolerance tolM metres, in a local
-// equirectangular projection around the ring's mean latitude. The first and
-// last vertices are always kept.
+// simplify runs Douglas-Peucker with tolerance tolM metres. Distances are
+// measured per span in a local equirectangular projection whose longitude
+// scale is cos(latitude closest to the equator within the span). That cosine
+// is at least the true one at every vertex of the span, so east-west distances
+// are never underestimated: every removed vertex lies within tolM of the kept
+// polyline (conservative, may keep slightly more vertices at high latitude).
+// The first and last vertices are always kept.
 func simplify(ring [][2]float64, tolM float64) [][2]float64 {
 	n := len(ring)
 	if n < 3 || tolM <= 0 {
 		return ring
 	}
-	var sumLat float64
-	for _, p := range ring {
-		sumLat += p[1]
-	}
 	k := earthR * math.Pi / 180
-	cosLat := math.Cos(sumLat / float64(n) * math.Pi / 180)
-	xs := make([]float64, n)
-	ys := make([]float64, n)
-	for i, p := range ring {
-		xs[i], ys[i] = p[0]*cosLat*k, p[1]*k
-	}
 	keep := make([]bool, n)
 	keep[0], keep[n-1] = true, true
 	type span struct{ a, b int }
@@ -237,11 +231,21 @@ func simplify(ring [][2]float64, tolM float64) [][2]float64 {
 		if s.b-s.a < 2 {
 			continue
 		}
-		dx, dy := xs[s.b]-xs[s.a], ys[s.b]-ys[s.a]
+		lo, hi := ring[s.a][1], ring[s.a][1]
+		for i := s.a + 1; i <= s.b; i++ {
+			lo, hi = math.Min(lo, ring[i][1]), math.Max(hi, ring[i][1])
+		}
+		minAbs := math.Min(math.Abs(lo), math.Abs(hi))
+		if lo <= 0 && hi >= 0 {
+			minAbs = 0
+		}
+		c := math.Cos(minAbs*math.Pi/180) * k
+		ax, ay := ring[s.a][0], ring[s.a][1]
+		dx, dy := (ring[s.b][0]-ax)*c, (ring[s.b][1]-ay)*k
 		l2 := dx*dx + dy*dy
 		far, farD := -1, tolM
 		for i := s.a + 1; i < s.b; i++ {
-			px, py := xs[i]-xs[s.a], ys[i]-ys[s.a]
+			px, py := (ring[i][0]-ax)*c, (ring[i][1]-ay)*k
 			var d float64
 			if l2 == 0 {
 				d = math.Hypot(px, py)

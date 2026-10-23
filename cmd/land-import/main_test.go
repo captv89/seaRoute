@@ -128,6 +128,33 @@ func TestSimplifyKeepsWithinTolerance(t *testing.T) {
 	}
 }
 
+// TestSimplifyLatitudeAware uses a ring spanning 25N to 55N with wide
+// east-west wiggle; each vertex is measured against the kept polyline in a
+// local projection at that vertex's own latitude.
+func TestSimplifyLatitudeAware(t *testing.T) {
+	rng := rand.New(rand.NewSource(7))
+	var ring [][2]float64
+	for i := 0; i <= 3000; i++ {
+		lat := 25 + 30*float64(i)/3000
+		ring = append(ring, [2]float64{-100 + 3*math.Sin(float64(i)/25) + (rng.Float64()-0.5)*0.01, lat})
+	}
+	const tol = 50.0
+	out := simplify(ring, tol)
+	if len(out) >= len(ring) {
+		t.Fatal("nothing removed")
+	}
+	for _, p := range ring {
+		cosLat := math.Cos(p[1] * math.Pi / 180)
+		best := math.Inf(1)
+		for i := 0; i+1 < len(out); i++ {
+			best = math.Min(best, segDistM(p, out[i], out[i+1], cosLat))
+		}
+		if best > tol {
+			t.Fatalf("vertex %v is %.2f m from simplified line (tol %.0f)", p, best, tol)
+		}
+	}
+}
+
 func writeNetwork(t *testing.T, coords [][2]float64) string {
 	t.Helper()
 	b, _ := json.Marshal(map[string]any{"type": "FeatureCollection", "features": []any{
