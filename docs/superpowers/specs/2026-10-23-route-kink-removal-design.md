@@ -251,6 +251,27 @@ clearance; the clearance is only guaranteed on `smoothed` segments.
 - Defaults when omitted: REST and MCP use `kinks: true`,
   `clearance_nm: 2`, `accept: []`.
 
+### Legs are rhumb lines (owner's decision)
+
+seaRoute suggests a navigable route, not a great-circle track. Every leg
+between two waypoints is a **rhumb line** (constant course, a straight
+line on a Mercator chart), as a navigator lays it off.
+
+- All distances use the rhumb-line (Mercator sailing) formula: MARNET's own
+  segments, connectors, straightened legs, and every total. This replaces
+  the great-circle (haversine) distance used today. On MARNET's 5 km
+  segments the difference is negligible (well under 1 NM on
+  Rotterdam–Singapore), so ShoreWatch's `distance_to_go` shifts only
+  slightly.
+- A straightened leg is one rhumb line of any length: no intermediate
+  points, one waypoint pair. It is only applied if its rhumb distance is
+  shorter than the MARNET stretch it replaces.
+- Land clearance is checked on the Mercator chart, where a rhumb line is
+  exactly straight.
+- The map draws legs as straight lines on the Mercator map, which is the
+  rhumb line, so the drawn track, distances, ETA, simulator and export
+  agree.
+
 ### Performance
 
 Route calculation including TSS graph and smoothing stays under 1 s for

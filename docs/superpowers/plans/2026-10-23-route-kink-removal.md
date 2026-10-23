@@ -4,7 +4,7 @@
 
 **Goal:** Routes that follow OSM traffic separation schemes the right way, with MARNET's zig-zags straightened where land clearance allows, uncertain shortcuts offered to the user, and every stretch labelled with its provenance.
 
-**Architecture:** Two new offline importers build a land dataset (OSM land polygons, simplified, corridor-clipped) and a TSS dataset (OSM seamark ways, grouped into schemes). Package `route` loads both. The TSS changes the graph once at startup: it adds one-way lane edges and per-direction blocked edges. Smoothing runs per request after the search: greedy string-pulling over the found path, then a proposal pass. Each route returns proposals, stretches and warnings. REST, MCP and the UI pass these through unchanged.
+**Architecture:** All distances switch to rhumb lines (Mercator sailing). Two new offline importers build a land dataset (OSM land polygons, simplified, corridor-clipped) and a TSS dataset (OSM seamark ways, grouped into schemes). Package `route` loads both. The TSS changes the graph once at startup: it adds one-way lane edges and per-direction blocked edges. Smoothing runs per request after the search: greedy string-pulling over the found path, then a proposal pass. Each route returns proposals, stretches and warnings. REST, MCP and the UI pass these through unchanged.
 
 **Tech Stack:** Go 1.26 (stdlib only, no new modules), gin, Leaflet and vanilla JS, prebuilt Tailwind (`web/tailwind`).
 
@@ -19,6 +19,7 @@
 - `tss-unknown` radius: 20 NM from land, outside every OSM coverage area. Open sea for auto-smoothing means farther than 20 NM from land.
 - Flags, exact strings: `marnet`, `smoothed`, `user-accepted`, `osm-tss`, `tss-unknown`, `tss-unresolved`, `connector`. Severity: `tss-unresolved` = `warning`, `tss-unknown` = `info`, all others = `label`.
 - Proposals: never overlap; smoothing is not re-run after an accept; unknown IDs go to `ignored_accept`; an ID does not depend on clearance; accepting a `smoothed` ID is a no-op (not ignored).
+- Legs are rhumb lines everywhere: `route.Distance` becomes the rhumb-line distance; no great-circle tracks, no leg splitting.
 - Route calculation stays under 1 s for any route, including TSS and smoothing.
 - Land dataset: shipped gzip file ≤ 45 MB, load ≤ 5 s, heap after load ≤ 300 MB.
 - OSM/ODbL attribution wherever OSM-derived data is used or shown: "© OpenStreetMap contributors, ODbL".
@@ -35,25 +36,49 @@
 - **A\* stays admissible:** landmarks are computed on the relaxed symmetric graph: every MARNET edge, plus lane and join edges in both directions, ignoring all TSS blocks. Every request graph is a subset of it, so the bound holds.
 - **Snapping** only to MARNET nodes (index < `marnetNodes`), never to lane nodes.
 - **Smoothing:** greedy, deterministic, `maxSpan = 40` vertices. Skip a range when it contains a passage-tagged edge, a lane/join edge, an antimeridian edge (|Δlon| > 180), or connector edges.
-- **Densify:** smoothed and accepted segments longer than 20 NM get great-circle points every ≤ 20 NM in the output. Each piece is checked in a local equirectangular projection centred on the piece.
+- **A\* bound stays valid with rhumb weights:** R × chord ≤ great-circle arc ≤ rhumb distance, so the existing chord estimate never overestimates. Landmarks are rebuilt from rhumb weights automatically.
+- **Rhumb geometry:** a leg's land check runs in Mercator coordinates (x = lon, y = ln tan(π/4 + lat/2), in radians), where the leg is exactly straight. A Mercator gap converts to metres as `R × gap × cos(lat)` at the latitude of the closest point. A leg is one segment of any length; no densifying.
+- **Antimeridian:** a rhumb leg uses the shorter longitude difference (wrapped to ±180°). For the land check, a leg crossing ±180° is split at the meridian into two Mercator pieces.
 - **Proposal minimum:** `saved_nm ≥ 0.1`. Smoothed shortcuts only need to be shorter by more than 1 m.
 - **Proposal ID** = `k-` + the first 12 hex digits of sha256(`v1|<dataset version>|` + replaced vertex coordinates formatted `%.6f,%.6f;`). Dataset version = `<network sha256[:8]>/<land header date+tolerance>/<tss header osm_base>`.
 - **Stretch flag precedence** (per output edge): connector > user-accepted > smoothed > tss-unresolved > osm-tss > tss-unknown > marnet. `osm-tss` = a lane/join edge, or an edge whose midpoint lies in a scheme area of a scheme that is not lifted. `tss-unknown` = the midpoint or either end lies within 20 NM of land and outside every coverage area.
-- **Lifting order** (no route): see Task 5.
+- **Lifting order** (no route): see Task 6.
 - **API limits:** `accept` ≤ 200 IDs, each ≤ 32 chars, else HTTP 400.
 - `kinks: false` disables smoothing and proposals. Any `accept` IDs then go to `ignored_accept`.
 
 ## Review Focus
 
-1. **A route that starts or ends inside a scheme** (port inside Dover or Singapore Strait coverage). Expect a valid route. The connector is flagged `connector`, and there is no lifting unless the route is really disconnected. Test: `TestPortInsideScheme` (Task 5).
-2. **A via-point route** (3+ points). Smoothing works per leg, and no shortcut crosses a via-point. Test: `TestSmoothingPerLegKeepsViaPoints` (Task 6).
-3. **Accept IDs replayed after a clearance change.** The same ID still applies when the kink still classifies as a proposal; IDs that no longer come up go to `ignored_accept`, with no error. Test: `TestAcceptSurvivesClearanceChange` (Task 6).
-4. **Hostile `accept` input** (10k IDs, 1 MB strings, non-string entries). Expect HTTP 400 fast, not slow processing. Test: `TestWaypointsAcceptLimits` (Task 7).
-5. **A route across the antimeridian** (Pacific). No shortcut wraps the globe, and the totals match the drawn path. Test: `TestNoShortcutAcrossAntimeridian` (Task 6).
+1. **A route that starts or ends inside a scheme** (port inside Dover or Singapore Strait coverage). Expect a valid route. The connector is flagged `connector`, and there is no lifting unless the route is really disconnected. Test: `TestPortInsideScheme` (Task 6).
+2. **A via-point route** (3+ points). Smoothing works per leg, and no shortcut crosses a via-point. Test: `TestSmoothingPerLegKeepsViaPoints` (Task 7).
+3. **Accept IDs replayed after a clearance change.** The same ID still applies when the kink still classifies as a proposal; IDs that no longer come up go to `ignored_accept`, with no error. Test: `TestAcceptSurvivesClearanceChange` (Task 7).
+4. **Hostile `accept` input** (10k IDs, 1 MB strings, non-string entries). Expect HTTP 400 fast, not slow processing. Test: `TestWaypointsAcceptLimits` (Task 8).
+5. **A route across the antimeridian** (Pacific). No shortcut wraps the globe, and the totals match the drawn path. Test: `TestNoShortcutAcrossAntimeridian` (Task 7).
 
 ---
 
-### Task 1: Land dataset importer and measurement
+### Task 1: Rhumb-line distances everywhere
+
+**Files:**
+- Modify: `route/route.go` (`Distance`)
+- Test: `route/route_test.go`
+
+**Interfaces:**
+- Produces: `func Distance(a, b Position) float64`, the rhumb-line distance in metres (same name and signature, so every caller in `route`, `main.go` and `pasgen.go` switches at once). Also `func Mercator(p Position) [2]float64` returns (x, y) in radians, for Task 3.
+- Formula: Δφ = φ2−φ1; Δψ = ln(tan(π/4+φ2/2)/tan(π/4+φ1/2)); q = Δφ/Δψ, or cos φ1 when |Δψ| < 1e-12; Δλ wrapped to [−π, π]; d = R × √(Δφ² + q²Δλ²), with R = `earthRadiusM`.
+
+- [ ] **Step 1: Write failing tests.**
+  - `TestRhumbDistanceMeridian`: (0,0) to (0,1) equals 60.0 NM ± 0.1 (R × π/180).
+  - `TestRhumbDistanceParallel`: (0,60) to (1,60) equals 30.0 NM ± 0.1 (departure = Δλ cos φ).
+  - `TestRhumbLongerThanGreatCircle`: Rotterdam to Singapore direct, rhumb > haversine (keep the old formula as a test helper `haversine`).
+  - `TestRhumbAntimeridian`: (179.5, 10) to (−179.5, 10) is about 59 NM, not about 21,000 NM.
+  - `TestMercatorEquator`: `Mercator({0,0})` is (0,0).
+- [ ] **Step 2: Run** `go test ./route/ -run 'Rhumb|Mercator'` and expect FAIL.
+- [ ] **Step 3: Implement** `Distance` with the formula above, and `Mercator`. Update the `Distance` doc comment.
+- [ ] **Step 4: Run** `go test ./...` and expect PASS. `TestRouteDistances` has wide bounds and must still pass unchanged. Log Rotterdam–Singapore before and after in the commit body; the difference must be < 1 NM.
+- [ ] **Step 5: Fix the UI copy.** The A* explanation string in `web/static/script.js` (search "haversine") says "rhumb-line distance" instead.
+- [ ] **Step 6: Commit** `feat(route): rhumb-line distances for every leg`.
+
+### Task 2: Land dataset importer and measurement
 
 **Files:**
 - Create: `cmd/land-import/main.go`, `cmd/land-import/shp.go`, `cmd/land-import/main_test.go`
@@ -61,7 +86,7 @@
 - Modify: `dataset/README.md` (land section with source, licence, tolerance, measured size and load time)
 
 **Interfaces:**
-- Produces the file format read by Task 2:
+- Produces the file format read by Task 3:
   - Line 1 is magic `SRLAND1\n`.
   - Line 2 is a JSON header `{"source":"osm-land-polygons-split-4326","date":"YYYY-MM-DD","tolerance_m":<float>,"corridor_nm":30,"rings":<int>}` plus `\n`.
   - Then each ring: uvarint vertex count, then zigzag-varint deltas of lon and lat in units of 1e-6°. The first vertex is a delta from (0,0).
@@ -72,7 +97,7 @@
   - `TestReadShpPolygons` writes a 2-ring polygon shapefile (type 5) into `t.TempDir()` by hand and asserts the rings and vertices come back exactly.
   - `TestSimplifyKeepsWithinTolerance`: Douglas–Peucker in metres on a 1,000-vertex noisy coastline. Every removed vertex lies ≤ tolerance from the kept polyline, and the first and last vertices are kept.
   - `TestCorridorKeepsNearRings`: one ring 10 NM from a network node is kept; one ring 100 NM away is dropped.
-  - `TestEncodeRoundTrip` decodes its own output (copy the Task 2 decoder signature into the test as a helper) and gets coordinates back within 1e-6°.
+  - `TestEncodeRoundTrip` decodes its own output (copy the Task 3 decoder signature into the test as a helper) and gets coordinates back within 1e-6°.
 - [ ] **Step 2: Run** `go test ./cmd/land-import/` and expect FAIL (undefined functions).
 - [ ] **Step 3: Implement** in `shp.go`: `readShp(path string) ([][][2]float64, error)`, handling polygon type 5 only (each part is a ring). In `main.go`: `simplify(ring [][2]float64, tolM float64) [][2]float64`, `corridorCells(networkPath string, radiusNM float64) map[[2]int32]bool` (0.5° cells around MARNET vertices), and `encode(w io.Writer, hdr header, rings [][][2]float64) error`. Keep a ring if its bbox touches a marked cell. Drop rings left with fewer than 4 vertices after simplifying.
 - [ ] **Step 4: Run** `go test ./cmd/land-import/` and expect PASS.
@@ -80,39 +105,40 @@
   - Download `land-polygons-split-4326.zip` from osmdata.openstreetmap.de into a new empty scratchpad directory `land-src/`.
   - Run the importer with `-tolerance 50`. Record the file size and the ring and vertex counts.
   - If the file is > 45 MB gzipped, rerun at 100, then 200. If 200 still exceeds it, stop and report: the spec fallback is GSHHG full resolution and needs the owner.
-  - Load time and heap are measured in Task 2 Step 5.
+  - Load time and heap are measured in Task 3 Step 5.
 - [ ] **Step 6: Document** in `dataset/README.md`: source URL, download date, "© OpenStreetMap contributors, ODbL", tolerance, corridor 30 NM, size, and the exact command.
 - [ ] **Step 7: Commit** `cmd/land-import`, `dataset/land_osm.bin.gz` and `dataset/README.md` as `feat(data): OSM land polygons importer and corridor dataset`.
 
-### Task 2: Land index and clearance queries
+### Task 3: Land index and clearance queries
 
 **Files:**
 - Create: `route/geo.go`, `route/land.go`, `route/land_test.go`
 
 **Interfaces:**
-- Consumes: the Task 1 file format.
+- Consumes: the Task 2 file format.
 - Produces:
   - `type Land struct` (unexported fields: vertices, 0.25° grid of edge refs, `Tolerance float64` metres, `Version string`).
   - `func LoadLand(path string) (*Land, error)`
   - `func NewLand(rings [][]Position, toleranceM float64, version string) *Land` for synthetic tests.
-  - `func (l *Land) SegmentClearance(a, b Position, limitM float64) float64`: the smallest distance in metres from segment a–b to any land edge, capped at `limitM`. It returns 0 if they intersect. Segments longer than 20 NM are split along the great circle and each piece is checked in a local projection.
+  - `func (l *Land) SegmentClearance(a, b Position, limitM float64) float64`: the smallest distance in metres from segment a–b to any land edge, capped at `limitM`. It returns 0 if they intersect. The leg is checked as a straight line in Mercator coordinates (see Decisions: Rhumb geometry), at any length.
   - `func (l *Land) PointDistance(p Position, limitM float64) float64`
-- In `geo.go`: `type localProj struct`, `func newLocalProj(centre Position) localProj`, `func (p localProj) xy(q Position) [2]float64`, `func segSegDist(a, b, c, d [2]float64) float64`, `func greatCircleSplit(a, b Position, maxM float64) []Position` (includes both ends).
+- In `geo.go`: `func segSegDist(a, b, c, d [2]float64) (dist float64, closest [2]float64)` in Mercator units, plus `func splitAntimeridian(a, b Position) [][2]Position`. Uses `Mercator` from Task 1.
 
 - [ ] **Step 1: Write failing tests**, all with a synthetic 1°×1° square island at (0..1, 50..51):
   - `TestSegmentClearanceCrossing` expects a segment through the island to return 0.
   - `TestSegmentClearanceParallel` uses a segment along lat 51.05 from lon 0 to 1. Assert ≈ 0.05° of latitude in metres (5,560 m ± 20).
   - `TestSegmentClearanceCapped` uses a far segment with `limitM` 1,000 and asserts exactly 1,000.
   - `TestPointDistance` checks a point 2 NM east of the island to ± 20 m.
-  - `TestGreatCircleSplit`: a 100 NM segment gives ≥ 6 points, each piece ≤ 20 NM, and the ends equal the inputs.
-- [ ] **Step 2: Run** `go test ./route/ -run 'Clearance|PointDistance|GreatCircle'` and expect FAIL.
+  - `TestLongRhumbLegChecked`: a 600 NM leg along lat 50.5 from lon −10 to 5 crosses the island and returns 0; the same leg along lat 52 returns ≈ 1° of latitude in metres (± 200 m).
+  - `TestSplitAntimeridian`: (179, 0) to (−179, 1) gives two pieces meeting at lon ±180.
+- [ ] **Step 2: Run** `go test ./route/ -run 'Clearance|PointDistance|LongRhumb|SplitAntimeridian'` and expect FAIL.
 - [ ] **Step 3: Implement.** The grid keys are `[2]int32{floor(lon*4), floor(lat*4)}`. A query covers the cells of the bbox expanded by `limitM` (convert to degrees of longitude at the piece's latitude). `SegmentClearance` returns early once it finds 0.
 - [ ] **Step 4: Run** the same tests and expect PASS.
 - [ ] **Step 5: Real-data test.** `TestLoadRealLand` loads `../dataset/land_osm.bin.gz` and logs the load time and `runtime.MemStats.HeapAlloc`. It fails if the load takes > 5 s or the heap is > 300 MB. It also asserts that `PointDistance` of Dover harbour entrance (1.335, 51.115) is < 1 NM and of mid-Channel (1.6, 50.9) is > 5 NM. Add the measured numbers to `dataset/README.md`.
 - [ ] **Step 6: Run** `go test ./route/` and expect PASS (existing tests included).
 - [ ] **Step 7: Commit** `feat(route): land index with segment clearance queries`.
 
-### Task 3: TSS dataset importer and loader
+### Task 4: TSS dataset importer and loader
 
 **Files:**
 - Create: `cmd/tss-import/main.go`, `cmd/tss-import/main_test.go`
@@ -132,7 +158,7 @@
   - `func (t *TSS) InArea(p Position) (schemeIdx int, ok bool)`
   - `func (t *TSS) InCoverage(p Position) bool`
   - `func (t *TSS) SegmentTouchesArea(a, b Position) bool`
-  - `func (t *TSS) violations(path []Position, lifted map[string]bool) []string`: a test oracle. It lists each path segment that crosses a zone or line or runs against a lane by the Task 4 rule, as `"<scheme>: seg <i> <reason>"`.
+  - `func (t *TSS) violations(path []Position, lifted map[string]bool) []string`: a test oracle. It lists each path segment that crosses a zone or line or runs against a lane by the Task 5 rule, as `"<scheme>: seg <i> <reason>"`.
 
 - [ ] **Step 1: Write failing importer tests.**
   - `TestGroupSchemes`: two lane ways 1 NM apart plus one zone 100 NM away give 2 schemes, with IDs stable across input order.
@@ -150,14 +176,14 @@
 - [ ] **Step 8: Run** `go test ./route/ ./cmd/tss-import/` and expect PASS.
 - [ ] **Step 9: Commit** `feat(data): OSM traffic separation schemes importer and loader`.
 
-### Task 4: TSS-aware graph
+### Task 5: TSS-aware graph
 
 **Files:**
 - Modify: `route/route.go` (`Graph` fields, `New`, `Options`, `nearest`, `leg`), `route/search.go` (`search`), `route/estimate.go` (`allDistances` on the relaxed graph)
 - Create: `route/tssgraph.go`, `route/tssgraph_test.go`
 
 **Interfaces:**
-- Consumes: `*Land` (Task 2) and `*TSS` (Task 3).
+- Consumes: `*Land` (Task 3) and `*TSS` (Task 4).
 - Produces:
   - `type Datasets struct { Network, Land, TSS string }`. An empty `Land` or `TSS` path means that feature is off.
   - `func LoadAll(d Datasets) (*Graph, error)`. `Load(path)` stays and equals `LoadAll(Datasets{Network: path})`.
@@ -192,7 +218,7 @@
 - [ ] **Step 4: Run** `go test ./route/` and expect PASS. Log the TSS build time in `TestLoadAll` and assert < 10 s.
 - [ ] **Step 5: Commit** `feat(route): TSS-aware graph with one-way lanes and blocked crossings`.
 
-### Task 5: Lifting a scheme when TSS leaves no route
+### Task 6: Lifting a scheme when TSS leaves no route
 
 **Files:**
 - Modify: `route/route.go` (`Route`, `leg`, new `Route` fields), `route/tssgraph.go`
@@ -202,7 +228,7 @@
 - Produces:
   - `type Warning struct { Flag string `json:"flag"`; Scheme string `json:"scheme"`; Name string `json:"name"`; Message string `json:"message"` }`
   - The field `Route.Warnings []Warning` (`json:"warnings"`, never nil).
-  - `Leg` gains `lifted []bool` (unexported) so Task 6 can flag stretches.
+  - `Leg` gains `lifted []bool` (unexported) so Task 7 can flag stretches.
   - The message text: `"OSM scheme data inconsistent near <Name>, TSS rules lifted here; check the chart"`.
 - Algorithm per leg, when `search` fails with TSS on:
   1. Search forward from `s` over allowed edges to get the reachable set R_s with distances d_s. Search backward from `t` (follow `twin` reversed: from u, visit v where edge v→u is allowed) to get R_t with distances d_t.
@@ -221,7 +247,7 @@
 - [ ] **Step 4: Run** `go test ./route/` and expect PASS.
 - [ ] **Step 5: Commit** `feat(route): lift one scheme at a time when TSS data leaves no route`.
 
-### Task 6: Smoothing, proposals, accept and stretches
+### Task 7: Smoothing, proposals, accept and stretches
 
 **Files:**
 - Create: `route/smooth.go`, `route/smooth_test.go`
@@ -253,8 +279,7 @@
   3. Run the proposal pass on the result.
   4. Apply proposals whose ID is in `Accept`.
   5. Record the leftover IDs: those that are neither smoothed nor accepted go to `IgnoredAccept`.
-  6. Densify.
-  7. Compute stretches.
+  6. Compute stretches.
   - Greedy pass: for i, try j from min(i+40, last) down to i+2 and take the first match; then move to i=j, else i+1.
 
 - [ ] **Step 1: Write failing tests.** Synthetic tests use `NewWith` plus a synthetic `NewLand`:
@@ -273,6 +298,7 @@
   - `TestProposalsDoNotOverlap`
   - `TestKinksOffNoChanges`: `Kinks=false` gives the same path as the TSS-only route, no proposals, and all `Accept` IDs ignored.
   - `TestSmoothingPerLegKeepsViaPoints` (Review Focus 2): a 3-point route whose path still contains the snapped via node.
+  - `TestLongLegIsOneSegment`: an open-ocean zig-zag 300 NM long becomes exactly 2 path vertices, and its distance equals `Distance(a, b)`.
   - `TestNoShortcutAcrossAntimeridian` (Review Focus 5): real graph, Yokohama (139.65, 35.45) to Los Angeles (−118.27, 33.73). The output path has no segment with |Δlon| > 180 other than the original MARNET ones, and `DistanceM` equals the path sum (± 1 m).
   - `TestRealKinksReduced`: for Rotterdam–Singapore and Southampton (−1.40, 50.89) to Hamburg (9.97, 53.54) with `Kinks` on, the count of vertices with local detour > 3 % is ≤ half the `NoTSS` baseline. The distance is ≤ the TSS-only distance. The passages equal the TSS-only passages. Every `smoothed` stretch has a land clearance ≥ 2 NM by an independent `SegmentClearance` check.
   - `TestNarrowPassagesSafe` covers Rotterdam→Gdynia via Kiel and Marmara (28.98, 40.98) to the Black Sea (29.15, 41.30) via the Bosporus, with kinks on:
@@ -286,7 +312,7 @@
 - [ ] **Step 4: Run** `go test ./route/` and expect PASS. Run `go test -bench . ./route/` and paste the timings in the commit body.
 - [ ] **Step 5: Commit** `feat(route): kink removal with proposals, accept IDs and provenance stretches`.
 
-### Task 7: Startup wiring, REST API and TSS layer
+### Task 8: Startup wiring, REST API and TSS layer
 
 **Files:**
 - Modify: `main.go` (`App` load via `route.LoadAll`, `WaypointRequest`, `/waypoints` handler, layer map entry `"tss"`), `pasgen.go` (`FeatureProperties`, `WaypointItem`, `generateOutput`)
@@ -295,7 +321,7 @@
 
 **Interfaces:**
 - Consumes: `route.LoadAll(route.Datasets{Network: "dataset/marnet_plus_5km.geojson", Land: "dataset/land_osm.bin.gz", TSS: "dataset/tss_osm.geojson.gz"})`. If either optional file is missing, log a warning and continue with that feature off; the API still works.
-- Produces: the REST contract used by Task 9.
+- Produces: the REST contract used by Task 10.
   - `WaypointRequest` gains `Kinks *bool` (`json:"kinks,omitempty"`), `ClearanceNM *float64` (`json:"clearance_nm,omitempty"`) and `Accept []string` (`json:"accept,omitempty"`).
   - `FeatureProperties` gains `Kinks bool` (`json:"kinks"`), `ClearanceNM float64` (`json:"clearance_nm"`), `Proposals []route.Proposal` (`json:"proposals"`), `Stretches []route.Stretch` (`json:"stretches"`), `Warnings []route.Warning` (`json:"warnings"`) and `IgnoredAccept []string` (`json:"ignored_accept"`).
   - `WaypointItem` gains `Flag string` (`json:"flag"`): the flag of the stretch that arrives at the vertex; the origin gets `connector`.
@@ -320,14 +346,14 @@
   - The Dockerfile already copies `dataset/`; confirm `.dockerignore` does not exclude `*.bin.gz` or `*.geojson.gz`.
 - [ ] **Step 6: Commit** `feat(api): kinks, clearance and accept on /waypoints; TSS layer`.
 
-### Task 8: MCP tools
+### Task 9: MCP tools
 
 **Files:**
 - Modify: `mcpserver/mcpserver.go`
 - Test: `mcpserver/mcpserver_test.go`
 
 **Interfaces:**
-- Consumes: the `route.Options` fields from Task 6.
+- Consumes: the `route.Options` fields from Task 7.
 - Produces:
   - `distanceIn` and `routeIn` gain the following, with jsonschema text stating the defaults:
     - `Kinks *bool` (`json:"kinks,omitempty"`)
@@ -350,14 +376,14 @@
 - [ ] **Step 4: Run** `go test ./...` and expect PASS.
 - [ ] **Step 5: Commit** `feat(mcp): kinks, clearance and accept on route and distance_to_go`.
 
-### Task 9: UI
+### Task 10: UI
 
 **Files:**
 - Modify: `web/templates/page/home.gohtml` (route panel controls, proposals list, warnings banner, TSS layer toggle), `web/static/script.js` (request fields, rendering, accept flow, CSV flag column, TSS overlay), `web/templates/page/about.gohtml` (Limitations, ODbL credit)
 - Rebuild: `web/static/tailwind.css` (`cd web/tailwind && npm ci && npm run build`)
 
 **Interfaces:**
-- Consumes: the Task 7 REST contract.
+- Consumes: the Task 8 REST contract.
 
 - [ ] **Step 1: Run the UI skills**: `impeccable`, `ui-ux-pro-max`, `redesign-existing-projects`, `high-end-visual-design`. Follow the existing ECDIS panel style (`avoid-pill`, `surface-container` tokens, mono 10px labels).
 - [ ] **Step 2: Route panel.**
@@ -384,12 +410,13 @@
   - Check these routes:
     - Rotterdam→Bilbao (Dover `osm-tss`, kinks gone);
     - one route with a proposal (accept it and watch the distance change);
+    - one long open-ocean route: the straightened legs are single straight lines on the map;
     - Chesapeake→New York (`tss-unknown` note).
   - The console must show no CSP violations or JS errors.
   - The simulator, ETA and CSV must match the drawn path.
 - [ ] **Step 8: Commit** `feat(ui): kink removal controls, proposals, TSS overlay and limitations`.
 
-### Task 10: Finish
+### Task 11: Finish
 
 - [ ] **Step 1:** Run `go vet ./... && go test ./...` and expect PASS. Then run `codegraph sync` (or `codegraph init` if the index is stale).
 - [ ] **Step 2:** Update the Basic Memory note `projects/seaRoute.md`:
