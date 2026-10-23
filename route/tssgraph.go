@@ -532,3 +532,75 @@ func segmentsHash(segs []Segment) string {
 	}
 	return hex.EncodeToString(h.Sum(nil))[:8]
 }
+
+// reach runs Dijkstra from src over edges that open allows and returns the
+// distance to every node (+Inf when unreached). With rev set it runs backward:
+// from u it visits each v that has an open edge v -> u.
+func (g *Graph) reach(src int32, rev bool, blocked, lifted []bool) []float64 {
+	dist := make([]float64, len(g.nodes))
+	for i := range dist {
+		dist[i] = math.Inf(1)
+	}
+	dist[src] = 0
+	q := &queue{{node: src}}
+	for q.Len() > 0 {
+		it := heap.Pop(q).(queueItem)
+		v := it.node
+		if it.g > dist[v] {
+			continue
+		}
+		for e := g.first[v]; e < g.first[v+1]; e++ {
+			use := e
+			if rev {
+				use = g.twin[e]
+			}
+			if !g.open(use, blocked, lifted, false) {
+				continue
+			}
+			u := g.to[e]
+			if d := dist[v] + g.weight[use]; d < dist[u] {
+				dist[u] = d
+				heap.Push(q, queueItem{node: u, g: d, f: d})
+			}
+		}
+	}
+	return dist
+}
+
+// liftFor picks the scheme to lift when s cannot reach t. The candidates are
+// edges that are closed only by an unlifted scheme's TSS rules. It prefers the
+// cheapest candidate that links what s reaches to what reaches t; if none
+// does, the one that enters the set reaching t closest to t. Ties go to the
+// lower scheme ID. ok is false when no candidate exists.
+func (g *Graph) liftFor(s, t int32, blocked, lifted []bool) (int32, bool) {
+	ds := g.reach(s, false, blocked, lifted)
+	dt := g.reach(t, true, blocked, lifted)
+	best, bestCost, linked := int32(-1), math.Inf(1), false
+	better := func(k int32, cost float64) bool {
+		if cost != bestCost {
+			return cost < bestCost
+		}
+		return best < 0 || g.tss.Schemes[k].ID < g.tss.Schemes[best].ID
+	}
+	for v := range g.nodes {
+		for e := g.first[v]; e < g.first[v+1]; e++ {
+			k := g.scheme[e]
+			if g.flags[e]&(edgeWrongWay|edgeTSSBlocked) != edgeTSSBlocked || blocked[g.pass[e]] || k < 0 || (lifted != nil && lifted[k]) {
+				continue
+			}
+			u := g.to[e]
+			if math.IsInf(dt[u], 1) {
+				continue
+			}
+			if !math.IsInf(ds[v], 1) {
+				cost := ds[v] + g.weight[e] + dt[u]
+				if !linked || better(k, cost) {
+					best, bestCost, linked = k, cost, true
+				}
+			} else if !linked && math.IsInf(dt[v], 1) && better(k, dt[u]) {
+				best, bestCost = k, dt[u]
+			}
+		}
+	}
+	return best, best >= 0
+}

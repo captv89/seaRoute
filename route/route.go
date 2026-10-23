@@ -86,6 +86,20 @@ type Leg struct {
 	NetworkM float64 `json:"network_m"`
 	// Passages are the tagged canals and straits the leg uses, in order.
 	Passages []string `json:"passages"`
+
+	// lifted is the set of schemes whose TSS rules were lifted on this leg
+	// (indexed by scheme, nil when none); liftOrder lists them in the order
+	// they were lifted.
+	lifted    []bool
+	liftOrder []int32
+}
+
+// Warning tells the caller that a route may break a rule.
+type Warning struct {
+	Flag    string `json:"flag"`
+	Scheme  string `json:"scheme"`
+	Name    string `json:"name"`
+	Message string `json:"message"`
 }
 
 // Route is a sequence of legs through the requested points.
@@ -94,6 +108,8 @@ type Route struct {
 	Path      []Position `json:"path"`
 	DistanceM float64    `json:"distance_m"`
 	Passages  []string   `json:"passages"`
+	// Warnings has one entry per scheme whose rules were lifted on any leg.
+	Warnings []Warning `json:"warnings"`
 }
 
 // DistanceNM returns the total distance in nautical miles.
@@ -411,7 +427,7 @@ func (g *Graph) Route(points []Position, opts Options) (Route, error) {
 	if err != nil {
 		return Route{}, err
 	}
-	var lifted []bool // Task 6 lifts schemes when TSS data leaves no route
+	var lifted []bool // snapping never lifts schemes; each leg lifts its own
 
 	snapped := make([]int32, len(points))
 	for i, p := range points {
@@ -422,7 +438,8 @@ func (g *Graph) Route(points []Position, opts Options) (Route, error) {
 		snapped[i] = v
 	}
 
-	var r Route
+	r := Route{Warnings: []Warning{}}
+	warned := map[int32]bool{}
 	for i := 0; i+1 < len(points); i++ {
 		from, to := points[i], points[i+1]
 		if i > 0 {
@@ -431,11 +448,23 @@ func (g *Graph) Route(points []Position, opts Options) (Route, error) {
 		if i+2 < len(points) {
 			to = g.nodes[snapped[i+1]]
 		}
-		leg, err := g.leg(from, to, snapped[i], snapped[i+1], blocked, lifted, opts.NoTSS, opts.Algorithm)
+		leg, err := g.leg(from, to, snapped[i], snapped[i+1], blocked, opts.NoTSS, opts.Algorithm)
 		if err != nil {
 			return Route{}, fmt.Errorf("leg %d: %w", i+1, err)
 		}
 		r.Legs = append(r.Legs, leg)
+		for _, k := range leg.liftOrder {
+			if !warned[k] {
+				warned[k] = true
+				sc := &g.tss.Schemes[k]
+				r.Warnings = append(r.Warnings, Warning{
+					Flag:    "tss-unresolved",
+					Scheme:  sc.ID,
+					Name:    sc.Name,
+					Message: fmt.Sprintf("OSM scheme data inconsistent near %s, TSS rules lifted here; check the chart", sc.Name),
+				})
+			}
+		}
 		r.DistanceM += leg.DistanceM
 		if i == 0 {
 			r.Path = append(r.Path, leg.Path...)
@@ -512,12 +541,28 @@ func (g *Graph) hasOpenEdge(v int32, blocked, lifted []bool, noTSS bool) bool {
 	return false
 }
 
-func (g *Graph) leg(from, to Position, s, t int32, blocked, lifted []bool, noTSS bool, alg Algorithm) (Leg, error) {
+// leg routes s -> t. When TSS leaves no path it lifts one scheme at a time
+// (see liftFor) and searches again, until a path exists or nothing is left to lift.
+func (g *Graph) leg(from, to Position, s, t int32, blocked []bool, noTSS bool, alg Algorithm) (Leg, error) {
+	var lifted []bool
+	var order []int32
 	nodes, edges, networkM, ok := g.search(s, t, blocked, lifted, noTSS, alg)
+	for !ok && !noTSS && g.tss != nil {
+		k, found := g.liftFor(s, t, blocked, lifted)
+		if !found {
+			break
+		}
+		if lifted == nil {
+			lifted = make([]bool, len(g.tss.Schemes))
+		}
+		lifted[k] = true
+		order = append(order, k)
+		nodes, edges, networkM, ok = g.search(s, t, blocked, lifted, noTSS, alg)
+	}
 	if !ok {
 		return Leg{}, errors.New("no path on the network with these passages avoided")
 	}
-	leg := Leg{From: from, To: to, NetworkM: networkM, Passages: []string{}}
+	leg := Leg{From: from, To: to, NetworkM: networkM, Passages: []string{}, lifted: lifted, liftOrder: order}
 	leg.Path = []Position{from}
 	for _, v := range nodes {
 		if p := g.nodes[v]; p != leg.Path[len(leg.Path)-1] {

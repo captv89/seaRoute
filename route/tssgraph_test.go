@@ -323,3 +323,85 @@ func BenchmarkAStarLongTSS(b *testing.B) {
 		}
 	}
 }
+
+// chain is one channel along lat 0 with nodes every 0.1 degrees up to lon 0.5.
+func chain() []Segment {
+	var segs []Segment
+	for i := range 5 {
+		segs = append(segs, Segment{A: Position{float64(i) * 0.1, 0}, B: Position{float64(i+1) * 0.1, 0}})
+	}
+	return segs
+}
+
+func warnedSchemes(r Route) []string {
+	var ids []string
+	for _, w := range r.Warnings {
+		ids = append(ids, w.Scheme)
+	}
+	return ids
+}
+
+func TestReversedLaneLifts(t *testing.T) {
+	// The lane is drawn west, but the only channel is routed east.
+	lane := TSSFeature{Type: "lane", Scheme: "tss-rev", Name: "Reversed", OSMID: 1, Coords: []Position{{0.35, 0.002}, {0.15, 0.002}}}
+	tss := NewTSS([]TSSFeature{lane}, "v")
+	g := NewWith(chain(), nil, tss)
+	r := routeOn(t, g, Options{}, Position{0, 0}, Position{0.5, 0})
+	if len(r.Warnings) != 1 {
+		t.Fatalf("warnings = %+v, want 1", r.Warnings)
+	}
+	w := r.Warnings[0]
+	want := "OSM scheme data inconsistent near Reversed, TSS rules lifted here; check the chart"
+	if w.Flag != "tss-unresolved" || w.Scheme != "tss-rev" || w.Name != "Reversed" || w.Message != want {
+		t.Errorf("warning = %+v", w)
+	}
+	// The opposite direction follows the lane and needs no lift.
+	back := routeOn(t, g, Options{}, Position{0.5, 0}, Position{0, 0})
+	if len(back.Warnings) != 0 || back.Warnings == nil {
+		t.Errorf("westbound warnings = %#v, want empty non-nil", back.Warnings)
+	}
+}
+
+func TestZoneOnlyPathLifts(t *testing.T) {
+	zone := TSSFeature{Type: "zone", Scheme: "tss-zone", Name: "Zone", OSMID: 1, Coords: square(0.3, 0, 0.02)}
+	tss := NewTSS([]TSSFeature{zone}, "v")
+	g := NewWith(chain(), nil, tss)
+	r := routeOn(t, g, Options{}, Position{0, 0}, Position{0.5, 0})
+	if got := warnedSchemes(r); len(got) != 1 || got[0] != "tss-zone" {
+		t.Fatalf("warned schemes = %v, want [tss-zone]", got)
+	}
+	if v := tss.violations(r.Path, map[string]bool{"tss-zone": true}); len(v) > 0 {
+		t.Errorf("violations with the zone lifted: %v", v)
+	}
+	if v := tss.violations(r.Path, nil); len(v) == 0 {
+		t.Error("expected the route to cross the zone")
+	}
+}
+
+func TestLiftOnlyResponsibleScheme(t *testing.T) {
+	// An eastbound lane the route follows, then a zone that blocks the channel.
+	lane := TSSFeature{Type: "lane", Scheme: "tss-ok", OSMID: 1, Coords: []Position{{0.05, 0.002}, {0.15, 0.002}}}
+	zone := TSSFeature{Type: "zone", Scheme: "tss-bad", OSMID: 2, Coords: square(0.3, 0, 0.02)}
+	tss := NewTSS([]TSSFeature{lane, zone}, "v")
+	g := NewWith(chain(), nil, tss)
+	r := routeOn(t, g, Options{}, Position{0, 0}, Position{0.5, 0})
+	if got := warnedSchemes(r); len(got) != 1 || got[0] != "tss-bad" {
+		t.Fatalf("warned schemes = %v, want [tss-bad]", got)
+	}
+	if v := tss.violations(r.Path, map[string]bool{"tss-bad": true}); len(v) > 0 {
+		t.Errorf("violations outside the lifted scheme: %v", v)
+	}
+	for k, sc := range tss.Schemes {
+		if l := r.Legs[0].lifted; len(l) != 2 || l[k] != (sc.ID == "tss-bad") {
+			t.Errorf("leg lifted = %v, want only tss-bad", l)
+		}
+	}
+}
+
+func TestPortInsideScheme(t *testing.T) {
+	g := testTSSGraph(t)
+	r := routeOn(t, g, Options{}, Position{1.45, 51.0}, rotterdam)
+	if len(r.Warnings) != 0 {
+		t.Errorf("warnings = %+v, want none", r.Warnings)
+	}
+}
