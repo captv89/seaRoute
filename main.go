@@ -57,16 +57,8 @@ type WaypointRequest struct {
 	Accept []string `json:"accept,omitempty"`
 }
 
-// API limits for the kink-removal fields.
-const (
-	defaultClearanceNM = 2.0
-	minClearanceNM     = 0.5
-	maxClearanceNM     = 10.0
-	maxAcceptIDs       = 200
-	maxAcceptIDLen     = 32
-	// maxWaypointsBody caps the /waypoints body; 200 IDs of 32 chars is under 10 KB.
-	maxWaypointsBody = 64 << 10
-)
+// maxWaypointsBody caps the /waypoints body; 200 IDs of 32 chars is under 10 KB.
+const maxWaypointsBody = 64 << 10
 
 // Rate limiting state
 var (
@@ -420,23 +412,13 @@ func setupRoutes(router *gin.Engine, app *App) {
 		}
 
 		kinks := req.Kinks == nil || *req.Kinks
-		clearance := defaultClearanceNM
+		clearance := route.DefaultClearanceNM
 		if req.ClearanceNM != nil {
 			clearance = *req.ClearanceNM
 		}
-		if clearance < minClearanceNM || clearance > maxClearanceNM {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "clearance_nm must be between 0.5 and 10"})
+		if err := route.CheckKinkOptions(clearance, req.Accept); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 			return
-		}
-		if len(req.Accept) > maxAcceptIDs {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "too many accept IDs (max 200)"})
-			return
-		}
-		for _, id := range req.Accept {
-			if len(id) > maxAcceptIDLen {
-				c.JSON(http.StatusBadRequest, gin.H{"error": "accept ID too long (max 32 characters)"})
-				return
-			}
 		}
 
 		originCoords, fromName, err := resolvePoint(req.From, req.FromPort, app)
@@ -510,7 +492,7 @@ func calculatePassageInfo(originCoords, destinationCoords route.Position, routeN
 
 	clearance := opts.ClearanceNM
 	if clearance == 0 {
-		clearance = defaultClearanceNM
+		clearance = route.DefaultClearanceNM
 	}
 	return generateOutput(r, opts.Kinks, clearance, originCoords, destinationCoords, totalDistance, distToFirstWp, distFromLastWp, networkDistance, routeName, r.Passages), nil
 }

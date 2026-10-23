@@ -33,19 +33,38 @@ type distanceIn struct {
 	From Point `json:"from" jsonschema:"ship position"`
 	To   Point `json:"to" jsonschema:"destination"`
 	Passages
-	IncludePath bool `json:"include_path,omitempty" jsonschema:"return the route geometry as [lon, lat] pairs"`
+	IncludePath bool     `json:"include_path,omitempty" jsonschema:"return the route geometry as [lon, lat] pairs"`
+	Kinks       *bool    `json:"kinks,omitempty" jsonschema:"remove kinks: smooth the route and list proposals; default true"`
+	ClearanceNM *float64 `json:"clearance_nm,omitempty" jsonschema:"land clearance in nautical miles, 0.5 to 10; default 2"`
+	Accept      []string `json:"accept,omitempty" jsonschema:"proposal IDs to apply, at most 200; proposals are never applied unless listed here"`
 }
 
 type distanceOut struct {
-	DistanceNM float64          `json:"distance_nm" jsonschema:"sea distance in nautical miles, rounded to 0.1"`
-	Passages   []string         `json:"passages" jsonschema:"tagged canals and straits on the route, in order"`
-	Path       []route.Position `json:"path,omitempty" jsonschema:"route geometry as [lon, lat] pairs, when include_path is set"`
+	DistanceNM    float64          `json:"distance_nm" jsonschema:"sea distance in nautical miles, rounded to 0.1"`
+	Passages      []string         `json:"passages" jsonschema:"tagged canals and straits on the route, in order"`
+	Path          []route.Position `json:"path,omitempty" jsonschema:"route geometry as [lon, lat] pairs, when include_path is set"`
+	Proposals     []proposalOut    `json:"proposals" jsonschema:"kink shortcuts not applied; pass their id in accept to apply"`
+	Warnings      []route.Warning  `json:"warnings" jsonschema:"traffic schemes whose rules the route lifts"`
+	IgnoredAccept []string         `json:"ignored_accept" jsonschema:"accept IDs that matched no proposal on this route"`
+	Stretches     []route.Stretch  `json:"stretches,omitempty" jsonschema:"provenance of runs of path, when include_path is set"`
+}
+
+// proposalOut is a route.Proposal; Path is set only with include_path.
+type proposalOut struct {
+	ID             string           `json:"id"`
+	Reason         string           `json:"reason"`
+	MinClearanceNM float64          `json:"min_clearance_nm"`
+	SavedNM        float64          `json:"saved_nm"`
+	Path           []route.Position `json:"path,omitempty"`
 }
 
 type routeIn struct {
 	Points []Point `json:"points" jsonschema:"start, optional via-points, end"`
 	Passages
-	IncludePath bool `json:"include_path,omitempty" jsonschema:"return the route geometry as [lon, lat] pairs"`
+	IncludePath bool     `json:"include_path,omitempty" jsonschema:"return the route geometry as [lon, lat] pairs"`
+	Kinks       *bool    `json:"kinks,omitempty" jsonschema:"remove kinks: smooth the route and list proposals; default true"`
+	ClearanceNM *float64 `json:"clearance_nm,omitempty" jsonschema:"land clearance in nautical miles, 0.5 to 10; default 2"`
+	Accept      []string `json:"accept,omitempty" jsonschema:"proposal IDs to apply, at most 200; proposals are never applied unless listed here"`
 }
 
 type legOut struct {
@@ -54,10 +73,14 @@ type legOut struct {
 }
 
 type routeOut struct {
-	DistanceNM float64          `json:"distance_nm"`
-	Passages   []string         `json:"passages"`
-	Legs       []legOut         `json:"legs"`
-	Path       []route.Position `json:"path,omitempty"`
+	DistanceNM    float64          `json:"distance_nm"`
+	Passages      []string         `json:"passages"`
+	Legs          []legOut         `json:"legs"`
+	Path          []route.Position `json:"path,omitempty"`
+	Proposals     []proposalOut    `json:"proposals" jsonschema:"kink shortcuts not applied; pass their id in accept to apply"`
+	Warnings      []route.Warning  `json:"warnings" jsonschema:"traffic schemes whose rules the route lifts"`
+	IgnoredAccept []string         `json:"ignored_accept" jsonschema:"accept IDs that matched no proposal on this route"`
+	Stretches     []route.Stretch  `json:"stretches,omitempty"`
 }
 
 type passagesOut struct {
@@ -74,7 +97,7 @@ func New(g *route.Graph, ports PortFinder) *mcp.Server {
 
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "distance_to_go",
-		Description: "Sea distance in nautical miles from a position to a destination along the shipping network (Eurostat MARNET).",
+		Description: "Sea distance in nautical miles from a position to a destination along the shipping network (Eurostat MARNET). Distances are TSS-aware. Kinks are smoothed with a land clearance; further shortcuts come back as proposals, which are never applied unless their IDs are passed in accept.",
 		Annotations: readOnly,
 	}, func(_ context.Context, _ *mcp.CallToolRequest, in distanceIn) (*mcp.CallToolResult, distanceOut, error) {
 		from, err := resolve(in.From)
@@ -85,20 +108,29 @@ func New(g *route.Graph, ports PortFinder) *mcp.Server {
 		if err != nil {
 			return nil, distanceOut{}, fmt.Errorf("to: %w", err)
 		}
-		r, err := g.Route([]route.Position{from, to}, route.Options{Avoid: in.Avoid, Allow: in.Allow})
+		opts, err := kinkOptions(in.Passages, in.Kinks, in.ClearanceNM, in.Accept)
 		if err != nil {
 			return nil, distanceOut{}, err
 		}
-		out := distanceOut{DistanceNM: round1(r.DistanceNM()), Passages: r.Passages}
+		r, err := g.Route([]route.Position{from, to}, opts)
+		if err != nil {
+			return nil, distanceOut{}, err
+		}
+		out := distanceOut{
+			DistanceNM: round1(r.DistanceNM()), Passages: r.Passages,
+			Proposals: proposalsOut(r.Proposals, in.IncludePath),
+			Warnings:  orEmpty(r.Warnings), IgnoredAccept: orEmpty(r.IgnoredAccept),
+		}
 		if in.IncludePath {
 			out.Path = r.Path
+			out.Stretches = r.Stretches
 		}
 		return nil, out, nil
 	})
 
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "route",
-		Description: "Shortest sea route through two or more points, in order, along the shipping network. Returns total and per-leg distance in nautical miles and the canals and straits used.",
+		Description: "Shortest sea route through two or more points, in order, along the shipping network. Returns total and per-leg distance in nautical miles and the canals and straits used. Distances are TSS-aware. Kink proposals are never applied unless their IDs are passed in accept.",
 		Annotations: readOnly,
 	}, func(_ context.Context, _ *mcp.CallToolRequest, in routeIn) (*mcp.CallToolResult, routeOut, error) {
 		if len(in.Points) < 2 {
@@ -112,16 +144,25 @@ func New(g *route.Graph, ports PortFinder) *mcp.Server {
 			}
 			pts[i] = pos
 		}
-		r, err := g.Route(pts, route.Options{Avoid: in.Avoid, Allow: in.Allow})
+		opts, err := kinkOptions(in.Passages, in.Kinks, in.ClearanceNM, in.Accept)
 		if err != nil {
 			return nil, routeOut{}, err
 		}
-		out := routeOut{DistanceNM: round1(r.DistanceNM()), Passages: r.Passages}
+		r, err := g.Route(pts, opts)
+		if err != nil {
+			return nil, routeOut{}, err
+		}
+		out := routeOut{
+			DistanceNM: round1(r.DistanceNM()), Passages: r.Passages,
+			Proposals: proposalsOut(r.Proposals, in.IncludePath),
+			Warnings:  orEmpty(r.Warnings), IgnoredAccept: orEmpty(r.IgnoredAccept),
+		}
 		for _, l := range r.Legs {
 			out.Legs = append(out.Legs, legOut{DistanceNM: round1(l.DistanceM / route.MetresPerNM), Passages: l.Passages})
 		}
 		if in.IncludePath {
 			out.Path = r.Path
+			out.Stretches = r.Stretches
 		}
 		return nil, out, nil
 	})
@@ -133,6 +174,44 @@ func New(g *route.Graph, ports PortFinder) *mcp.Server {
 	}, func(context.Context, *mcp.CallToolRequest, struct{}) (*mcp.CallToolResult, passagesOut, error) {
 		return nil, passagesOut{Passages: g.Passages(), ClosedByDefault: route.ClosedByDefault}, nil
 	})
+	return s
+}
+
+// kinkOptions applies the REST defaults (kinks on, clearance 2 NM) and checks
+// the limits shared with REST.
+func kinkOptions(p Passages, kinks *bool, clearance *float64, accept []string) (route.Options, error) {
+	c := route.DefaultClearanceNM
+	if clearance != nil {
+		c = *clearance
+	}
+	if err := route.CheckKinkOptions(c, accept); err != nil {
+		return route.Options{}, err
+	}
+	return route.Options{
+		Avoid: p.Avoid, Allow: p.Allow,
+		Kinks:       kinks == nil || *kinks,
+		ClearanceNM: c,
+		Accept:      accept,
+	}, nil
+}
+
+// proposalsOut converts proposals, keeping their paths only when withPath is set.
+func proposalsOut(ps []route.Proposal, withPath bool) []proposalOut {
+	out := make([]proposalOut, 0, len(ps))
+	for _, p := range ps {
+		po := proposalOut{ID: p.ID, Reason: p.Reason, MinClearanceNM: p.MinClearanceNM, SavedNM: p.SavedNM}
+		if withPath {
+			po.Path = p.Path
+		}
+		out = append(out, po)
+	}
+	return out
+}
+
+func orEmpty[T any](s []T) []T {
+	if s == nil {
+		return []T{}
+	}
 	return s
 }
 
