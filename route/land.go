@@ -248,6 +248,56 @@ func (l *Land) SegmentClearance(a, b Position, limitM float64) float64 {
 	return best
 }
 
+// Within reports whether any land edge lies within rM metres of p. It looks at
+// the cells around p nearest first and stops at the first edge in range, so it
+// is cheap near coasts, where PointDistance would measure every edge nearby.
+func (l *Land) Within(p Position, rM float64) bool {
+	const rad = math.Pi / 180
+	m := Mercator(p)
+	ey := rM/(earthRadiusM*rad) + landSampleStepDeg*1.5
+	ex := rM/(earthRadiusM*rad*math.Max(0.01, math.Cos((math.Min(89, math.Abs(p[1]))+ey)*rad))) + landSampleStepDeg*1.5
+	ex = math.Min(ex, 360)
+	cx0, cx1 := int32(math.Floor((p[0]-ex)*landCellsPerDeg)), int32(math.Floor((p[0]+ex)*landCellsPerDeg))
+	cy0, cy1 := int32(math.Floor((p[1]-ey)*landCellsPerDeg)), int32(math.Floor((p[1]+ey)*landCellsPerDeg))
+	px, py := int32(math.Floor(p[0]*landCellsPerDeg)), int32(math.Floor(p[1]*landCellsPerDeg))
+	// Cheap equirectangular pre-test in degrees (scaled by cos lat at p, with
+	// slack for the scale change across the cells) so most edges skip the
+	// Mercator maths.
+	cosP := math.Cos(p[1] * rad)
+	reach := 1.25 * rM / (earthRadiusM * rad)
+	for r := int32(0); r <= max(px-cx0, cx1-px, py-cy0, cy1-py); r++ {
+		for cx := max(px-r, cx0); cx <= min(px+r, cx1); cx++ {
+			for cy := max(py-r, cy0); cy <= min(py+r, cy1); cy++ {
+				if max(abs32(cx-px), abs32(cy-py)) != r {
+					continue
+				}
+				c, ok := l.cells[cellKey(cx, cy)]
+				if !ok {
+					continue
+				}
+				for _, e := range l.refs[c.off : c.off+c.n] {
+					ax, ay := (float64(l.vx[e])/landMicro-p[0])*cosP, float64(l.vy[e])/landMicro-p[1]
+					bx, by := (float64(l.vx[e+1])/landMicro-p[0])*cosP, float64(l.vy[e+1])/landMicro-p[1]
+					if q := closestOnSeg([2]float64{}, [2]float64{ax, ay}, [2]float64{bx, by}); q[0]*q[0]+q[1]*q[1] > reach*reach {
+						continue
+					}
+					if l.edgeClearance(m, m, e) < rM {
+						return true
+					}
+				}
+			}
+		}
+	}
+	return false
+}
+
+func abs32(v int32) int32 {
+	if v < 0 {
+		return -v
+	}
+	return v
+}
+
 func (l *Land) pieceClearance(a, b Position, limit float64) float64 {
 	ma, mb := Mercator(a), Mercator(b)
 	const rad = math.Pi / 180

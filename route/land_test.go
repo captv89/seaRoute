@@ -99,3 +99,15 @@ func TestLoadRealLand(t *testing.T) {
 	}
 	runtime.KeepAlive(l)
 }
+
+func TestWithinMatchesPointDistance(t *testing.T) {
+	l := island()
+	for lon := -1.0; lon <= 2.0; lon += 0.07 {
+		for lat := 49.0; lat <= 52.0; lat += 0.07 {
+			p := Position{lon, lat}
+			if got, want := l.Within(p, 20*1852), l.PointDistance(p, 20*1852) < 20*1852; got != want {
+				t.Fatalf("%v: Within %v, PointDistance says %v", p, got, want)
+			}
+		}
+	}
+}
