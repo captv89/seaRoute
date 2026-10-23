@@ -154,9 +154,31 @@ cd web/tailwind && npm ci && npm run build
 | `/ports` | `GET` | Query commercial seaport database with UN/LOCODEs |
 | `/passages` | `GET` | List available choke-point passages and routing graph stats |
 | `/network` | `GET` | Stream raw Marnet navigation graph GeoJSON (gzip when accepted) |
-| `/layers/:name` | `GET` | Serve gzip-compressed tactical GIS overlays (`baseline`, `eez`, `piracy`, `seaports`, `eca-sox`, `eca-nox`, `boundaries`, `fao`) |
+| `/layers/:name` | `GET` | Serve gzip-compressed tactical GIS overlays (`baseline`, `eez`, `piracy`, `seaports`, `eca-sox`, `eca-nox`, `boundaries`, `fao`, `tss`) |
 | `/emissions` | `GET` | Stream IMO Emission Control Area (ECA) GeoJSON |
 | `/mcp` | `GET/POST` | Model Context Protocol endpoint for AI agent integration |
+
+### `POST /waypoints` fields
+
+Request (all kink fields optional):
+
+| Field | Default | Description |
+|---|---|---|
+| `kinks` | `true` | Remove kinks: smooth the route where it clearly stays in open water and propose other shortcuts. `false` disables smoothing and proposals; any `accept` IDs are then returned in `ignored_accept`. |
+| `clearance_nm` | `2` | Land clearance for smoothing and proposals, 0.5 to 10 NM. Anything outside the range returns HTTP 400. |
+| `accept` | `[]` | Proposal IDs (from an earlier response) to apply. At most 200 IDs, each at most 32 characters, else HTTP 400. Unknown IDs are returned in `ignored_accept`. |
+
+Traffic separation scheme (TSS) handling is always on. Every leg is a rhumb line.
+
+Response `properties` gains `kinks` and `clearance_nm` (the effective values), `proposals[]` (`id`, geometry, `reason`, `min_clearance_nm`, `saved_nm`), `stretches[]` (index range into the path, `flag`, `severity`, `scheme`), `warnings[]` and `ignored_accept[]`. Each waypoint has a `flag` naming the provenance of the stretch that arrives at it (`marnet`, `smoothed`, `user-accepted`, `osm-tss`, `tss-unknown`, `tss-unresolved`, `connector`); the origin is `connector`.
+
+---
+
+## Limitations
+
+* TSS data is community-maintained (OpenSeaMap / OpenStreetMap) and its coverage is incomplete. Stretches near land outside the covered areas are flagged `tss-unknown`; where TSS rules leave no route, the flagged `tss-unresolved` stretch ignores one scheme.
+* A licensed ENC (S-57/S-101 from a hydrographic office or chart distributor) is the authoritative source for charted hazards and traffic schemes. seaRoute does not use one.
+* seaRoute is not for navigation. A passage plan still needs official charts.
 
 ---
 
@@ -166,6 +188,9 @@ cd web/tailwind && npm ci && npm run build
 * **Maritime Boundaries & EEZ**: [Marine Regions](https://www.marineregions.org/) (Flanders Marine Institute).
 * **Anti-Shipping Activity Messages (ASAM)**: National Geospatial-Intelligence Agency ([NGA](https://msi.nga.mil/Piracy)).
 * **World Port Index (WPI)**: National Geospatial-Intelligence Agency ([NGA Pub 150](https://msi.nga.mil/Publications/WPI)).
+* **Land and Traffic Separation Schemes**: © OpenStreetMap contributors, ODbL ([openstreetmap.org/copyright](https://www.openstreetmap.org/copyright)). Land from OSM land polygons, TSS from OpenSeaMap seamark tags. Rebuild with:
+  `go run ./cmd/land-import -shp land_polygons.shp -network dataset/marnet_plus_5km.geojson -tolerance 200 -out dataset/land_osm.bin.gz` and
+  `go run ./cmd/tss-import -in overpass.json -out dataset/tss_osm.geojson.gz`.
 * **Emission Control Areas**: International Maritime Organization ([IMO MARPOL Annex VI](https://www.imo.org/)).
 
 ---

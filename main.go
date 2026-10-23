@@ -49,7 +49,22 @@ type WaypointRequest struct {
 	Avoid []string `json:"avoid,omitempty"`
 	// Allow opens passages closed by default (the Arctic routes). Optional.
 	Allow []string `json:"allow,omitempty"`
+	// Kinks switches smoothing and proposals on or off. Default true.
+	Kinks *bool `json:"kinks,omitempty"`
+	// ClearanceNM is the land clearance in nautical miles, 0.5-10. Default 2.
+	ClearanceNM *float64 `json:"clearance_nm,omitempty"`
+	// Accept lists proposal IDs to apply. At most 200, each at most 32 chars.
+	Accept []string `json:"accept,omitempty"`
 }
+
+// API limits for the kink-removal fields.
+const (
+	defaultClearanceNM = 2.0
+	minClearanceNM     = 0.5
+	maxClearanceNM     = 10.0
+	maxAcceptIDs       = 200
+	maxAcceptIDLen     = 32
+)
 
 // Rate limiting state
 var (
@@ -99,7 +114,22 @@ func main() {
 	log.Printf("Loaded %d ports", len(app.PortData))
 
 	// Pre-load and cache the route graph at startup
-	routeGraph, err := route.Load("dataset/marnet_plus_5km.geojson")
+	// Land and TSS data are optional: without a file that feature is off.
+	datasets := route.Datasets{Network: "dataset/marnet_plus_5km.geojson"}
+	for _, opt := range []struct {
+		name, path string
+		dst        *string
+	}{
+		{"land", "dataset/land_osm.bin.gz", &datasets.Land},
+		{"TSS", "dataset/tss_osm.geojson.gz", &datasets.TSS},
+	} {
+		if _, statErr := os.Stat(opt.path); statErr != nil {
+			log.Printf("Warning: %s dataset %s not found, %s handling is off", opt.name, opt.path, opt.name)
+			continue
+		}
+		*opt.dst = opt.path
+	}
+	routeGraph, err := route.LoadAll(datasets)
 	if err != nil {
 		log.Fatalf("Error loading route graph: %v", err)
 	}
@@ -318,6 +348,7 @@ func setupRoutes(router *gin.Engine, app *App) {
 		"eca-nox":    "dataset/eca_reg13_nox.geojson",
 		"boundaries": "dataset/eez_boundaries_v11.geojson",
 		"fao":        "dataset/FAO_AREAS_CWP.geojson",
+		"tss":        "dataset/tss_osm.geojson",
 	}
 	layerFallbacks := map[string]string{
 		"baseline": "dataset/eez_12nm_v3.geojson",
@@ -385,6 +416,26 @@ func setupRoutes(router *gin.Engine, app *App) {
 			return
 		}
 
+		kinks := req.Kinks == nil || *req.Kinks
+		clearance := defaultClearanceNM
+		if req.ClearanceNM != nil {
+			clearance = *req.ClearanceNM
+		}
+		if clearance < minClearanceNM || clearance > maxClearanceNM {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "clearance_nm must be between 0.5 and 10"})
+			return
+		}
+		if len(req.Accept) > maxAcceptIDs {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "too many accept IDs (max 200)"})
+			return
+		}
+		for _, id := range req.Accept {
+			if len(id) > maxAcceptIDLen {
+				c.JSON(http.StatusBadRequest, gin.H{"error": "accept ID too long (max 32 characters)"})
+				return
+			}
+		}
+
 		originCoords, fromName, err := resolvePoint(req.From, req.FromPort, app)
 		if err != nil {
 			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -405,9 +456,12 @@ func setupRoutes(router *gin.Engine, app *App) {
 		}
 
 		opts := route.Options{
-			Avoid:     req.Avoid,
-			Allow:     req.Allow,
-			Algorithm: alg,
+			Avoid:       req.Avoid,
+			Allow:       req.Allow,
+			Algorithm:   alg,
+			Kinks:       kinks,
+			ClearanceNM: clearance,
+			Accept:      req.Accept,
 		}
 
 		// Calculate the passage using the cached route graph
@@ -451,7 +505,11 @@ func calculatePassageInfo(originCoords, destinationCoords route.Position, routeN
 	log.Printf("Route: %s | Total: %.2f Km (Origin->WP: %.2f, WP: %.2f, WP->Dest: %.2f)",
 		routeName, totalDistance, distToFirstWp, networkDistance, distFromLastWp)
 
-	return generateOutput(r, originCoords, destinationCoords, totalDistance, distToFirstWp, distFromLastWp, networkDistance, routeName, r.Passages), nil
+	clearance := opts.ClearanceNM
+	if clearance == 0 {
+		clearance = defaultClearanceNM
+	}
+	return generateOutput(r, opts.Kinks, clearance, originCoords, destinationCoords, totalDistance, distToFirstWp, distFromLastWp, networkDistance, routeName, r.Passages), nil
 }
 
 // filterPorts filters the ports from the []Port struct
