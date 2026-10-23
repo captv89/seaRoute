@@ -449,12 +449,24 @@ func (g *Graph) leg(from, to Position, s, t int32, blocked []bool, alg Algorithm
 	return leg, nil
 }
 
-// Distance is the great-circle (haversine) distance in metres.
+// Distance is the rhumb-line (loxodrome) distance in metres, the length of a
+// constant-bearing leg between a and b.
 func Distance(a, b Position) float64 {
 	const rad = math.Pi / 180
 	lat1, lat2 := a[1]*rad, b[1]*rad
 	dLat := lat2 - lat1
-	dLon := (b[0] - a[0]) * rad
-	h := math.Sin(dLat/2)*math.Sin(dLat/2) + math.Cos(lat1)*math.Cos(lat2)*math.Sin(dLon/2)*math.Sin(dLon/2)
-	return 2 * earthRadiusM * math.Asin(math.Min(1, math.Sqrt(h)))
+	dLon := math.Remainder((b[0]-a[0])*rad, 2*math.Pi)
+	dPsi := math.Log(math.Tan(math.Pi/4+lat2/2) / math.Tan(math.Pi/4+lat1/2))
+	q := math.Cos(lat1)
+	if math.Abs(dPsi) >= 1e-12 {
+		q = dLat / dPsi
+	}
+	return earthRadiusM * math.Hypot(dLat, q*dLon)
+}
+
+// Mercator projects p to Mercator (x, y) in radians. Straight lines in this
+// plane are rhumb lines.
+func Mercator(p Position) [2]float64 {
+	const rad = math.Pi / 180
+	return [2]float64{p[0] * rad, math.Log(math.Tan(math.Pi/4 + p[1]*rad/2))}
 }

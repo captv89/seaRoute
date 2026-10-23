@@ -1695,7 +1695,7 @@
                 algoPerfBadge.className = 'font-mono text-[9px] px-1.5 py-0.5 rounded-sm bg-surface-container text-tertiary border border-surface-variant';
             }
             if (algoExplanation) {
-                algoExplanation.textContent = 'A* applies haversine Euclidean distance heuristic targeting destination port for accelerated search convergence.';
+                algoExplanation.textContent = 'A* applies rhumb-line distance heuristic targeting destination port for accelerated search convergence.';
             }
             showToast('Algorithm set to A* (Great-Circle Heuristic)');
         }
