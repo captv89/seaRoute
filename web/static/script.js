@@ -19,6 +19,11 @@
     let currentTotalDistNM = 8420;
     let currentWaypoints = [];
     let currentCoords = [];
+    // Kink-removal state: shortcut proposals are accepted per route, never globally.
+    let currentProposals = [];
+    let acceptedProposalIds = new Set();
+    let rejectedProposalIds = new Set();
+    let routeInputSig = '';
     let mapPickingMode = null; // null | 'origin' | 'dest'
     let currentGlowPolyline = null;
     let currentFlowPolyline = null;
@@ -54,6 +59,8 @@
     let faoLayer = null;
     let faoLoading = false;
     let faoData = null;
+    let tssLayer = null;
+    let tssLoading = false;
 
     // Toast timer
     let toastTimeout = null;
@@ -274,6 +281,7 @@
     const toggleBaseline = document.getElementById('toggle-baseline');
     const toggleEez = document.getElementById('toggle-eez');
     const toggleFao = document.getElementById('toggle-fao');
+    const toggleTss = document.getElementById('toggle-tss');
     const layerActiveCount = document.getElementById('layer-active-count');
 
     function updateActiveLayerBadge() {
@@ -290,6 +298,7 @@
         if (toggleBaseline && toggleBaseline.checked) count++;
         if (toggleEez && toggleEez.checked) count++;
         if (toggleFao && toggleFao.checked) count++;
+        if (toggleTss && toggleTss.checked) count++;
         layerActiveCount.textContent = count;
     }
 
@@ -1462,6 +1471,130 @@
         if (toggleEez.checked) loadEezLayer();
     }
 
+    // 5.9b Traffic Separation Schemes (OpenStreetMap / OpenSeaMap, ODbL)
+    const TSS_ATTRIBUTION = '&copy; OpenStreetMap contributors, ODbL';
+    const TSS_COLOR = '#c026d3';
+
+    // Small arrowhead at the midpoint of a lane, rotated to the lane's direction of travel.
+    function tssArrowMarker(coords) {
+        if (!coords || coords.length < 2) return null;
+        const mid = Math.floor((coords.length - 1) / 2);
+        const a = coords[mid];
+        const b = coords[mid + 1] || coords[mid];
+        const lat = (a[1] + b[1]) / 2;
+        const lon = (a[0] + b[0]) / 2;
+        // Compass bearing, with longitude scaled by latitude so the arrow follows the drawn line.
+        const dx = (b[0] - a[0]) * Math.cos(lat * Math.PI / 180);
+        const dy = b[1] - a[1];
+        if (dx === 0 && dy === 0) return null;
+        const bearing = (Math.atan2(dx, dy) * 180 / Math.PI + 360) % 360;
+        return L.marker([lat, lon], {
+            interactive: false,
+            keyboard: false,
+            icon: L.divIcon({
+                className: 'tss-arrow',
+                html: `<svg width="12" height="12" viewBox="0 0 12 12" aria-hidden="true" style="transform:rotate(${bearing.toFixed(0)}deg);display:block"><path d="M6 0.5 L10.5 11 L6 8.5 L1.5 11 Z" fill="${TSS_COLOR}" stroke="#ffffff" stroke-opacity="0.55" stroke-width="0.6"/></svg>`,
+                iconSize: [12, 12],
+                iconAnchor: [6, 6]
+            })
+        });
+    }
+
+    function buildTssLayer(geojson) {
+        const group = L.featureGroup();
+        const feats = (geojson && geojson.features) || [];
+        const zones = { type: 'FeatureCollection', features: [] };
+        const lines = { type: 'FeatureCollection', features: [] };
+        feats.forEach(f => {
+            const t = f.properties && f.properties.type;
+            const gt = f.geometry && f.geometry.type;
+            if (gt === 'Polygon' && (t === 'zone' || t === 'lane' || t === 'roundabout')) {
+                zones.features.push(f);
+            } else if (gt === 'LineString') {
+                lines.features.push(f);
+                if (t === 'lane') {
+                    const m = tssArrowMarker(f.geometry.coordinates);
+                    if (m) group.addLayer(m);
+                }
+            }
+        });
+        // Zones: translucent fill. Lanes: solid lines. Separation lines: dashed. Boundaries: hairline.
+        group.addLayer(L.geoJSON(zones, {
+            style: f => ({
+                color: TSS_COLOR,
+                weight: 1,
+                opacity: 0.6,
+                fillColor: TSS_COLOR,
+                fillOpacity: (f.properties && f.properties.type === 'zone') ? 0.14 : 0.08
+            })
+        }));
+        group.addLayer(L.geoJSON(lines, {
+            style: f => {
+                const t = f.properties && f.properties.type;
+                if (t === 'lane') return { color: TSS_COLOR, weight: 2, opacity: 0.85 };
+                if (t === 'line') return { color: TSS_COLOR, weight: 1.5, opacity: 0.85, dashArray: '5 4' };
+                return { color: TSS_COLOR, weight: 1, opacity: 0.5 };
+            }
+        }));
+        return group;
+    }
+
+    function setTssAttribution(on) {
+        if (on) map.attributionControl.addAttribution(TSS_ATTRIBUTION);
+        else map.attributionControl.removeAttribution(TSS_ATTRIBUTION);
+    }
+
+    function loadTssLayer() {
+        if (tssLayer) {
+            map.addLayer(tssLayer);
+            return;
+        }
+        if (tssLoading) return;
+        tssLoading = true;
+        showToast('Streaming Traffic Separation Schemes...', 'download');
+
+        fetch('/layers/tss')
+            .then(res => {
+                if (!res.ok) throw new Error('HTTP ' + res.status);
+                return res.json();
+            })
+            .then(geojson => {
+                tssLoading = false;
+                tssLayer = buildTssLayer(geojson);
+                if (toggleTss && toggleTss.checked) {
+                    map.addLayer(tssLayer);
+                }
+                showToast('Traffic Separation Schemes displayed');
+            })
+            .catch(err => {
+                tssLoading = false;
+                console.warn('TSS layer unavailable:', err);
+                showToast('Failed to load TSS overlay', 'warning');
+                if (toggleTss) {
+                    toggleTss.checked = false;
+                    setTssAttribution(false);
+                    updateActiveLayerBadge();
+                }
+            });
+    }
+
+    if (toggleTss) {
+        toggleTss.addEventListener('change', (e) => {
+            setTssAttribution(e.target.checked);
+            if (e.target.checked) {
+                if (tssLayer) map.addLayer(tssLayer);
+                else loadTssLayer();
+            } else if (tssLayer) {
+                map.removeLayer(tssLayer);
+            }
+            updateActiveLayerBadge();
+        });
+        if (toggleTss.checked) {
+            setTssAttribution(true);
+            loadTssLayer();
+        }
+    }
+
     // 5.10 FAO Major Fishing Areas
     function loadFaoLayer() {
         if (faoLayer) {
@@ -1979,7 +2112,50 @@
         }
     }
 
-    function computeRoute() {
+    // Kink-removal controls
+    const toggleKinks = document.getElementById('toggle-kinks');
+    const clearanceInput = document.getElementById('clearance-input');
+    const clearanceDec = document.getElementById('clearance-dec');
+    const clearanceInc = document.getElementById('clearance-inc');
+    const CLEARANCE_MIN = 0.5;
+    const CLEARANCE_MAX = 10;
+    const CLEARANCE_DEFAULT = 2;
+
+    function readClearance() {
+        const v = parseFloat(clearanceInput ? clearanceInput.value : '');
+        if (isNaN(v)) return CLEARANCE_DEFAULT;
+        return Math.min(CLEARANCE_MAX, Math.max(CLEARANCE_MIN, Math.round(v * 2) / 2));
+    }
+
+    function writeClearance(v) {
+        if (clearanceInput) clearanceInput.value = String(v);
+        syncClearanceState();
+    }
+
+    function syncClearanceState() {
+        const on = !toggleKinks || toggleKinks.checked;
+        const v = readClearance();
+        [clearanceInput, clearanceDec, clearanceInc].forEach(el => { if (el) el.disabled = !on; });
+        if (clearanceDec && on) clearanceDec.disabled = v <= CLEARANCE_MIN;
+        if (clearanceInc && on) clearanceInc.disabled = v >= CLEARANCE_MAX;
+        const row = document.getElementById('clearance-row');
+        if (row) row.classList.toggle('opacity-50', !on);
+    }
+
+    if (toggleKinks) toggleKinks.addEventListener('change', syncClearanceState);
+    if (clearanceInput) {
+        // Snap to a valid step once the user is done typing.
+        clearanceInput.addEventListener('change', () => writeClearance(readClearance()));
+    }
+    if (clearanceDec) clearanceDec.addEventListener('click', () => writeClearance(Math.max(CLEARANCE_MIN, readClearance() - 0.5)));
+    if (clearanceInc) clearanceInc.addEventListener('click', () => writeClearance(Math.min(CLEARANCE_MAX, readClearance() + 0.5)));
+    syncClearanceState();
+
+    /**
+     * opts.accept: keep the in-memory accepted set (re-POST after Accept/Undo)
+     * opts.keepView: do not re-fit the map to the route
+     */
+    function computeRoute(opts = {}) {
         const fromLat = parseCoordinate(originLatInput ? originLatInput.value : '', true);
         const fromLon = parseCoordinate(originLonInput ? originLonInput.value : '', false);
         const toLat = parseCoordinate(destLatInput ? destLatInput.value : '', true);
@@ -1998,12 +2174,25 @@
         const avoidList = Array.from(document.querySelectorAll('.avoid-pill.active'))
             .map(p => p.getAttribute('data-avoid'))
             .filter(Boolean);
+        const kinks = toggleKinks ? toggleKinks.checked : true;
+        const clearanceNM = readClearance();
+
+        // Accepted proposals belong to one route: reset them when its inputs change.
+        const sig = JSON.stringify([fromLat, fromLon, toLat, toLon, [...avoidList].sort(), kinks, clearanceNM]);
+        if (sig !== routeInputSig) {
+            routeInputSig = sig;
+            acceptedProposalIds = new Set();
+            rejectedProposalIds = new Set();
+        }
 
         const requestPayload = {
             from: { lat: fromLat, lon: fromLon },
             to: { lat: toLat, lon: toLon },
             algorithm: currentAlgorithm,
-            avoid: avoidList
+            avoid: avoidList,
+            kinks: kinks,
+            clearance_nm: clearanceNM,
+            accept: Array.from(acceptedProposalIds)
         };
 
         setComputeLoading(true);
@@ -2023,7 +2212,7 @@
             })
             .then(data => {
                 setComputeLoading(false);
-                renderRoute(data);
+                renderRoute(data, { keepView: Boolean(opts.keepView) });
             })
             .catch(err => {
                 setComputeLoading(false);
@@ -2032,12 +2221,12 @@
             });
     }
 
-    if (btnCompute) btnCompute.addEventListener('click', computeRoute);
+    if (btnCompute) btnCompute.addEventListener('click', () => computeRoute());
 
     /**
      * Renders computed route onto Leaflet map & updates all metrics/manifest
      */
-    function renderRoute(data) {
+    function renderRoute(data, opts = {}) {
         if (!data || !data.features || data.features.length === 0) {
             showToast('No route found across maritime graph', 'warning');
             return;
@@ -2051,6 +2240,7 @@
 
         currentCoords = coords;
         currentWaypoints = waypoints;
+        currentProposals = props.proposals || [];
 
         // Clear existing route graphics
         routeLayerGroup.clearLayers();
@@ -2077,6 +2267,19 @@
 
         routeLayerGroup.addLayer(currentGlowPolyline);
         routeLayerGroup.addLayer(currentFlowPolyline);
+
+        // Stretches where TSS rules left no route: drawn over the route in the error colour
+        (props.stretches || []).forEach(st => {
+            if (st.flag !== 'tss-unresolved') return;
+            const seg = latLngs.slice(st.from, st.to + 1);
+            if (seg.length < 2) return;
+            routeLayerGroup.addLayer(L.polyline(seg, {
+                color: isDark ? '#ffb4ab' : '#dc2626',
+                weight: 4,
+                opacity: 0.95,
+                lineCap: 'round'
+            }));
+        });
 
         // 2. Custom Waypoint Markers
         if (latLngs.length > 0) {
@@ -2129,7 +2332,7 @@
         }
 
         // Fit map bounds to show route
-        if (currentGlowPolyline) {
+        if (currentGlowPolyline && !opts.keepView) {
             map.fitBounds(currentGlowPolyline.getBounds(), { padding: [50, 50] });
         }
 
@@ -2181,8 +2384,138 @@
         // 4. Update Waypoint Manifest Table
         renderManifestTable(waypoints);
 
-        showToast(`Sea route calculated successfully (${Math.round(totalDistNM).toLocaleString()} NM)`);
+        // 5. Kink removal: warnings, proposals, ignored IDs, unknown-coast note
+        renderRouteNotices(props, Boolean(opts.quiet));
+
+        if (!opts.quiet) showToast(`Sea route calculated successfully (${Math.round(totalDistNM).toLocaleString()} NM)`);
     }
+
+    // =========================================================================
+    // 9.1 Kink Removal Output: warnings banner, proposals, stretch notes
+    // =========================================================================
+    const FLAG_STYLES = {
+        'tss-unresolved': 'text-error font-semibold',
+        'tss-unknown': 'text-warning',
+        'user-accepted': 'text-secondary',
+        'osm-tss': 'text-tss',
+        'smoothed': 'text-primary',
+        'connector': 'text-on-surface-variant',
+        'marnet': 'text-on-surface-variant'
+    };
+
+    function renderRouteNotices(props, quiet) {
+        // Warnings banner (tss-unresolved)
+        const warnBox = document.getElementById('route-warnings');
+        const warnList = document.getElementById('route-warnings-list');
+        const warnings = props.warnings || [];
+        if (warnBox && warnList) {
+            warnList.innerHTML = warnings.map(w =>
+                `<li class="flex gap-1.5"><span class="material-symbols-outlined text-[12px] text-error shrink-0">error</span><span>${escapeHtml(w.message)}</span></li>`
+            ).join('');
+            warnBox.classList.toggle('hidden', warnings.length === 0);
+            warnBox.classList.toggle('flex', warnings.length > 0);
+        }
+
+        // One quiet line when any stretch lacks TSS data
+        const unknownNote = document.getElementById('tss-unknown-note');
+        if (unknownNote) {
+            const hasUnknown = (props.stretches || []).some(st => st.flag === 'tss-unknown');
+            unknownNote.classList.toggle('hidden', !hasUnknown);
+            unknownNote.classList.toggle('flex', hasUnknown);
+        }
+
+        // Accepted IDs the server did not recognise: drop them and say so
+        const ignored = props.ignored_accept || [];
+        if (ignored.length > 0) {
+            ignored.forEach(id => acceptedProposalIds.delete(id));
+            if (!quiet) showToast(`Ignored ${ignored.length} stale shortcut ${ignored.length === 1 ? 'proposal' : 'proposals'}`, 'warning');
+        }
+
+        renderProposals();
+    }
+
+    function proposalTooltip(p) {
+        return `${escapeHtml(p.reason)}<br>min clearance ${Number(p.min_clearance_nm).toFixed(1)} NM<br>saves ${Number(p.saved_nm).toFixed(1)} NM`;
+    }
+
+    function renderProposals() {
+        const card = document.getElementById('proposals-card');
+        const list = document.getElementById('proposals-list');
+        const countEl = document.getElementById('proposals-count');
+        const acceptAll = document.getElementById('btn-accept-all');
+        if (!card || !list) return;
+
+        const visible = currentProposals.filter(p => !rejectedProposalIds.has(p.id));
+
+        // Dashed amber overlay for every pending proposal
+        visible.forEach(p => {
+            if (acceptedProposalIds.has(p.id) || !p.path || p.path.length < 2) return;
+            const line = L.polyline(p.path.map(c => [c[1], c[0]]), {
+                color: '#f59e0b',
+                weight: 3,
+                opacity: 0.95,
+                dashArray: '6 6'
+            }).bindTooltip(proposalTooltip(p), { sticky: true });
+            routeLayerGroup.addLayer(line);
+        });
+
+        card.classList.toggle('hidden', visible.length === 0);
+        card.classList.toggle('flex', visible.length > 0);
+        if (countEl) countEl.textContent = String(visible.length);
+        const pending = visible.filter(p => !acceptedProposalIds.has(p.id));
+        if (acceptAll) acceptAll.classList.toggle('hidden', pending.length === 0);
+
+        list.innerHTML = visible.map(p => {
+            const accepted = acceptedProposalIds.has(p.id);
+            const id = escapeHtml(p.id);
+            const actions = accepted
+                ? `<span class="font-mono text-[9px] px-1.5 py-0.5 rounded-sm bg-secondary/15 text-secondary border border-secondary/30 flex items-center gap-1"><span class="material-symbols-outlined text-[11px]">check</span>Accepted</span>
+                   <button class="font-mono text-[9px] px-1.5 py-0.5 rounded-sm bg-surface-container hover:bg-surface-container-high text-on-surface-variant border border-surface-container-high cursor-pointer transition-colors" data-proposal-undo="${id}" type="button">Undo</button>`
+                : `<button class="font-mono text-[9px] px-1.5 py-0.5 rounded-sm bg-warning/20 hover:bg-warning/30 text-warning border border-warning/40 font-semibold cursor-pointer transition-colors" data-proposal-accept="${id}" type="button">Accept</button>
+                   <button class="font-mono text-[9px] px-1.5 py-0.5 rounded-sm bg-surface-container hover:bg-surface-container-high text-on-surface-variant border border-surface-container-high cursor-pointer transition-colors" data-proposal-reject="${id}" type="button">Reject</button>`;
+            return `<li class="flex items-center justify-between gap-2 p-1.5 rounded-sm bg-surface-container-lowest border border-surface-container-high">
+                <span class="flex flex-col min-w-0">
+                    <span class="font-mono text-[10px] text-on-surface">${escapeHtml(p.reason)}</span>
+                    <span class="font-mono text-[9px] text-on-surface-variant tabular-nums">min ${Number(p.min_clearance_nm).toFixed(1)} NM clearance &bull; saves ${Number(p.saved_nm).toFixed(1)} NM</span>
+                </span>
+                <span class="flex items-center gap-1 shrink-0">${actions}</span>
+            </li>`;
+        }).join('');
+    }
+
+    function setProposalAccepted(ids, accepted) {
+        ids.forEach(id => accepted ? acceptedProposalIds.add(id) : acceptedProposalIds.delete(id));
+        computeRoute({ accept: true, keepView: true });
+    }
+
+    (function bindProposalActions() {
+        const list = document.getElementById('proposals-list');
+        const acceptAll = document.getElementById('btn-accept-all');
+        if (list) {
+            list.addEventListener('click', (e) => {
+                const btn = e.target.closest('button');
+                if (!btn) return;
+                if (btn.dataset.proposalAccept) {
+                    setProposalAccepted([btn.dataset.proposalAccept], true);
+                } else if (btn.dataset.proposalUndo) {
+                    setProposalAccepted([btn.dataset.proposalUndo], false);
+                } else if (btn.dataset.proposalReject) {
+                    // Reject only hides the item; the route is unchanged
+                    rejectedProposalIds.add(btn.dataset.proposalReject);
+                    routeLayerGroup.clearLayers();
+                    renderRoute(currentRouteData, { keepView: true, quiet: true });
+                }
+            });
+        }
+        if (acceptAll) {
+            acceptAll.addEventListener('click', () => {
+                const ids = currentProposals
+                    .filter(p => !rejectedProposalIds.has(p.id) && !acceptedProposalIds.has(p.id))
+                    .map(p => p.id);
+                if (ids.length > 0) setProposalAccepted(ids, true);
+            });
+        }
+    })();
 
     /**
      * Renders tabular waypoint manifest
@@ -2197,7 +2530,7 @@
         }
 
         if (!waypoints || waypoints.length === 0) {
-            tbody.innerHTML = '<tr class="text-on-surface-variant text-center"><td colspan="4" class="py-3 px-2 text-[10px] text-outline font-mono">No route calculated.</td></tr>';
+            tbody.innerHTML = '<tr class="text-on-surface-variant text-center"><td colspan="5" class="py-3 px-2 text-[10px] text-outline font-mono">No route calculated.</td></tr>';
             return;
         }
 
@@ -2220,6 +2553,7 @@
                 </td>
                 <td class="py-1 px-2 text-right text-secondary font-mono">${(wp.leg_distance_nm || 0).toFixed(1)} NM</td>
                 <td class="py-1 px-2 text-right text-primary font-bold font-mono">${(wp.cum_distance_nm || 0).toFixed(1)} NM</td>
+                <td class="py-1 px-2 text-[9px] font-mono whitespace-nowrap ${FLAG_STYLES[wp.flag] || 'text-on-surface-variant'}">${escapeHtml(wp.flag || '')}</td>
             `;
             tbody.appendChild(tr);
         });
@@ -2584,11 +2918,11 @@
                 return;
             }
 
-            let csvContent = 'Leg,Waypoint,Latitude,Longitude,Leg_Distance_NM,Cumulative_Distance_NM,Passage\r\n';
+            let csvContent = 'Leg,Waypoint,Latitude,Longitude,Leg_Distance_NM,Cumulative_Distance_NM,Passage,Flag\r\n';
             currentWaypoints.forEach(wp => {
                 const name = (wp.name || '').replace(/,/g, ' ');
                 const passage = wp.passage || '';
-                csvContent += `${wp.index},"${name}",${wp.coordinates[1].toFixed(5)},${wp.coordinates[0].toFixed(5)},${(wp.leg_distance_nm || 0).toFixed(2)},${(wp.cum_distance_nm || 0).toFixed(2)},"${passage}"\r\n`;
+                csvContent += `${wp.index},"${name}",${wp.coordinates[1].toFixed(5)},${wp.coordinates[0].toFixed(5)},${(wp.leg_distance_nm || 0).toFixed(2)},${(wp.cum_distance_nm || 0).toFixed(2)},"${passage}","${wp.flag || ''}"\r\n`;
             });
 
             const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
@@ -2665,6 +2999,8 @@
             if (currentAlgorithm) params.set('algo', currentAlgorithm);
             if (avoidList.length > 0) params.set('avoid', avoidList.join(','));
             if (speed) params.set('speed', speed);
+            if (toggleKinks && !toggleKinks.checked) params.set('kinks', '0');
+            if (readClearance() !== CLEARANCE_DEFAULT) params.set('clr', String(readClearance()));
 
             const shareUrl = `${window.location.origin}${window.location.pathname}?${params.toString()}`;
             window.history.replaceState({}, '', shareUrl);
@@ -2773,6 +3109,15 @@
             });
             updateAvoidBadge();
         }
+
+        if (params.has('kinks') && toggleKinks) {
+            toggleKinks.checked = !['0', 'false', 'off'].includes(params.get('kinks').trim().toLowerCase());
+        }
+        if (params.has('clr')) {
+            const clr = parseFloat(params.get('clr'));
+            if (!isNaN(clr)) writeClearance(Math.min(CLEARANCE_MAX, Math.max(CLEARANCE_MIN, Math.round(clr * 2) / 2)));
+        }
+        syncClearanceState();
 
         if (params.has('speed')) {
             const sp = parseFloat(params.get('speed'));
