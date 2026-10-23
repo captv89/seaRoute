@@ -49,5 +49,5 @@
 - Licence: © OpenStreetMap contributors, ODbL
 - Only rings whose bounding box touches a 0.5° cell within 30 NM of a MARNET vertex are kept (181,622 of 873,802 rings), simplified with Douglas–Peucker at 50 m, latitude-aware and conservative so every removed vertex is within 50 m (4,039,269 vertices kept of 79,479,292)
 - Format: gzip; line `SRLAND1`, one JSON header line (`source`, `date`, `tolerance_m`, `corridor_nm`, `rings`), then per ring a uvarint vertex count and zigzag-varint (dlon, dlat) deltas in 1e-6°, first vertex relative to (0,0)
-- Size: 16,357,187 bytes (16.4 MB). Tolerance 100 m gives 9.1 MB, 200 m gives 4.9 MB. Load time and heap are measured with the loader
+- Size: 16,357,187 bytes (16.4 MB). Tolerance 100 m gives 9.1 MB, 200 m gives 4.9 MB. Measured with `route.LoadLand` (Apple M-series dev machine): load 0.6 s, live heap 54 MB after load (limits: 5 s, 300 MB)
 - Regenerate: `go run ./cmd/land-import -shp <land_polygons.shp> -network dataset/marnet_plus_5km.geojson -tolerance 50 -date 2026-10-23 -out dataset/land_osm.bin.gz`
