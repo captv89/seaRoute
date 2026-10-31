@@ -41,17 +41,17 @@ func landOf(rings ...[]Position) *Land { return NewLand(rings, 0, "test") }
 
 var (
 	kA = Position{0, 0}
-	kB = Position{0.5, -0.3}
-	kC = Position{1, 0}
+	kB = Position{0.1, -0.06}
+	kC = Position{0.2, 0}
 )
 
-// kinkGraph: a kink A-B-C whose shortcut A-C passes 1.5 NM from a small island.
+// kinkGraph: a kink A-B-C whose 12 NM shortcut A-C passes 1.5 NM from a small island.
 func kinkGraph(withTSS bool) *Graph {
 	var tss *TSS
 	if withTSS {
 		tss = coverTSS()
 	}
-	return NewWith(chainSegs(kA, kB, kC), landOf(rect(0.3, passLat, 0.7, 0.1)), tss)
+	return NewWith(chainSegs(kA, kB, kC), landOf(rect(0.06, passLat, 0.14, 0.1)), tss)
 }
 
 func kinkRoute(t *testing.T, g *Graph, c float64, accept ...string) Route {
@@ -106,7 +106,7 @@ func TestBelowClearanceProposed(t *testing.T) {
 }
 
 func TestTouchingLandNeverOffered(t *testing.T) {
-	g := NewWith(chainSegs(kA, kB, kC), landOf(rect(0.3, -0.05, 0.7, 0.1)), coverTSS())
+	g := NewWith(chainSegs(kA, kB, kC), landOf(rect(0.06, -0.01, 0.14, 0.1)), coverTSS())
 	r := kinkRoute(t, g, 2)
 	if len(r.Proposals) != 0 || len(r.Path) != 3 {
 		t.Fatalf("proposals %v path %v", r.Proposals, r.Path)
@@ -183,9 +183,9 @@ func propSpan(r Route, p Proposal) (int, int) {
 }
 
 func TestProposalsDoNotOverlap(t *testing.T) {
-	a, b, c := Position{0, 0}, Position{0.5, -0.3}, Position{1, 0}
-	d, e, f := Position{1.5, 0}, Position{2, -0.3}, Position{2.5, 0}
-	land := landOf(rect(0.3, passLat, 0.7, 0.1), rect(2.3, passLat, 2.7, 0.1), rect(1.1, -0.4, 1.4, 0.05))
+	a, b, c := Position{0, 0}, Position{0.1, -0.3}, Position{0.2, 0}
+	d, e, f := Position{0.3, 0}, Position{0.4, -0.3}, Position{0.5, 0}
+	land := landOf(rect(0.06, passLat, 0.14, 0.1), rect(0.46, passLat, 0.54, 0.1), rect(0.22, -0.4, 0.28, 0.05))
 	g := NewWith(chainSegs(a, b, c, d, e, f), land, coverTSS())
 	r := routeOn(t, g, Options{Kinks: true}, a, f)
 	if len(r.Proposals) != 2 {
@@ -480,5 +480,15 @@ func TestShortcutInsideCorridorSmoothed(t *testing.T) {
 	r := routeOn(t, g, Options{Kinks: true}, Position{0, 0}, Position{2, 0})
 	if len(r.Path) != 2 {
 		t.Fatalf("path %v", r.Path)
+	}
+}
+
+func TestLongProposalNotOffered(t *testing.T) {
+	// 60 NM shortcut, 1.5 NM from land: would be a proposal without the cap.
+	a, b, c := Position{0, 0}, Position{0.5, -0.3}, Position{1, 0}
+	g := NewWith(chainSegs(a, b, c), landOf(rect(0.3, passLat, 0.7, 0.1)), coverTSS())
+	r := routeOn(t, g, Options{Kinks: true, ClearanceNM: 2}, a, c)
+	if len(r.Proposals) != 0 || len(r.Path) != 3 {
+		t.Fatalf("proposals %v path %v", r.Proposals, r.Path)
 	}
 }

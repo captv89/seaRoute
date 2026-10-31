@@ -17,15 +17,17 @@ import (
 //
 // Pipeline per leg: auto shortcuts first (clear of land by the clearance, and
 // either inside OSM TSS coverage or in open sea), then proposals on the result
-// (shortcuts that fail one of those two), then the proposals whose ID the
+// (shortcuts that fail one of those two, at most proposalMaxNM long; the greedy
+// scan then offers several short ones), then the proposals whose ID the
 // caller accepted are applied. Smoothing is not run again after an accept.
 
 const (
-	smoothMaxSpan      = 40  // longest shortcut, in path vertices
-	smoothSampleNM     = 5.0 // spacing of the open-sea samples along a shortcut
-	smoothMinSavedM    = 1.0 // a shortcut must be shorter by more than this
-	proposalMinSavedNM = 0.1 // a proposal must save at least this
-	defaultClearanceNM = 2.0 // Options.ClearanceNM when 0
+	smoothMaxSpan      = 40   // longest shortcut, in path vertices
+	smoothSampleNM     = 5.0  // spacing of the open-sea samples along a shortcut
+	smoothMinSavedM    = 1.0  // a shortcut must be shorter by more than this
+	proposalMinSavedNM = 0.1  // a proposal must save at least this
+	proposalMaxNM      = 20.0 // a proposal is at most this long: one visible fix
+	defaultClearanceNM = 2.0  // Options.ClearanceNM when 0
 )
 
 // Shortcut classes returned by classify.
@@ -177,7 +179,7 @@ func (s *smoother) classify(a, b Position, replaced []Position, edges []int32) (
 	if c >= s.limit && s.coveredOrOpen(a, b) {
 		return classAuto, c - s.tol
 	}
-	if saved < proposalMinSavedNM*MetresPerNM {
+	if saved < proposalMinSavedNM*MetresPerNM || Distance(a, b) > proposalMaxNM*MetresPerNM {
 		return classNever, 0
 	}
 	return classProposal, c - s.tol
