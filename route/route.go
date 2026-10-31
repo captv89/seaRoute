@@ -553,7 +553,7 @@ func (g *Graph) Route(points []Position, opts Options) (Route, error) {
 	}
 	flags, schemes := g.segFlags(r.Legs)
 	r.Stretches = stretches(flags, schemes)
-	r.Hazards = g.hazards(r.Legs, r.Path, opts)
+	r.Hazards = g.hazards(r.Legs, r.Path, opts, &pc)
 	return r, nil
 }
 

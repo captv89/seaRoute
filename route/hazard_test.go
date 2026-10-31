@@ -1,6 +1,7 @@
 package route
 
 import (
+	"os"
 	"reflect"
 	"testing"
 	"time"
@@ -41,7 +42,7 @@ func coarseHazards(t *testing.T, g *Graph, opts Options, pts ...Position) (hazar
 			path = append(path, l.Path[1:]...)
 		}
 	}
-	return g.hazards(legs, path, opts), path
+	return g.hazards(legs, path, opts, &pathCtx{ends: pts}), path
 }
 
 func TestHazardAground(t *testing.T) {
@@ -226,5 +227,102 @@ func TestStretchFlags(t *testing.T) {
 	checkBounds(r)
 	if s, ok := has(r, "tss-unknown"); !ok || s.Severity != "info" {
 		t.Errorf("no tss-unknown stretch: %v", r.Stretches)
+	}
+}
+
+// hazardGraph is the full graph with depth when the dataset exists, and the
+// land and TSS graph (shared with the other tests) when it does not.
+func hazardGraph(t *testing.T) *Graph {
+	t.Helper()
+	if _, err := os.Stat(depthData); err == nil {
+		return testFullGraph(t)
+	}
+	return testTSSGraph(t)
+}
+
+func TestHazardShallow(t *testing.T) {
+	// One 8 m tile across a straight MARNET line; the limit is 10 + squat + margin.
+	m := deepCells()
+	for i := range m {
+		m[i] = 8
+	}
+	depth := NewDepth([]DepthTile{{CX: 0, CY: 0, M: m}}, "x/gebco2026")
+	a, b := cellCentre(0, 0, 10, 20), cellCentre(0, 0, 100, 20)
+	g := newGraph(chainSegs(a, b), nil, nil, depth, "test")
+	var r Route
+	blocked, _ := g.blockedPasses(nil, nil)
+	sc := searchCtx{blocked: blocked}
+	va, _ := g.nearest(a, sc)
+	vb, _ := g.nearest(b, sc)
+	leg, err := g.leg(a, b, va, vb, sc, AStar)
+	if err != nil {
+		t.Fatal(err)
+	}
+	r.Legs, r.Path = []Leg{leg}, leg.Path
+	pc := &pathCtx{limitM: 13.6, limitConfinedM: 13.6, ends: []Position{{0, 40}, {0, 41}}}
+	got := g.hazards(r.Legs, r.Path, Options{}, pc)
+	if len(got) != 1 || got[0].Severity != "shallow" || got[0].Kind != "marnet" {
+		t.Fatalf("hazards %+v", got)
+	}
+	pc.limitM = 0
+	if got = g.hazards(r.Legs, r.Path, Options{}, pc); len(got) != 0 {
+		t.Errorf("no limit: hazards %+v", got)
+	}
+}
+
+func TestHazardApproach(t *testing.T) {
+	if testing.Short() {
+		t.Skip("short")
+	}
+	g := hazardGraph(t)
+	// The land data has no river at Pub. 151 Rotterdam (51.90 N, 4.4667 E), so
+	// that point passes the full check itself and a first finding is not at
+	// index 0 there. tautRotterdam is on the coast, in the approach.
+	r := routeOn(t, g, Options{}, tautRotterdam, singapore)
+	if len(r.Hazards) == 0 || r.Hazards[0].Severity != "approach" || r.Hazards[0].From != 0 {
+		t.Fatalf("hazards %+v", r.Hazards)
+	}
+	if r.Hazards[0].Note != noteApproach {
+		t.Errorf("note %q", r.Hazards[0].Note)
+	}
+	r = routeOn(t, g, Options{}, Position{4.4667, 51.90}, singapore)
+	for _, h := range r.Hazards {
+		if h.Severity != "aground" && h.Severity != "shallow" {
+			continue
+		}
+		track := 0.0
+		for k := 0; k < h.To; k++ {
+			track += Distance(r.Path[k], r.Path[k+1])
+		}
+		if track <= endpointExemptNM*MetresPerNM {
+			t.Errorf("%s hazard %d..%d ends within the approach (%.1f NM)", h.Severity, h.From, h.To, track/MetresPerNM)
+		}
+	}
+}
+
+func TestHazardSuezCanalNote(t *testing.T) {
+	if testing.Short() {
+		t.Skip("short")
+	}
+	g := hazardGraph(t)
+	r := routeOn(t, g, Options{Vessel: Vessel{DraughtM: 15}}, rotterdam, singapore)
+	for _, h := range r.Hazards {
+		if h.Passage == "suez" && h.Note == notePassage {
+			return
+		}
+	}
+	t.Errorf("no suez hazard with the passage note: %+v", r.Hazards)
+}
+
+func TestHazardsQuietOnOpenRoute(t *testing.T) {
+	if testing.Short() {
+		t.Skip("short")
+	}
+	g := hazardGraph(t)
+	r := routeOn(t, g, Options{}, Position{-74.02, 40.70}, Position{18.43, -33.91})
+	for _, h := range r.Hazards {
+		if h.Severity != "approach" && h.Severity != "unchecked" {
+			t.Errorf("hazard %+v", h)
+		}
 	}
 }
