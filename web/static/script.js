@@ -2109,7 +2109,7 @@
             else iconCompute.classList.remove('hidden');
         }
         // Proposal actions would race the in-flight request
-        document.querySelectorAll('#proposals-card button').forEach(b => { b.disabled = isLoading; });
+        document.querySelectorAll('#proposals-card button, #hazards-card [data-hazard-fix], .review-popup button').forEach(b => { b.disabled = isLoading; });
         if (btnComputeText) {
             btnComputeText.textContent = isLoading ? 'Computing Optimal Route...' : 'Compute Optimal Sea Route';
         }
@@ -2264,6 +2264,7 @@
 
         // Clear existing route graphics
         routeLayerGroup.clearLayers();
+        resetReview();
 
         // Convert [lon, lat] coordinates to Leaflet [lat, lon]
         const latLngs = coords.map(c => [c[1], c[0]]);
@@ -2451,7 +2452,216 @@
             if (!quiet) showToast(`Ignored ${ignored.length} stale shortcut ${ignored.length === 1 ? 'proposal' : 'proposals'}`, 'warning');
         }
 
+        renderHazards(props);
         renderProposals();
+    }
+
+    // =========================================================================
+    // 9.2 Route review: hazards and proposals, on the map and in the side pane
+    // =========================================================================
+    // Selection keys: 'proposal:<id>' or 'hazard:<index>'. Hazard indices are
+    // per response, so every new render clears the selection.
+    let reviewLayers = new Map();   // key -> { layer, base }
+    let reviewSelection = null;
+    let hazardsCloseExpanded = false;
+
+    const HAZARD_KIND_LABEL = {
+        'marnet': 'Network leg',
+        'osm-tss': 'TSS lane or join',
+        'connector': 'Port approach',
+        'smoothed': 'Smoothed leg',
+        'user-accepted': 'Accepted shortcut'
+    };
+
+    function themeColor(token) {
+        const v = getComputedStyle(document.documentElement).getPropertyValue(token).trim();
+        return v ? `rgb(${v.split(/\s+/).join(',')})` : '#f59e0b';
+    }
+
+    function resetReview() {
+        reviewLayers = new Map();
+        reviewSelection = null;
+    }
+
+    function formatLatLon(p) {
+        const lat = p[1], lon = p[0];
+        return `${Math.abs(lat).toFixed(2)}° ${lat >= 0 ? 'N' : 'S'} ${Math.abs(lon).toFixed(2)}° ${lon >= 0 ? 'E' : 'W'}`;
+    }
+
+    function passageName(tag) {
+        return String(tag).split('_').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ');
+    }
+
+    function hazardTitle(h) {
+        const legs = h.to - h.from;
+        const legText = `${legs} ${legs === 1 ? 'leg' : 'legs'}`;
+        if (h.passage) {
+            return h.severity === 'aground'
+                ? `${passageName(h.passage)}: ${legText} aground`
+                : `${passageName(h.passage)}: ${legText} close to land`;
+        }
+        const kind = HAZARD_KIND_LABEL[h.kind] || h.kind;
+        if (h.severity === 'aground') return legs > 1 ? `${kind} aground (${legText})` : `${kind} aground`;
+        return `${kind}: ${Number(h.min_clearance_nm).toFixed(1)} NM from land`;
+    }
+
+    // Pending proposals that can fix a hazard: not rejected, not accepted, still offered.
+    function hazardFixes(h) {
+        const offered = new Set(currentProposals.map(p => p.id));
+        return (h.fixes || []).filter(id => offered.has(id) && !rejectedProposalIds.has(id) && !acceptedProposalIds.has(id));
+    }
+
+    function hazardPopup(h, index) {
+        const aground = h.severity === 'aground';
+        const fixes = hazardFixes(h);
+        const rows = [
+            ['Severity', aground ? 'Aground' : 'Close pass'],
+            ['Clearance', aground ? 'touches land data' : `${Number(h.min_clearance_nm).toFixed(1)} NM`],
+            ['Legs', String(h.to - h.from)],
+            ['From', formatLatLon(h.start)]
+        ];
+        const action = fixes.length > 0
+            ? `<button class="review-btn review-btn--warn" data-hazard-fix="${escapeHtml(fixes[0])}" type="button">Show fix</button>`
+            : `<span class="review-tag">Needs attention</span>`;
+        return `<div class="review-popup">
+            <div class="review-popup__head ${aground ? 'is-aground' : 'is-close'}">
+                <span class="material-symbols-outlined" aria-hidden="true">${aground ? 'report' : 'warning'}</span>
+                <span>${escapeHtml(hazardTitle(h))}</span>
+            </div>
+            <dl class="review-popup__rows">${rows.map(([k, v]) => `<dt>${k}</dt><dd>${escapeHtml(v)}</dd>`).join('')}</dl>
+            ${h.note ? `<p class="review-popup__note">${escapeHtml(h.note)}</p>` : ''}
+            <div class="review-popup__actions">${action}</div>
+        </div>`;
+    }
+
+    function proposalPopup(p) {
+        const accepted = acceptedProposalIds.has(p.id);
+        const id = escapeHtml(p.id);
+        const actions = accepted
+            ? `<span class="review-tag review-tag--ok">Accepted</span><button class="review-btn" data-proposal-undo="${id}" type="button">Undo</button>`
+            : `<button class="review-btn review-btn--warn" data-proposal-accept="${id}" type="button">Accept</button><button class="review-btn" data-proposal-reject="${id}" type="button">Reject</button>`;
+        return `<div class="review-popup">
+            <div class="review-popup__head is-proposal">
+                <span class="material-symbols-outlined" aria-hidden="true">alt_route</span>
+                <span>Shortcut proposal</span>
+            </div>
+            <dl class="review-popup__rows">
+                <dt>Reason</dt><dd>${escapeHtml(p.reason)}</dd>
+                <dt>Clearance</dt><dd>${Number(p.min_clearance_nm).toFixed(1)} NM</dd>
+                <dt>Saves</dt><dd>${Number(p.saved_nm).toFixed(2)} NM</dd>
+            </dl>
+            <div class="review-popup__actions">${actions}</div>
+        </div>`;
+    }
+
+    function addReviewLayer(key, latLngs, style, popupHtml) {
+        const line = L.polyline(latLngs, Object.assign({ bubblingMouseEvents: false }, style))
+            .bindPopup(popupHtml, { className: 'review-popup-shell', maxWidth: 260, autoPanPadding: [40, 40] });
+        line.on('click', () => selectReviewItem(key, { fit: false, scroll: true, popup: false }));
+        routeLayerGroup.addLayer(line);
+        reviewLayers.set(key, { layer: line, base: style });
+        return line;
+    }
+
+    function selectReviewItem(key, opts) {
+        const prev = reviewSelection && reviewLayers.get(reviewSelection);
+        if (prev) prev.layer.setStyle({ weight: prev.base.weight, opacity: prev.base.opacity });
+        reviewSelection = key;
+        const entry = reviewLayers.get(key);
+        if (entry) {
+            entry.layer.setStyle({ weight: entry.base.weight + 3, opacity: 1 });
+            entry.layer.bringToFront();
+            if (opts.fit) map.fitBounds(entry.layer.getBounds(), { padding: [40, 40], maxZoom: 11 });
+            if (opts.popup) entry.layer.openPopup();
+        }
+        document.querySelectorAll('[data-review-key]').forEach(el => {
+            const on = el.dataset.reviewKey === key;
+            el.classList.toggle('is-selected', on);
+            el.setAttribute('aria-current', on ? 'true' : 'false');
+        });
+        const item = document.querySelector(`[data-review-key="${CSS.escape(key)}"]`);
+        if (item && key.startsWith('hazard:') && item.closest('#hazards-close-list') && !hazardsCloseExpanded) {
+            setHazardsCloseExpanded(true);
+        }
+        if (item && opts.scroll) item.scrollIntoView({ block: 'nearest', behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' });
+    }
+
+    function setHazardsCloseExpanded(on) {
+        hazardsCloseExpanded = on;
+        const list = document.getElementById('hazards-close-list');
+        const toggle = document.getElementById('hazards-close-toggle');
+        if (list) {
+            list.classList.toggle('hidden', !on);
+            list.classList.toggle('flex', on);
+        }
+        if (toggle) toggle.setAttribute('aria-expanded', String(on));
+    }
+
+    function hazardItem(h, index) {
+        const aground = h.severity === 'aground';
+        const fixes = hazardFixes(h);
+        const key = `hazard:${index}`;
+        const status = fixes.length > 0
+            ? `<button class="review-btn review-btn--warn" data-hazard-fix="${escapeHtml(fixes[0])}" type="button">Fix available: accept shortcut</button>`
+            : `<span class="review-tag">Needs attention</span>`;
+        return `<li class="review-item ${aground ? 'is-aground' : 'is-close'}" data-review-key="${key}">
+            <button class="review-item__main" data-review-select="${key}" type="button">
+                <span class="material-symbols-outlined review-item__icon" aria-hidden="true">${aground ? 'report' : 'warning'}</span>
+                <span class="flex flex-col min-w-0 gap-0.5">
+                    <span class="font-mono text-[10px] text-on-surface">${escapeHtml(hazardTitle(h))}</span>
+                    <span class="font-mono text-[9px] text-on-surface-variant tabular-nums">${escapeHtml(formatLatLon(h.start))}</span>
+                    ${h.note ? `<span class="text-[9px] text-on-surface-variant leading-tight">${escapeHtml(h.note)}</span>` : ''}
+                </span>
+            </button>
+            <span class="review-item__actions">${status}</span>
+        </li>`;
+    }
+
+    function renderHazards(props) {
+        const card = document.getElementById('hazards-card');
+        const list = document.getElementById('hazards-list');
+        const group = document.getElementById('hazards-close-group');
+        const closeList = document.getElementById('hazards-close-list');
+        const summary = document.getElementById('hazards-close-summary');
+        const countEl = document.getElementById('hazards-count');
+        if (!card || !list) return;
+
+        const hazards = props.hazards || [];
+        const latLngs = currentCoords.map(c => [c[1], c[0]]);
+        const red = themeColor('--color-error');
+        const amber = themeColor('--color-warning');
+
+        // Drawn over the route, under the proposals; one colour per severity
+        hazards.forEach((h, i) => {
+            const seg = latLngs.slice(h.from, h.to + 1);
+            if (seg.length < 2) return;
+            const aground = h.severity === 'aground';
+            addReviewLayer(`hazard:${i}`, seg, {
+                color: aground ? red : amber,
+                weight: aground ? 5 : 4,
+                opacity: 0.95,
+                lineCap: 'round',
+                lineJoin: 'round'
+            }, hazardPopup(h, i));
+        });
+
+        const aground = [], close = [];
+        hazards.forEach((h, i) => (h.severity === 'aground' ? aground : close).push([h, i]));
+        card.classList.toggle('hidden', hazards.length === 0);
+        card.classList.toggle('flex', hazards.length > 0);
+        if (countEl) countEl.textContent = String(hazards.length);
+        list.innerHTML = aground.map(([h, i]) => hazardItem(h, i)).join('');
+        list.classList.toggle('hidden', aground.length === 0);
+        list.classList.toggle('flex', aground.length > 0);
+
+        if (group && closeList && summary) {
+            group.classList.toggle('hidden', close.length === 0);
+            group.classList.toggle('flex', close.length > 0);
+            const clearance = Number(props.clearance_nm || 2);
+            summary.textContent = `${close.length} close ${close.length === 1 ? 'pass' : 'passes'} (under ${clearance} NM)`;
+            closeList.innerHTML = close.map(([h, i]) => hazardItem(h, i)).join('');
+            setHazardsCloseExpanded(hazardsCloseExpanded);
+        }
     }
 
     function proposalTooltip(p) {
@@ -2467,16 +2677,15 @@
 
         const visible = currentProposals.filter(p => !rejectedProposalIds.has(p.id));
 
-        // Dashed amber overlay for every pending proposal
+        // Dashed amber overlay for every pending proposal, clickable
         visible.forEach(p => {
             if (acceptedProposalIds.has(p.id) || !p.path || p.path.length < 2) return;
-            const line = L.polyline(p.path.map(c => [c[1], c[0]]), {
+            addReviewLayer(`proposal:${p.id}`, p.path.map(c => [c[1], c[0]]), {
                 color: '#f59e0b',
                 weight: 3,
                 opacity: 0.95,
                 dashArray: '6 6'
-            }).bindTooltip(proposalTooltip(p), { sticky: true });
-            routeLayerGroup.addLayer(line);
+            }, proposalPopup(p)).bindTooltip(proposalTooltip(p), { sticky: true });
         });
 
         card.classList.toggle('hidden', visible.length === 0);
@@ -2488,44 +2697,66 @@
         list.innerHTML = visible.map(p => {
             const accepted = acceptedProposalIds.has(p.id);
             const id = escapeHtml(p.id);
+            const key = escapeHtml(`proposal:${p.id}`);
             const actions = accepted
                 ? `<span class="font-mono text-[9px] px-1.5 py-0.5 rounded-sm bg-secondary/15 text-secondary border border-secondary/30 flex items-center gap-1"><span class="material-symbols-outlined text-[11px]">check</span>Accepted</span>
                    <button class="font-mono text-[9px] px-1.5 py-0.5 rounded-sm bg-surface-container hover:bg-surface-container-high text-on-surface-variant border border-surface-container-high cursor-pointer transition-colors" data-proposal-undo="${id}" type="button">Undo</button>`
                 : `<button class="font-mono text-[9px] px-1.5 py-0.5 rounded-sm bg-warning/20 hover:bg-warning/30 text-warning border border-warning/40 font-semibold cursor-pointer transition-colors" data-proposal-accept="${id}" type="button">Accept</button>
                    <button class="font-mono text-[9px] px-1.5 py-0.5 rounded-sm bg-surface-container hover:bg-surface-container-high text-on-surface-variant border border-surface-container-high cursor-pointer transition-colors" data-proposal-reject="${id}" type="button">Reject</button>`;
-            return `<li class="flex items-center justify-between gap-2 p-1.5 rounded-sm bg-surface-container-lowest border border-surface-container-high">
-                <span class="flex flex-col min-w-0">
-                    <span class="font-mono text-[10px] text-on-surface">${escapeHtml(p.reason)}</span>
-                    <span class="font-mono text-[9px] text-on-surface-variant tabular-nums">min ${Number(p.min_clearance_nm).toFixed(1)} NM clearance &bull; saves ${Number(p.saved_nm).toFixed(1)} NM</span>
-                </span>
-                <span class="flex items-center gap-1 shrink-0">${actions}</span>
+            const select = accepted ? '' : ` data-review-select="${key}"`;
+            return `<li class="review-item is-proposal" data-review-key="${key}">
+                <button class="review-item__main"${select} type="button"${accepted ? ' disabled' : ''}>
+                    <span class="flex flex-col min-w-0">
+                        <span class="font-mono text-[10px] text-on-surface">${escapeHtml(p.reason)}</span>
+                        <span class="font-mono text-[9px] text-on-surface-variant tabular-nums">min ${Number(p.min_clearance_nm).toFixed(1)} NM clearance &bull; saves ${Number(p.saved_nm).toFixed(1)} NM</span>
+                    </span>
+                </button>
+                <span class="review-item__actions">${actions}</span>
             </li>`;
         }).join('');
     }
 
     function setProposalAccepted(ids, accepted) {
+        map.closePopup();
         computeRoute({ acceptDelta: { ids, on: accepted }, keepView: true });
     }
 
-    (function bindProposalActions() {
-        const list = document.getElementById('proposals-list');
+    function rejectProposal(id) {
+        // Reject only hides the item; the route is unchanged
+        map.closePopup();
+        rejectedProposalIds.add(id);
+        routeLayerGroup.clearLayers();
+        renderRoute(currentRouteData, { keepView: true, quiet: true });
+    }
+
+    // One handler for the side pane and the map popups
+    function handleReviewClick(e) {
+        const btn = e.target.closest('button');
+        if (!btn || btn.disabled) return;
+        const d = btn.dataset;
+        if (d.proposalAccept) setProposalAccepted([d.proposalAccept], true);
+        else if (d.proposalUndo) setProposalAccepted([d.proposalUndo], false);
+        else if (d.proposalReject) rejectProposal(d.proposalReject);
+        else if (d.hazardFix) selectReviewItem(`proposal:${d.hazardFix}`, { fit: true, scroll: true, popup: true });
+        else if (d.reviewSelect) selectReviewItem(d.reviewSelect, { fit: true, scroll: false, popup: true });
+    }
+
+    (function bindReviewActions() {
+        ['hazards-card', 'proposals-list'].forEach(id => {
+            const el = document.getElementById(id);
+            if (el) el.addEventListener('click', handleReviewClick);
+        });
+        const toggle = document.getElementById('hazards-close-toggle');
+        if (toggle) toggle.addEventListener('click', () => setHazardsCloseExpanded(!hazardsCloseExpanded));
+        // Leaflet stops click propagation out of popups: bind on each open
+        map.on('popupopen', (e) => {
+            const el = e.popup.getElement();
+            if (el && el.querySelector('.review-popup') && !el.dataset.reviewBound) {
+                el.dataset.reviewBound = '1';
+                el.addEventListener('click', handleReviewClick);
+            }
+        });
         const acceptAll = document.getElementById('btn-accept-all');
-        if (list) {
-            list.addEventListener('click', (e) => {
-                const btn = e.target.closest('button');
-                if (!btn) return;
-                if (btn.dataset.proposalAccept) {
-                    setProposalAccepted([btn.dataset.proposalAccept], true);
-                } else if (btn.dataset.proposalUndo) {
-                    setProposalAccepted([btn.dataset.proposalUndo], false);
-                } else if (btn.dataset.proposalReject) {
-                    // Reject only hides the item; the route is unchanged
-                    rejectedProposalIds.add(btn.dataset.proposalReject);
-                    routeLayerGroup.clearLayers();
-                    renderRoute(currentRouteData, { keepView: true, quiet: true });
-                }
-            });
-        }
         if (acceptAll) {
             acceptAll.addEventListener('click', () => {
                 const ids = currentProposals

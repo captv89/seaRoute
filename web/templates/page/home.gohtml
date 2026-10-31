@@ -274,6 +274,30 @@
                 <ul class="flex flex-col gap-1 font-mono text-[10px] text-on-surface leading-tight" id="route-warnings-list"></ul>
             </div>
 
+            <!-- Route hazards: segments on or near land -->
+            <section class="hidden p-2.5 rounded-sm bg-surface-container-low border border-error/40 flex-col gap-2" id="hazards-card" aria-labelledby="hazards-title">
+                <div class="flex items-center justify-between gap-2">
+                    <h3 class="font-label-sm text-[10px] font-bold uppercase text-error flex items-center gap-1.5" id="hazards-title">
+                        <span class="material-symbols-outlined text-[14px]" aria-hidden="true">report</span> Route Hazards
+                        <span class="font-mono text-[9px] px-1.5 rounded-sm bg-error/15 border border-error/40 tabular-nums" id="hazards-count">0</span>
+                    </h3>
+                </div>
+                <p class="text-[9px] font-mono text-on-surface-variant leading-tight">
+                    Legs that touch land or pass inside the clearance. Select one to find it on the map.
+                </p>
+                <ul class="flex flex-col gap-1.5" id="hazards-list"></ul>
+                <div class="hidden flex-col gap-1.5" id="hazards-close-group">
+                    <button class="review-toggle flex items-center justify-between gap-2 w-full p-1.5 rounded-sm bg-surface-container-lowest border border-warning/30 hover:border-warning/60 text-left cursor-pointer" id="hazards-close-toggle" type="button" aria-expanded="false" aria-controls="hazards-close-list">
+                        <span class="flex items-center gap-1.5 font-mono text-[10px] text-warning">
+                            <span class="material-symbols-outlined text-[13px]" aria-hidden="true">warning</span>
+                            <span id="hazards-close-summary"></span>
+                        </span>
+                        <span class="material-symbols-outlined text-[14px] text-on-surface-variant review-toggle__chevron" aria-hidden="true">expand_more</span>
+                    </button>
+                    <ul class="hidden flex-col gap-1.5" id="hazards-close-list"></ul>
+                </div>
+            </section>
+
             <!-- Shortcut proposals -->
             <div class="hidden p-2.5 rounded-sm bg-surface-container-low border border-warning/40 flex-col gap-2" id="proposals-card">
                 <div class="flex items-center justify-between gap-2">
