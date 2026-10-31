@@ -2,14 +2,14 @@ package route
 
 import (
 	"reflect"
-	"slices"
 	"testing"
+	"time"
 )
 
 func TestHazardAground(t *testing.T) {
 	g := NewWith(chainSegs(Position{0, 0}, Position{1, 0}), landOf(rect(0.4, -0.1, 0.6, 0.1)), nil)
 	r := routeOn(t, g, Options{}, Position{0, 0}, Position{1, 0})
-	want := []Hazard{{From: 0, To: 1, Start: Position{0, 0}, End: Position{1, 0}, Severity: "aground", Kind: "marnet", Fixes: []string{}}}
+	want := []Hazard{{From: 0, To: 1, Start: Position{0, 0}, End: Position{1, 0}, Severity: "aground", Kind: "marnet"}}
 	if !reflect.DeepEqual(r.Hazards, want) {
 		t.Errorf("hazards %+v", r.Hazards)
 	}
@@ -41,23 +41,6 @@ func TestHazardsEmptyWithoutLand(t *testing.T) {
 	}
 }
 
-func TestHazardFixLinksProposal(t *testing.T) {
-	// Base path A-B-C crosses an island; the chord A-C passes it at 1.5 NM.
-	a, b, c := Position{0, 0}, Position{0.1, 0.05}, Position{0.2, 0}
-	g := NewWith(chainSegs(a, b, c), landOf(rect(0.05, passLat, 0.15, 0.1)), coverTSS())
-	r := routeOn(t, g, Options{Kinks: true, ClearanceNM: 2}, a, c)
-	if len(r.Proposals) != 1 || len(r.Hazards) != 1 {
-		t.Fatalf("proposals %+v hazards %+v", r.Proposals, r.Hazards)
-	}
-	if h := r.Hazards[0]; h.Severity != "aground" || !slices.Equal(h.Fixes, []string{r.Proposals[0].ID}) {
-		t.Errorf("hazard %+v", h)
-	}
-	r = routeOn(t, g, Options{Kinks: true, ClearanceNM: 2, Accept: []string{r.Proposals[0].ID}}, a, c)
-	if len(r.Hazards) != 1 || r.Hazards[0].Severity != "close" || r.Hazards[0].Kind != "user-accepted" {
-		t.Errorf("after accept: hazards %+v", r.Hazards)
-	}
-}
-
 func TestHazardIndicesAcrossLegs(t *testing.T) {
 	// Two legs via (1, 0); land only on the second leg.
 	g := NewWith(chainSegs(Position{0, 0}, Position{1, 0}, Position{2, 0}), landOf(rect(1.4, -0.1, 1.6, 0.1)), nil)
@@ -72,12 +55,7 @@ func TestRealHazards(t *testing.T) {
 		t.Skip("short")
 	}
 	g := testTSSGraph(t)
-	first := routeOn(t, g, Options{Kinks: true}, rotterdam, singapore)
-	var ids []string
-	for _, p := range first.Proposals {
-		ids = append(ids, p.ID)
-	}
-	r := routeOn(t, g, Options{Kinks: true, Accept: ids}, rotterdam, singapore)
+	r := routeOn(t, g, Options{}, rotterdam, singapore)
 	suez := false
 	for _, h := range r.Hazards {
 		t.Logf("hazard %+v", h)
@@ -112,21 +90,6 @@ func TestRealHazards(t *testing.T) {
 	}
 }
 
-func TestCloseHazardNotFixedByCloserProposal(t *testing.T) {
-	// Base A-B-C passes 1.8 NM from land to the south of B; the chord A-C
-	// passes 1.5 NM from land to the north. The proposal is closer to land
-	// than the hazard, so it is no fix.
-	south := -0.06 - 1.8*MetresPerNM/degLatM
-	g := NewWith(chainSegs(kA, kB, kC), landOf(rect(0.06, passLat, 0.14, 0.1), rect(0.08, -0.3, 0.12, south)), coverTSS())
-	r := routeOn(t, g, Options{Kinks: true, ClearanceNM: 2}, kA, kC)
-	if len(r.Proposals) != 1 || len(r.Hazards) != 1 || r.Hazards[0].Severity != "close" {
-		t.Fatalf("proposals %+v hazards %+v", r.Proposals, r.Hazards)
-	}
-	if len(r.Hazards[0].Fixes) != 0 {
-		t.Errorf("close hazard at %.1f NM lists proposal at %.1f NM as a fix", r.Hazards[0].MinClearanceNM, r.Proposals[0].MinClearanceNM)
-	}
-}
-
 func TestConnectorOutsideCorridorUnchecked(t *testing.T) {
 	land := landOf(rect(5, 5, 6, 6))
 	land.CorridorNM = 10
@@ -139,5 +102,91 @@ func TestConnectorOutsideCorridorUnchecked(t *testing.T) {
 	g = NewWith(chainSegs(Position{0, 0}, Position{1, 0}), land, nil)
 	if r = routeOn(t, g, Options{}, Position{0, 1}, Position{1, 0}); len(r.Hazards) != 0 {
 		t.Errorf("full coverage: hazards %+v", r.Hazards)
+	}
+}
+
+var (
+	southampt  = Position{-1.40, 50.89}
+	hamburg    = Position{9.97, 53.54}
+	chesapeake = Position{-75.8, 36.9}
+	newYork    = Position{-74.0, 40.6}
+)
+
+// passLat is the latitude of the land edge that sits 1.5 NM from the line lat 0.
+var passLat = 1.5 * MetresPerNM / degLatM
+
+func chainSegs(pts ...Position) []Segment {
+	var segs []Segment
+	for i := 0; i+1 < len(pts); i++ {
+		segs = append(segs, Segment{A: pts[i], B: pts[i+1]})
+	}
+	return segs
+}
+
+func rect(lon0, lat0, lon1, lat1 float64) []Position {
+	return []Position{{lon0, lat0}, {lon1, lat0}, {lon1, lat1}, {lon0, lat1}, {lon0, lat0}}
+}
+
+func landOf(rings ...[]Position) *Land { return NewLand(rings, 0, "test") }
+
+func TestRoutePerformance(t *testing.T) {
+	if testing.Short() {
+		t.Skip("short")
+	}
+	g := testTSSGraph(t)
+	for _, c := range []struct {
+		name     string
+		from, to Position
+	}{
+		{"Rotterdam-Singapore", rotterdam, singapore},
+		{"Southampton-Hamburg", southampt, hamburg},
+		{"Rotterdam-Gdynia", rotterdam, gdynia},
+		{"Bilbao-Gdynia", bilbao, gdynia},
+		{"RichardsBay-SeptIles", richardsBay, septIles},
+	} {
+		start := time.Now()
+		r := routeOn(t, g, Options{}, c.from, c.to)
+		took := time.Since(start)
+		t.Logf("%s: %v, %d vertices, %d stretches, %d hazards", c.name, took, len(r.Path), len(r.Stretches), len(r.Hazards))
+		if took > time.Second {
+			t.Errorf("%s took %v", c.name, took)
+		}
+	}
+}
+
+func TestStretchFlags(t *testing.T) {
+	if testing.Short() {
+		t.Skip("short")
+	}
+	g := testTSSGraph(t)
+	has := func(r Route, flag string) (Stretch, bool) {
+		for _, s := range r.Stretches {
+			if s.Flag == flag {
+				return s, true
+			}
+		}
+		return Stretch{}, false
+	}
+	checkBounds := func(r Route) {
+		for _, s := range r.Stretches {
+			if s.From < 0 || s.To <= s.From || s.To >= len(r.Path) {
+				t.Errorf("bad stretch %v for %d vertices", s, len(r.Path))
+			}
+		}
+	}
+	r := routeOn(t, g, Options{}, rotterdam, singapore)
+	checkBounds(r)
+	if s, ok := has(r, "connector"); !ok || s.Severity != "label" {
+		t.Errorf("no connector stretch: %v", r.Stretches)
+	}
+	r = routeOn(t, g, Options{}, rotterdam, bilbao)
+	checkBounds(r)
+	if _, ok := has(r, "osm-tss"); !ok {
+		t.Errorf("Dover transit has no osm-tss stretch: %v", r.Stretches)
+	}
+	r = routeOn(t, g, Options{}, chesapeake, newYork)
+	checkBounds(r)
+	if s, ok := has(r, "tss-unknown"); !ok || s.Severity != "info" {
+		t.Errorf("no tss-unknown stretch: %v", r.Stretches)
 	}
 }

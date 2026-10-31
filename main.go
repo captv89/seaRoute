@@ -49,12 +49,8 @@ type WaypointRequest struct {
 	Avoid []string `json:"avoid,omitempty"`
 	// Allow opens passages closed by default (the Arctic routes). Optional.
 	Allow []string `json:"allow,omitempty"`
-	// Kinks switches smoothing and proposals on or off. Default true.
-	Kinks *bool `json:"kinks,omitempty"`
 	// ClearanceNM is the land clearance in nautical miles, 0.5-10. Default 2.
 	ClearanceNM *float64 `json:"clearance_nm,omitempty"`
-	// Accept lists proposal IDs to apply. At most 200, each at most 32 chars.
-	Accept []string `json:"accept,omitempty"`
 }
 
 // maxWaypointsBody caps the /waypoints body; 200 IDs of 32 chars is under 10 KB.
@@ -411,12 +407,11 @@ func setupRoutes(router *gin.Engine, app *App) {
 			return
 		}
 
-		kinks := req.Kinks == nil || *req.Kinks
 		clearance := route.DefaultClearanceNM
 		if req.ClearanceNM != nil {
 			clearance = *req.ClearanceNM
 		}
-		if err := route.CheckKinkOptions(clearance, req.Accept); err != nil {
+		if err := route.CheckClearance(clearance); err != nil {
 			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 			return
 		}
@@ -444,9 +439,7 @@ func setupRoutes(router *gin.Engine, app *App) {
 			Avoid:       req.Avoid,
 			Allow:       req.Allow,
 			Algorithm:   alg,
-			Kinks:       kinks,
 			ClearanceNM: clearance,
-			Accept:      req.Accept,
 		}
 
 		// Calculate the passage using the cached route graph
@@ -494,7 +487,7 @@ func calculatePassageInfo(originCoords, destinationCoords route.Position, routeN
 	if clearance == 0 {
 		clearance = route.DefaultClearanceNM
 	}
-	return generateOutput(r, opts.Kinks, clearance, originCoords, destinationCoords, totalDistance, distToFirstWp, distFromLastWp, networkDistance, routeName, r.Passages), nil
+	return generateOutput(r, clearance, originCoords, destinationCoords, totalDistance, distToFirstWp, distFromLastWp, networkDistance, routeName, r.Passages), nil
 }
 
 // filterPorts filters the ports from the []Port struct

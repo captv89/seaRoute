@@ -52,14 +52,8 @@ type Options struct {
 	// edges are skipped and TSS blocks are ignored. Internal; not exposed in
 	// the UI or APIs.
 	NoTSS bool
-	// Kinks removes route kinks per leg (see smooth.go): shortcuts that keep
-	// ClearanceNM from land are applied, nearer ones are offered as Proposals.
-	// Needs a loaded land dataset.
-	Kinks bool
-	// ClearanceNM is the land clearance a shortcut must keep; 0 means 2.
+	// ClearanceNM is the land clearance hazards are measured against; 0 means 2.
 	ClearanceNM float64
-	// Accept lists Proposal IDs to apply. Unknown IDs go to Route.IgnoredAccept.
-	Accept []string
 }
 
 // ClosedByDefault are passages a route avoids unless Options.Allow opens
@@ -101,7 +95,7 @@ type Leg struct {
 	lifted    []bool
 	liftOrder []int32
 	// segs describes each path segment: the network edge index it follows, or
-	// segConnector, segSmoothed, segAccepted (see smooth.go).
+	// segConnector (see provenance.go).
 	segs []int32
 }
 
@@ -121,12 +115,8 @@ type Route struct {
 	Passages  []string   `json:"passages"`
 	// Warnings has one entry per scheme whose rules were lifted on any leg.
 	Warnings []Warning `json:"warnings"`
-	// Proposals are kink shortcuts the caller may accept, by ID, in Options.Accept.
-	Proposals []Proposal `json:"proposals"`
 	// Stretches label runs of Path by provenance; From and To index Path.
 	Stretches []Stretch `json:"stretches"`
-	// IgnoredAccept lists Options.Accept IDs that matched nothing on this route.
-	IgnoredAccept []string `json:"ignored_accept"`
 	// Hazards are runs of Path that touch land or pass closer than the
 	// clearance. Empty without land data.
 	Hazards []Hazard `json:"hazards"`
@@ -462,11 +452,7 @@ func (g *Graph) Route(points []Position, opts Options) (Route, error) {
 		snapped[i] = v
 	}
 
-	r := Route{Warnings: []Warning{}, Proposals: []Proposal{}, Stretches: []Stretch{}, IgnoredAccept: []string{}}
-	var sm *smoother
-	if g.land != nil && opts.Kinks {
-		sm = g.newSmoother(opts)
-	}
+	r := Route{Warnings: []Warning{}, Stretches: []Stretch{}}
 	warned := map[int32]bool{}
 	for i := 0; i+1 < len(points); i++ {
 		from, to := points[i], points[i+1]
@@ -479,13 +465,6 @@ func (g *Graph) Route(points []Position, opts Options) (Route, error) {
 		leg, err := g.leg(from, to, snapped[i], snapped[i+1], blocked, opts.NoTSS, opts.Algorithm)
 		if err != nil {
 			return Route{}, fmt.Errorf("leg %d: %w", i+1, err)
-		}
-		if sm != nil {
-			base := max(0, len(r.Path)-1) // index of the leg start in r.Path
-			for _, p := range sm.smoothLeg(&leg) {
-				p.from, p.to = p.from+base, p.to+base
-				r.Proposals = append(r.Proposals, p)
-			}
 		}
 		r.Legs = append(r.Legs, leg)
 		for _, k := range leg.liftOrder {
@@ -517,8 +496,7 @@ func (g *Graph) Route(points []Position, opts Options) (Route, error) {
 	}
 	flags, schemes := g.segFlags(r.Legs)
 	r.Stretches = stretches(flags, schemes)
-	r.IgnoredAccept = ignoredAccept(opts.Accept, sm)
-	r.Hazards = g.hazards(r.Legs, r.Path, r.Proposals, opts)
+	r.Hazards = g.hazards(r.Legs, r.Path, opts)
 	return r, nil
 }
 

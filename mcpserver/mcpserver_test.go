@@ -3,7 +3,6 @@ package mcpserver
 import (
 	"context"
 	"encoding/json"
-	"math"
 	"slices"
 	"strings"
 	"sync"
@@ -25,7 +24,7 @@ var (
 	fullErr   error
 )
 
-// fullSession serves a graph with land and TSS, so proposals can occur.
+// fullSession serves a graph with land and TSS, so hazards can occur.
 func fullSession(t *testing.T) *mcp.ClientSession {
 	t.Helper()
 	fullOnce.Do(func() {
@@ -154,60 +153,17 @@ func withArgs(extra map[string]any) map[string]any {
 	return a
 }
 
-func TestDistanceToGoProposalsNotApplied(t *testing.T) {
+func TestIncludePathAddsPathAndStretches(t *testing.T) {
 	cs := fullSession(t)
-	var smooth, plain distanceOut
-	call(t, cs, "distance_to_go", withArgs(nil), &smooth)
-	call(t, cs, "distance_to_go", withArgs(map[string]any{"kinks": false}), &plain)
-	if len(smooth.Proposals) == 0 {
-		t.Fatal("no proposals for Rotterdam to Singapore")
-	}
-	if len(plain.Proposals) != 0 {
-		t.Errorf("kinks=false returned %d proposals", len(plain.Proposals))
-	}
-	for _, p := range smooth.Proposals {
-		if p.ID == "" || p.Reason == "" || len(p.Path) != 0 {
-			t.Errorf("bad proposal without include_path: %+v", p)
-		}
-	}
-	var again distanceOut
-	call(t, cs, "distance_to_go", withArgs(map[string]any{"accept": []string{}}), &again)
-	if again.DistanceNM != smooth.DistanceNM {
-		t.Errorf("listing proposals changed distance: %.1f vs %.1f", again.DistanceNM, smooth.DistanceNM)
-	}
-}
-
-func TestDistanceToGoAcceptApplies(t *testing.T) {
-	cs := fullSession(t)
-	var base, applied, ignored distanceOut
-	call(t, cs, "distance_to_go", withArgs(nil), &base)
-	if len(base.Proposals) == 0 {
-		t.Fatal("no proposals")
-	}
-	p := base.Proposals[0]
-	call(t, cs, "distance_to_go", withArgs(map[string]any{"accept": []string{p.ID}}), &applied)
-	if drop := base.DistanceNM - applied.DistanceNM; math.Abs(drop-p.SavedNM) > 0.11 {
-		t.Errorf("distance dropped %.2f nm; proposal saved_nm %.2f", drop, p.SavedNM)
-	}
-	if len(applied.IgnoredAccept) != 0 {
-		t.Errorf("ignored_accept = %v; want empty", applied.IgnoredAccept)
-	}
-	call(t, cs, "distance_to_go", withArgs(map[string]any{"kinks": false, "accept": []string{p.ID}}), &ignored)
-	if !slices.Equal(ignored.IgnoredAccept, []string{p.ID}) {
-		t.Errorf("kinks=false ignored_accept = %v; want [%s]", ignored.IgnoredAccept, p.ID)
-	}
-}
-
-func TestIncludePathAddsProposalPathAndStretches(t *testing.T) {
-	cs := fullSession(t)
+	pts := []map[string]any{{"port": "Rotterdam"}, {"lat": 1.26, "lon": 103.8}}
 	var out routeOut
-	call(t, cs, "route", map[string]any{"points": []map[string]any{{"port": "Rotterdam"}, {"lat": 1.26, "lon": 103.8}}, "include_path": true}, &out)
-	if len(out.Proposals) == 0 || len(out.Proposals[0].Path) < 2 || len(out.Stretches) == 0 {
-		t.Errorf("want proposal paths and stretches with include_path; got %d proposals, %d stretches", len(out.Proposals), len(out.Stretches))
+	call(t, cs, "route", map[string]any{"points": pts, "include_path": true}, &out)
+	if len(out.Path) < 2 || len(out.Stretches) == 0 {
+		t.Errorf("want path and stretches with include_path; got %d vertices, %d stretches", len(out.Path), len(out.Stretches))
 	}
 	var bare routeOut
-	call(t, cs, "route", map[string]any{"points": []map[string]any{{"port": "Rotterdam"}, {"lat": 1.26, "lon": 103.8}}}, &bare)
-	if len(bare.Stretches) != 0 || len(bare.Proposals) == 0 || len(bare.Proposals[0].Path) != 0 {
+	call(t, cs, "route", map[string]any{"points": pts}, &bare)
+	if len(bare.Path) != 0 || len(bare.Stretches) != 0 {
 		t.Errorf("path data returned without include_path")
 	}
 }
@@ -218,10 +174,6 @@ func TestClearanceOutOfRangeToolError(t *testing.T) {
 		if res := call(t, cs, "distance_to_go", withArgs(map[string]any{"clearance_nm": c}), nil); !res.IsError {
 			t.Errorf("clearance_nm %v: want tool error", c)
 		}
-	}
-	long := strings.Repeat("x", 33)
-	if res := call(t, cs, "route", map[string]any{"points": []map[string]any{{"port": "Rotterdam"}, {"port": "Gdynia"}}, "accept": []string{long}}, nil); !res.IsError {
-		t.Error("overlong accept ID: want tool error")
 	}
 }
 

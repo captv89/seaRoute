@@ -19,11 +19,9 @@ type Hazard struct {
 	// MinClearanceNM is the smallest clearance beyond the land tolerance,
 	// rounded to 0.1; 0 when aground.
 	MinClearanceNM float64 `json:"min_clearance_nm"`
-	Kind           string  `json:"kind"` // provenance: marnet, osm-tss, connector, smoothed, user-accepted
+	Kind           string  `json:"kind"` // provenance: marnet, osm-tss, connector
 	Passage        string  `json:"passage,omitempty"`
 	Note           string  `json:"note,omitempty"`
-	// Fixes lists the pending proposals that replace part of the run.
-	Fixes []string `json:"fixes"`
 }
 
 const (
@@ -33,23 +31,18 @@ const (
 )
 
 // hazards checks every segment of path against land and merges adjacent runs
-// with the same severity, kind and passage. Proposals not in opts.Accept that
-// overlap a run are listed as its fixes.
-func (g *Graph) hazards(legs []Leg, path []Position, props []Proposal, opts Options) []Hazard {
+// with the same severity, kind and passage.
+func (g *Graph) hazards(legs []Leg, path []Position, opts Options) []Hazard {
 	out := []Hazard{}
 	if g.land == nil {
 		return out
 	}
 	c := opts.ClearanceNM
 	if c <= 0 {
-		c = defaultClearanceNM
+		c = DefaultClearanceNM
 	}
 	tol := g.land.Tolerance
 	limit := c*MetresPerNM + tol
-	accepted := map[string]bool{}
-	for _, id := range opts.Accept {
-		accepted[id] = true
-	}
 
 	k := 0 // index into path segments
 	for _, l := range legs {
@@ -98,14 +91,6 @@ func (g *Graph) hazards(legs []Leg, path []Position, props []Proposal, opts Opti
 		case h.Kind == "connector":
 			h.Note = noteConnector
 		}
-		h.Fixes = []string{}
-		for _, p := range props {
-			// A close pass is fixed only by a shortcut that keeps farther off.
-			better := h.Severity != "close" || p.MinClearanceNM > h.MinClearanceNM
-			if !accepted[p.ID] && p.from < h.To && p.to > h.From && better {
-				h.Fixes = append(h.Fixes, p.ID)
-			}
-		}
 	}
 	return out
 }
@@ -116,10 +101,6 @@ func (g *Graph) segKind(code int32) string {
 	switch {
 	case code == segConnector:
 		return "connector"
-	case code == segAccepted:
-		return "user-accepted"
-	case code == segSmoothed:
-		return "smoothed"
 	case g.flags[code]&(edgeLane|edgeJoin) != 0:
 		return "osm-tss"
 	}

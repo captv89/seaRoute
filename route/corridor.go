@@ -4,8 +4,8 @@ import "math"
 
 // The land dataset keeps only coastline within Land.CorridorNM of a MARNET
 // vertex (see cmd/land-import). A shortcut judged against land the dataset
-// does not hold could cross an island or a coast it cannot see, so smoothing
-// only judges shortcuts whose every point lies well inside that corridor.
+// does not hold could cross an island or a coast it cannot see, so the router
+// only judges legs whose every point lies well inside that corridor.
 
 // corridorCellDeg is the cell size of the MARNET vertex grid, in degrees.
 const corridorCellDeg = 1.0
@@ -21,7 +21,7 @@ func (g *Graph) buildCorridor() {
 }
 
 // inCorridor reports whether every sample of the rhumb leg a-b (every
-// smoothSampleNM, ends included) lies within CorridorNM - marginM of a MARNET
+// corridorSampleNM, ends included) lies within CorridorNM - marginM of a MARNET
 // vertex. It is true when there is no land data or the data has no corridor.
 func (g *Graph) inCorridor(a, b Position, marginM float64) bool {
 	if g.land == nil || g.land.CorridorNM == 0 {
@@ -31,7 +31,7 @@ func (g *Graph) inCorridor(a, b Position, marginM float64) bool {
 	if r <= 0 {
 		return false
 	}
-	for _, p := range rhumbSamples(a, b, smoothSampleNM) {
+	for _, p := range rhumbSamples(a, b, corridorSampleNM) {
 		if !g.nearVertex(p, r) {
 			return false
 		}
@@ -81,3 +81,6 @@ func rhumbSamples(a, b Position, stepNM float64) []Position {
 	}
 	return append(out, b)
 }
+
+// corridorSampleNM is the spacing of the samples along a leg in inCorridor.
+const corridorSampleNM = 5.0

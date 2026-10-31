@@ -19,11 +19,6 @@
     let currentTotalDistNM = 8420;
     let currentWaypoints = [];
     let currentCoords = [];
-    // Kink-removal state: shortcut proposals are accepted per route, never globally.
-    let currentProposals = [];
-    let acceptedProposalIds = new Set();
-    let rejectedProposalIds = new Set();
-    let routeInputSig = '';
     let routeRequestSeq = 0; // monotonically increasing; only the latest response is rendered
     let mapPickingMode = null; // null | 'origin' | 'dest'
     let currentGlowPolyline = null;
@@ -2098,10 +2093,7 @@
     const iconCompute = document.getElementById('icon-compute');
     const btnComputeText = document.getElementById('btn-compute-text');
 
-    let computeInFlight = false;
-
     function setComputeLoading(isLoading) {
-        computeInFlight = isLoading;
         if (btnCompute) btnCompute.disabled = isLoading;
         if (spinnerCompute) {
             if (isLoading) spinnerCompute.classList.remove('hidden');
@@ -2111,15 +2103,13 @@
             if (isLoading) iconCompute.classList.add('hidden');
             else iconCompute.classList.remove('hidden');
         }
-        // Proposal actions would race the in-flight request
-        document.querySelectorAll('#proposals-card button, #hazards-card [data-hazard-fix], .review-popup button').forEach(b => { b.disabled = isLoading; });
+        document.querySelectorAll('.review-popup button').forEach(b => { b.disabled = isLoading; });
         if (btnComputeText) {
             btnComputeText.textContent = isLoading ? 'Computing Optimal Route...' : 'Compute Optimal Sea Route';
         }
     }
 
-    // Kink-removal controls
-    const toggleKinks = document.getElementById('toggle-kinks');
+    // Land clearance controls
     const clearanceInput = document.getElementById('clearance-input');
     const clearanceDec = document.getElementById('clearance-dec');
     const clearanceInc = document.getElementById('clearance-inc');
@@ -2139,16 +2129,11 @@
     }
 
     function syncClearanceState() {
-        const on = !toggleKinks || toggleKinks.checked;
         const v = readClearance();
-        [clearanceInput, clearanceDec, clearanceInc].forEach(el => { if (el) el.disabled = !on; });
-        if (clearanceDec && on) clearanceDec.disabled = v <= CLEARANCE_MIN;
-        if (clearanceInc && on) clearanceInc.disabled = v >= CLEARANCE_MAX;
-        const row = document.getElementById('clearance-row');
-        if (row) row.classList.toggle('opacity-50', !on);
+        if (clearanceDec) clearanceDec.disabled = v <= CLEARANCE_MIN;
+        if (clearanceInc) clearanceInc.disabled = v >= CLEARANCE_MAX;
     }
 
-    if (toggleKinks) toggleKinks.addEventListener('change', syncClearanceState);
     if (clearanceInput) {
         // Snap to a valid step once the user is done typing.
         clearanceInput.addEventListener('change', () => writeClearance(readClearance()));
@@ -2158,7 +2143,6 @@
     syncClearanceState();
 
     /**
-     * opts.acceptDelta: {ids, on} Accept/Undo change, committed only after the response succeeds
      * opts.keepView: do not re-fit the map to the route
      */
     function computeRoute(opts = {}) {
@@ -2180,37 +2164,14 @@
         const avoidList = Array.from(document.querySelectorAll('.avoid-pill.active'))
             .map(p => p.getAttribute('data-avoid'))
             .filter(Boolean);
-        const kinks = toggleKinks ? toggleKinks.checked : true;
         const clearanceNM = readClearance();
-
-        // Accepted proposals belong to one route: reset them when its inputs change.
-        const sig = JSON.stringify([fromLat, fromLon, toLat, toLon, [...avoidList].sort(), kinks, clearanceNM]);
-        let acceptDelta = opts.acceptDelta || null;
-        if (sig !== routeInputSig) {
-            const hadState = acceptedProposalIds.size > 0 || rejectedProposalIds.size > 0;
-            routeInputSig = sig;
-            acceptedProposalIds = new Set();
-            rejectedProposalIds = new Set();
-            if (acceptDelta) {
-                // Stale proposal IDs belong to the previous inputs: recompute without them
-                acceptDelta = null;
-                opts = Object.assign({}, opts, { keepView: false });
-                showToast('Route inputs changed \u2014 proposals recomputed', 'info');
-            } else if (hadState) {
-                showToast('Route inputs changed \u2014 accepted shortcuts reset', 'info');
-            }
-        }
-        const candidate = new Set(acceptedProposalIds);
-        if (acceptDelta) acceptDelta.ids.forEach(id => acceptDelta.on ? candidate.add(id) : candidate.delete(id));
 
         const requestPayload = {
             from: { lat: fromLat, lon: fromLon },
             to: { lat: toLat, lon: toLon },
             algorithm: currentAlgorithm,
             avoid: avoidList,
-            kinks: kinks,
-            clearance_nm: clearanceNM,
-            accept: Array.from(candidate)
+            clearance_nm: clearanceNM
         };
 
         const reqId = ++routeRequestSeq;
@@ -2232,8 +2193,6 @@
             .then(data => {
                 if (reqId !== routeRequestSeq) return; // superseded by a newer request
                 setComputeLoading(false);
-                // Commit the accepted set only now, so the list always matches the drawn route
-                acceptedProposalIds = candidate;
                 renderRoute(data, { keepView: Boolean(opts.keepView) });
             })
             .catch(err => {
@@ -2263,7 +2222,6 @@
 
         currentCoords = coords;
         currentWaypoints = waypoints;
-        currentProposals = props.proposals || [];
 
         // Clear existing route graphics
         routeLayerGroup.clearLayers();
@@ -2408,26 +2366,24 @@
         // 4. Update Waypoint Manifest Table
         renderManifestTable(waypoints);
 
-        // 5. Kink removal: warnings, proposals, ignored IDs, unknown-coast note
-        renderRouteNotices(props, Boolean(opts.quiet));
+        // 5. Route notices: warnings, hazards, unknown-coast note
+        renderRouteNotices(props);
 
         if (!opts.quiet) showToast(`Sea route calculated successfully (${Math.round(totalDistNM).toLocaleString()} NM)`);
     }
 
     // =========================================================================
-    // 9.1 Kink Removal Output: warnings banner, proposals, stretch notes
+    // 9.1 Route notices: warnings banner, hazards, stretch notes
     // =========================================================================
     const FLAG_STYLES = {
         'tss-unresolved': 'text-error font-semibold',
         'tss-unknown': 'text-on-surface-variant italic',
-        'user-accepted': 'text-secondary',
         'osm-tss': 'text-tss',
-        'smoothed': 'text-primary',
         'connector': 'text-on-surface-variant',
         'marnet': 'text-on-surface-variant'
     };
 
-    function renderRouteNotices(props, quiet) {
+    function renderRouteNotices(props) {
         // Warnings banner (tss-unresolved)
         const warnBox = document.getElementById('route-warnings');
         const warnList = document.getElementById('route-warnings-list');
@@ -2448,21 +2404,13 @@
             unknownNote.classList.toggle('flex', hasUnknown);
         }
 
-        // Accepted IDs the server did not recognise: drop them and say so
-        const ignored = props.ignored_accept || [];
-        if (ignored.length > 0) {
-            ignored.forEach(id => acceptedProposalIds.delete(id));
-            if (!quiet) showToast(`Ignored ${ignored.length} stale shortcut ${ignored.length === 1 ? 'proposal' : 'proposals'}`, 'warning');
-        }
-
         renderHazards(props);
-        renderProposals();
     }
 
     // =========================================================================
-    // 9.2 Route review: hazards and proposals, on the map and in the side pane
+    // 9.2 Route review: hazards, on the map and in the side pane
     // =========================================================================
-    // Selection keys: 'proposal:<id>' or 'hazard:<index>'. Hazard indices are
+    // Selection keys: 'hazard:<index>'. Hazard indices are
     // per response, so every new render clears the selection.
     let reviewLayers = new Map();   // key -> { layer, base }
     let reviewSelection = null;
@@ -2471,9 +2419,7 @@
     const HAZARD_KIND_LABEL = {
         'marnet': 'Network leg',
         'osm-tss': 'TSS lane or join',
-        'connector': 'Port approach',
-        'smoothed': 'Smoothed leg',
-        'user-accepted': 'Accepted shortcut'
+        'connector': 'Port approach'
     };
 
     function themeColor(token) {
@@ -2509,12 +2455,6 @@
         return `${kind}: ${Number(h.min_clearance_nm).toFixed(1)} NM from land`;
     }
 
-    // Pending proposals that can fix a hazard: not rejected, not accepted, still offered.
-    function hazardFixes(h) {
-        const offered = new Set(currentProposals.map(p => p.id));
-        return (h.fixes || []).filter(id => offered.has(id) && !rejectedProposalIds.has(id) && !acceptedProposalIds.has(id));
-    }
-
     const HAZARD_LOOK = {
         aground: { label: 'Aground', icon: 'report', cls: 'is-aground' },
         close: { label: 'Close pass', icon: 'warning', cls: 'is-close' },
@@ -2534,16 +2474,13 @@
 
     function hazardPopup(h, index) {
         const look = hazardLook(h);
-        const fixes = hazardFixes(h);
         const rows = [
             ['Severity', look.label],
             ['Clearance', hazardClearanceText(h)],
             ['Legs', String(h.to - h.from)],
             ['From', formatLatLon(h.start)]
         ];
-        const action = fixes.length > 0
-            ? `<button class="review-btn review-btn--warn" data-hazard-fix="${escapeHtml(fixes[0])}" type="button">Show fix</button>`
-            : `<span class="review-tag">Needs attention</span>`;
+        const action = `<span class="review-tag">Needs attention</span>`;
         return `<div class="review-popup">
             <div class="review-popup__head ${look.cls}">
                 <span class="material-symbols-outlined" aria-hidden="true">${look.icon}</span>
@@ -2552,26 +2489,6 @@
             <dl class="review-popup__rows">${rows.map(([k, v]) => `<dt>${k}</dt><dd>${escapeHtml(v)}</dd>`).join('')}</dl>
             ${h.note ? `<p class="review-popup__note">${escapeHtml(h.note)}</p>` : ''}
             <div class="review-popup__actions">${action}</div>
-        </div>`;
-    }
-
-    function proposalPopup(p) {
-        const accepted = acceptedProposalIds.has(p.id);
-        const id = escapeHtml(p.id);
-        const actions = accepted
-            ? `<span class="review-tag review-tag--ok">Accepted</span><button class="review-btn" data-proposal-undo="${id}" type="button">Undo</button>`
-            : `<button class="review-btn review-btn--warn" data-proposal-accept="${id}" type="button">Accept</button><button class="review-btn" data-proposal-reject="${id}" type="button">Reject</button>`;
-        return `<div class="review-popup">
-            <div class="review-popup__head is-proposal">
-                <span class="material-symbols-outlined" aria-hidden="true">alt_route</span>
-                <span>Shortcut proposal</span>
-            </div>
-            <dl class="review-popup__rows">
-                <dt>Reason</dt><dd>${escapeHtml(p.reason)}</dd>
-                <dt>Clearance</dt><dd>${Number(p.min_clearance_nm).toFixed(1)} NM</dd>
-                <dt>Saves</dt><dd>${Number(p.saved_nm).toFixed(2)} NM</dd>
-            </dl>
-            <div class="review-popup__actions">${actions}</div>
         </div>`;
     }
 
@@ -2620,11 +2537,8 @@
 
     function hazardItem(h, index) {
         const look = hazardLook(h);
-        const fixes = hazardFixes(h);
         const key = `hazard:${index}`;
-        const status = fixes.length > 0
-            ? `<button class="review-btn review-btn--warn" data-hazard-fix="${escapeHtml(fixes[0])}" type="button">Fix available: accept shortcut</button>`
-            : `<span class="review-tag">Needs attention</span>`;
+        const status = `<span class="review-tag">Needs attention</span>`;
         return `<li class="review-item ${look.cls}" data-review-key="${key}">
             <button class="review-item__main" data-review-select="${key}" type="button">
                 <span class="material-symbols-outlined review-item__icon" aria-hidden="true">${look.icon}</span>
@@ -2652,7 +2566,7 @@
         const red = themeColor('--color-error');
         const amber = themeColor('--color-warning');
 
-        // Drawn over the route, under the proposals; one colour per severity
+        // Drawn over the route, one colour per severity
         hazards.forEach((h, i) => {
             const seg = latLngs.slice(h.from, h.to + 1);
             if (seg.length < 2) return;
@@ -2688,91 +2602,17 @@
         }
     }
 
-    function proposalTooltip(p) {
-        return `${escapeHtml(p.reason)}<br>min clearance ${Number(p.min_clearance_nm).toFixed(1)} NM<br>saves ${Number(p.saved_nm).toFixed(1)} NM`;
-    }
-
-    function renderProposals() {
-        const card = document.getElementById('proposals-card');
-        const list = document.getElementById('proposals-list');
-        const countEl = document.getElementById('proposals-count');
-        const acceptAll = document.getElementById('btn-accept-all');
-        if (!card || !list) return;
-
-        const visible = currentProposals.filter(p => !rejectedProposalIds.has(p.id));
-
-        // Dashed amber overlay for every pending proposal, clickable
-        visible.forEach(p => {
-            if (acceptedProposalIds.has(p.id) || !p.path || p.path.length < 2) return;
-            addReviewLayer(`proposal:${p.id}`, p.path.map(c => [c[1], c[0]]), {
-                color: '#f59e0b',
-                weight: 3,
-                opacity: 0.95,
-                dashArray: '6 6'
-            }, proposalPopup(p)).bindTooltip(proposalTooltip(p), { sticky: true });
-        });
-
-        card.classList.toggle('hidden', visible.length === 0);
-        card.classList.toggle('flex', visible.length > 0);
-        if (countEl) countEl.textContent = String(visible.length);
-        const pending = visible.filter(p => !acceptedProposalIds.has(p.id));
-        if (acceptAll) acceptAll.classList.toggle('hidden', pending.length === 0);
-
-        list.innerHTML = visible.map(p => {
-            const accepted = acceptedProposalIds.has(p.id);
-            const id = escapeHtml(p.id);
-            const key = escapeHtml(`proposal:${p.id}`);
-            const actions = accepted
-                ? `<span class="font-mono text-[9px] px-1.5 py-0.5 rounded-sm bg-secondary/15 text-secondary border border-secondary/30 flex items-center gap-1"><span class="material-symbols-outlined text-[11px]">check</span>Accepted</span>
-                   <button class="font-mono text-[9px] px-1.5 py-0.5 rounded-sm bg-surface-container hover:bg-surface-container-high text-on-surface-variant border border-surface-container-high cursor-pointer transition-colors" data-proposal-undo="${id}" type="button">Undo</button>`
-                : `<button class="font-mono text-[9px] px-1.5 py-0.5 rounded-sm bg-warning/20 hover:bg-warning/30 text-warning border border-warning/40 font-semibold cursor-pointer transition-colors" data-proposal-accept="${id}" type="button">Accept</button>
-                   <button class="font-mono text-[9px] px-1.5 py-0.5 rounded-sm bg-surface-container hover:bg-surface-container-high text-on-surface-variant border border-surface-container-high cursor-pointer transition-colors" data-proposal-reject="${id}" type="button">Reject</button>`;
-            const select = accepted ? '' : ` data-review-select="${key}"`;
-            return `<li class="review-item is-proposal" data-review-key="${key}">
-                <button class="review-item__main"${select} type="button"${accepted ? ' disabled' : ''}>
-                    <span class="flex flex-col min-w-0">
-                        <span class="font-mono text-[10px] text-on-surface">${escapeHtml(p.reason)}</span>
-                        <span class="font-mono text-[9px] text-on-surface-variant tabular-nums">min ${Number(p.min_clearance_nm).toFixed(1)} NM clearance &bull; saves ${Number(p.saved_nm).toFixed(1)} NM</span>
-                    </span>
-                </button>
-                <span class="review-item__actions">${actions}</span>
-            </li>`;
-        }).join('');
-    }
-
-    function setProposalAccepted(ids, accepted) {
-        map.closePopup();
-        computeRoute({ acceptDelta: { ids, on: accepted }, keepView: true });
-    }
-
-    function rejectProposal(id) {
-        // Reject only hides the item; the route is unchanged
-        map.closePopup();
-        rejectedProposalIds.add(id);
-        routeLayerGroup.clearLayers();
-        renderRoute(currentRouteData, { keepView: true, quiet: true });
-    }
-
     // One handler for the side pane and the map popups
     function handleReviewClick(e) {
         const btn = e.target.closest('button');
         if (!btn || btn.disabled) return;
         const d = btn.dataset;
-        // A popup rebuilt during a compute has live buttons: a second accept
-        // would be built from the old accepted set and drop the first.
-        if (computeInFlight && (d.proposalAccept || d.proposalUndo || d.proposalReject)) return;
-        if (d.proposalAccept) setProposalAccepted([d.proposalAccept], true);
-        else if (d.proposalUndo) setProposalAccepted([d.proposalUndo], false);
-        else if (d.proposalReject) rejectProposal(d.proposalReject);
-        else if (d.hazardFix) selectReviewItem(`proposal:${d.hazardFix}`, { fit: true, scroll: true, popup: true });
-        else if (d.reviewSelect) selectReviewItem(d.reviewSelect, { fit: true, scroll: false, popup: true });
+        if (d.reviewSelect) selectReviewItem(d.reviewSelect, { fit: true, scroll: false, popup: true });
     }
 
     (function bindReviewActions() {
-        ['hazards-card', 'proposals-list'].forEach(id => {
-            const el = document.getElementById(id);
-            if (el) el.addEventListener('click', handleReviewClick);
-        });
+        const hazardsCard = document.getElementById('hazards-card');
+        if (hazardsCard) hazardsCard.addEventListener('click', handleReviewClick);
         const toggle = document.getElementById('hazards-close-toggle');
         if (toggle) toggle.addEventListener('click', () => setHazardsCloseExpanded(!hazardsCloseExpanded));
         // Leaflet stops click propagation out of popups: bind on each open
@@ -2783,15 +2623,6 @@
                 el.addEventListener('click', handleReviewClick);
             }
         });
-        const acceptAll = document.getElementById('btn-accept-all');
-        if (acceptAll) {
-            acceptAll.addEventListener('click', () => {
-                const ids = currentProposals
-                    .filter(p => !rejectedProposalIds.has(p.id) && !acceptedProposalIds.has(p.id))
-                    .map(p => p.id);
-                if (ids.length > 0) setProposalAccepted(ids, true);
-            });
-        }
     })();
 
     /**
@@ -3276,7 +3107,6 @@
             if (currentAlgorithm) params.set('algo', currentAlgorithm);
             if (avoidList.length > 0) params.set('avoid', avoidList.join(','));
             if (speed) params.set('speed', speed);
-            if (toggleKinks && !toggleKinks.checked) params.set('kinks', '0');
             if (readClearance() !== CLEARANCE_DEFAULT) params.set('clr', String(readClearance()));
 
             const shareUrl = `${window.location.origin}${window.location.pathname}?${params.toString()}`;
@@ -3387,9 +3217,6 @@
             updateAvoidBadge();
         }
 
-        if (params.has('kinks') && toggleKinks) {
-            toggleKinks.checked = !['0', 'false', 'off'].includes(params.get('kinks').trim().toLowerCase());
-        }
         if (params.has('clr')) {
             const clr = parseFloat(params.get('clr'));
             if (!isNaN(clr)) writeClearance(Math.min(CLEARANCE_MAX, Math.max(CLEARANCE_MIN, Math.round(clr * 2) / 2)));

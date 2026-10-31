@@ -229,21 +229,14 @@
                 </div>
             </div>
 
-            <!-- 3b. ROUTE SMOOTHING (kink removal) -->
+            <!-- 3b. LAND CLEARANCE (hazard threshold) -->
             <div class="p-2.5 rounded-sm bg-surface-container-low border border-surface-container-high flex flex-col gap-2">
                 <div class="flex items-center justify-between">
                     <label class="font-label-sm text-[10px] uppercase font-bold text-primary flex items-center gap-1.5">
-                        <span class="material-symbols-outlined text-[14px]">timeline</span> Route Smoothing
+                        <span class="material-symbols-outlined text-[14px]">straighten</span> Land Clearance
                     </label>
                     <span class="font-mono text-[9px] text-on-surface-variant">Rhumb legs</span>
                 </div>
-                <label class="flex items-center justify-between gap-2 cursor-pointer" for="toggle-kinks">
-                    <span class="flex flex-col">
-                        <span class="font-mono text-[11px] text-on-surface font-medium">Remove kinks</span>
-                        <span class="font-mono text-[9px] text-on-surface-variant leading-tight">Straighten zigzags on the mesh. TSS lanes are always honoured.</span>
-                    </span>
-                    <input checked class="rounded-none border-surface-variant bg-surface-container-lowest text-primary focus:ring-0 cursor-pointer" id="toggle-kinks" type="checkbox"/>
-                </label>
                 <div class="flex items-center justify-between gap-2" id="clearance-row">
                     <label class="font-mono text-[10px] uppercase text-on-surface-variant" for="clearance-input">Land clearance</label>
                     <div class="flex items-stretch border border-surface-container-high rounded-sm bg-surface-container-lowest">
@@ -297,21 +290,6 @@
                     <ul class="hidden flex-col gap-1.5" id="hazards-close-list"></ul>
                 </div>
             </section>
-
-            <!-- Shortcut proposals -->
-            <div class="hidden p-2.5 rounded-sm bg-surface-container-low border border-warning/40 flex-col gap-2" id="proposals-card">
-                <div class="flex items-center justify-between gap-2">
-                    <span class="font-label-sm text-[10px] font-bold uppercase text-warning flex items-center gap-1.5">
-                        <span class="material-symbols-outlined text-[14px]">alt_route</span> Shortcut Proposals
-                        <span class="font-mono text-[9px] px-1.5 rounded-sm bg-warning/20 border border-warning/40" id="proposals-count">0</span>
-                    </span>
-                    <button class="font-mono text-[9px] px-1.5 py-0.5 rounded-sm bg-warning/20 hover:bg-warning/30 text-warning border border-warning/40 font-semibold cursor-pointer transition-colors" id="btn-accept-all" type="button">Accept all</button>
-                </div>
-                <p class="text-[9px] font-mono text-on-surface-variant leading-tight">
-                    Shorter legs that pass closer to land than the clearance. Never applied unless you accept them.
-                </p>
-                <ul class="flex flex-col gap-1.5" id="proposals-list"></ul>
-            </div>
 
             <!-- Route Metrics Summary -->
             <div class="p-2.5 bg-surface-container rounded-sm border border-surface-container-high flex flex-col gap-2">

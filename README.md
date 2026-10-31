@@ -160,17 +160,15 @@ cd web/tailwind && npm ci && npm run build
 
 ### `POST /waypoints` fields
 
-Request (all kink fields optional):
+Request (optional field):
 
 | Field | Default | Description |
 |---|---|---|
-| `kinks` | `true` | Remove kinks: smooth the route where it clearly stays in open water and propose other shortcuts. `false` disables smoothing and proposals; any `accept` IDs are then returned in `ignored_accept`. |
-| `clearance_nm` | `2` | Land clearance for smoothing and proposals, 0.5 to 10 NM. Anything outside the range returns HTTP 400. |
-| `accept` | `[]` | Proposal IDs (from an earlier response) to apply. At most 200 IDs, each at most 32 characters, else HTTP 400. Unknown IDs are returned in `ignored_accept`. |
+| `clearance_nm` | `2` | Land clearance hazards are measured against, 0.5 to 10 NM. Anything outside the range returns HTTP 400. |
 
 Traffic separation scheme (TSS) handling is always on. Every leg is a rhumb line.
 
-Response `properties` gains `kinks` and `clearance_nm` (the effective values), `proposals[]` (`id`, geometry, `reason`, `min_clearance_nm`, `saved_nm`), `stretches[]` (index range into the path, `flag`, `severity`, `scheme`), `warnings[]`, `ignored_accept[]` and `hazards[]`. Each hazard is a run of path segments that touch land (`severity` `aground`, within the land data tolerance) or pass closer than `clearance_nm` (`close`), or a port connector that leaves the area the land data covers (`unchecked`, clearance unknown), with `from`/`to` (index range into the path), `start`/`end` positions, `min_clearance_nm`, `kind` (`marnet`, `osm-tss`, `connector`, `smoothed`, `user-accepted`), `passage`, `note` and `fixes[]` (IDs of pending proposals that replace part of it). Hazards are reported with or without `kinks`. The MCP `route` and `distance_to_go` tools return the same `hazards`. Each waypoint has a `flag` naming the provenance of the stretch that arrives at it (`marnet`, `smoothed`, `user-accepted`, `osm-tss`, `tss-unknown`, `tss-unresolved`, `connector`); the origin is `connector`.
+Response `properties` gains `clearance_nm` (the effective value), `stretches[]` (index range into the path, `flag`, `severity`, `scheme`), `warnings[]` and `hazards[]`. Each hazard is a run of path segments that touch land (`severity` `aground`, within the land data tolerance) or pass closer than `clearance_nm` (`close`), or a port connector that leaves the area the land data covers (`unchecked`, clearance unknown), with `from`/`to` (index range into the path), `start`/`end` positions, `min_clearance_nm`, `kind` (`marnet`, `osm-tss`, `connector`), `passage` and `note`. The MCP `route` and `distance_to_go` tools return the same `hazards`. Each waypoint has a `flag` naming the provenance of the stretch that arrives at it (`marnet`, `osm-tss`, `tss-unknown`, `tss-unresolved`, `connector`); the origin is `connector`.
 
 ---
 

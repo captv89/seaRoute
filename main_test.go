@@ -12,7 +12,6 @@ import (
 	"strings"
 	"sync"
 	"testing"
-	"time"
 
 	"github.com/captv89/seaRoute/route"
 	"github.com/gin-gonic/gin"
@@ -567,7 +566,7 @@ func postWaypoints(t *testing.T, r *gin.Engine, payload map[string]any) *httptes
 	return w
 }
 
-func TestWaypointsKinkDefaults(t *testing.T) {
+func TestWaypointsDefaults(t *testing.T) {
 	r := setupTestRouter(t)
 	w := postWaypoints(t, r, map[string]any{"fromPort": "Rotterdam", "toPort": "Singapore"})
 	if w.Code != http.StatusOK {
@@ -582,13 +581,10 @@ func TestWaypointsKinkDefaults(t *testing.T) {
 		t.Fatal(err)
 	}
 	props := res.Features[0].Properties
-	if string(props["kinks"]) != "true" {
-		t.Errorf("kinks = %s, want true", props["kinks"])
-	}
 	if string(props["clearance_nm"]) != "2" {
 		t.Errorf("clearance_nm = %s, want 2", props["clearance_nm"])
 	}
-	for _, k := range []string{"proposals", "stretches", "warnings", "ignored_accept", "hazards"} {
+	for _, k := range []string{"stretches", "warnings", "hazards"} {
 		if v := string(props[k]); !strings.HasPrefix(v, "[") {
 			t.Errorf("%s = %s, want an array", k, v)
 		}
@@ -605,39 +601,6 @@ func TestWaypointsClearanceRange(t *testing.T) {
 		if w.Code != tc.want {
 			t.Errorf("clearance_nm %v: status %d, want %d", tc.c, w.Code, tc.want)
 		}
-	}
-}
-
-func TestWaypointsAcceptLimits(t *testing.T) {
-	r := setupTestRouter(t)
-	many := make([]string, 201)
-	for i := range many {
-		many[i] = "k-abc"
-	}
-	cases := map[string]any{
-		"201 ids":    many,
-		"33 chars":   []string{strings.Repeat("a", 33)},
-		"bind error": []int{1},
-		"mixed":      []any{"ok", 1},
-		"10000 ids":  make([]string, 10000),
-		"1MB id":     []string{strings.Repeat("a", 1<<20)},
-	}
-	for name, accept := range cases {
-		start := time.Now()
-		w := postWaypoints(t, r, map[string]any{"fromPort": "Rotterdam", "toPort": "Hamburg", "accept": accept})
-		if w.Code != http.StatusBadRequest {
-			t.Errorf("%s: status %d, want 400", name, w.Code)
-		}
-		if d := time.Since(start); d > 100*time.Millisecond {
-			t.Errorf("%s: rejection took %v, want < 100ms", name, d)
-		}
-	}
-	ok := make([]string, 200)
-	for i := range ok {
-		ok[i] = strings.Repeat("a", 32)
-	}
-	if w := postWaypoints(t, r, map[string]any{"fromPort": "Rotterdam", "toPort": "Hamburg", "accept": ok}); w.Code != http.StatusOK {
-		t.Errorf("200 ids of 32 chars: status %d, want 200", w.Code)
 	}
 }
 
@@ -695,32 +658,24 @@ func TestLayersTSS(t *testing.T) {
 	}
 }
 
-func TestWaypointsKinksOff(t *testing.T) {
+func TestWaypointsRejectsNoKinkFields(t *testing.T) {
 	r := setupTestRouter(t)
-	w := postWaypoints(t, r, map[string]any{"fromPort": "Rotterdam", "toPort": "Singapore", "kinks": false, "accept": []string{"k-abc"}})
+	w := postWaypoints(t, r, map[string]any{"fromPort": "Rotterdam", "toPort": "Hamburg", "accept": []string{"k-1"}})
 	if w.Code != http.StatusOK {
 		t.Fatalf("status %d: %s", w.Code, w.Body.String())
 	}
 	var res struct {
 		Features []struct {
-			Properties struct {
-				Kinks         bool     `json:"kinks"`
-				Proposals     []any    `json:"proposals"`
-				IgnoredAccept []string `json:"ignored_accept"`
-			} `json:"properties"`
+			Properties map[string]json.RawMessage `json:"properties"`
 		} `json:"features"`
 	}
 	if err := json.Unmarshal(w.Body.Bytes(), &res); err != nil {
 		t.Fatal(err)
 	}
-	p := res.Features[0].Properties
-	if p.Kinks {
-		t.Error("kinks echoed true, want false")
-	}
-	if len(p.Proposals) != 0 {
-		t.Errorf("got %d proposals, want 0", len(p.Proposals))
-	}
-	if len(p.IgnoredAccept) != 1 || p.IgnoredAccept[0] != "k-abc" {
-		t.Errorf("ignored_accept = %v, want [k-abc]", p.IgnoredAccept)
+	props := res.Features[0].Properties
+	for _, k := range []string{"proposals", "ignored_accept", "kinks"} {
+		if _, ok := props[k]; ok {
+			t.Errorf("response still has %q", k)
+		}
 	}
 }

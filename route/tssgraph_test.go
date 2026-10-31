@@ -406,47 +406,6 @@ func TestPortInsideScheme(t *testing.T) {
 	}
 }
 
-func TestShortcutInsideSchemeObeysRules(t *testing.T) {
-	// Zigzag inside a scheme area (the hull of its features; a boundary
-	// sets the extent) with no zone or line in the way: smoothed.
-	bound := TSSFeature{Type: "boundary", Scheme: "tss-a", OSMID: 1, Coords: rect(-0.1, -0.2, 2.1, 0.3)}
-	g := NewWith(zigzag(), landOf(rect(0, 10, 1, 11)), NewTSS([]TSSFeature{bound}, "v"))
-	if r := routeOn(t, g, Options{Kinks: true}, Position{0, 0}, Position{2, 0}); len(r.Path) != 2 {
-		t.Errorf("free shortcut in scheme area not taken: %v", r.Path)
-	}
-	// A small zone on the chord at lon 0.5, clear of the zigzag (lat 0.08+
-	// there): no shortcut may pass it.
-	zone := TSSFeature{Type: "zone", Scheme: "tss-a", OSMID: 2, Coords: rect(0.4, -0.01, 0.6, 0.01)}
-	g = NewWith(zigzag(), landOf(rect(0, 10, 1, 11)), NewTSS([]TSSFeature{bound, zone}, "v"))
-	r := routeOn(t, g, Options{Kinks: true}, Position{0, 0}, Position{2, 0})
-	if len(r.Path) == 2 {
-		t.Errorf("shortcut through the zone taken: %v", r.Path)
-	}
-	if v := g.tss.violations(r.Path, nil); len(v) > 0 {
-		t.Errorf("shortcut breaks TSS: %v", v)
-	}
-}
-
-func TestDoverStraightenedBothWays(t *testing.T) {
-	if testing.Short() {
-		t.Skip("short")
-	}
-	g := testTSSGraph(t)
-	box := [4]float64{0.9, 50.6, 2.3, 51.4}
-	for _, dir := range [][2]Position{{rotterdam, bilbao}, {bilbao, rotterdam}, {rotterdam, singapore}} {
-		plain := routeOn(t, g, Options{}, dir[0], dir[1])
-		r := routeOn(t, g, Options{Kinks: true}, dir[0], dir[1])
-		before, after := kinksIn(g, plain, box), kinksIn(g, r, box)
-		t.Logf("%v->%v Dover free kinks %d -> %d", dir[0], dir[1], before, after)
-		if after*2 > before {
-			t.Errorf("%v->%v: Dover free kinks %d, TSS-only %d", dir[0], dir[1], after, before)
-		}
-		if v := g.tss.violations(r.Path, nil); len(v) > 0 {
-			t.Errorf("%v->%v: violations %v", dir[0], dir[1], v)
-		}
-	}
-}
-
 func TestJoinKeepsTolerance(t *testing.T) {
 	// As TestJoinAvoidsLand, but the island's south edge sits about 110 m
 	// north of the join leg (0, 0.1)-(0.05, 0.1): clear of the land line,
