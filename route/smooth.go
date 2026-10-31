@@ -169,7 +169,9 @@ func (s *smoother) classify(a, b Position, replaced []Position, edges []int32) (
 	if !g.inCorridor(a, b, s.limit+smoothSampleNM/2*MetresPerNM) {
 		return classNever, 0
 	}
-	if g.tss != nil && g.tss.SegmentTouchesArea(a, b) {
+	// Inside a scheme area a shortcut must obey the rules the router applies
+	// to MARNET edges.
+	if g.tss != nil && g.tss.breaksRules(a, b) {
 		return classNever, 0
 	}
 	c := s.clearance(a, b)

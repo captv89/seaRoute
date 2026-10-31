@@ -75,6 +75,17 @@ func schemeReasons(s *Scheme, a, b Position) (cross, againstLane bool) {
 	return cross, againstLane
 }
 
+// breaksRules reports whether the rhumb leg a-b crosses a separation zone or
+// line, or runs against a lane, in any scheme: the rules MARNET edges obey.
+func (t *TSS) breaksRules(a, b Position) bool {
+	for j := range t.Schemes {
+		if c, l := schemeReasons(&t.Schemes[j], a, b); c || l {
+			return true
+		}
+	}
+	return false
+}
+
 // applyTSS adds lane nodes and edges, join edges, and TSS blocks to the
 // MARNET edge list (forward/reverse pairs; see edge). Rules:
 //

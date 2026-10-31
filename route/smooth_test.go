@@ -281,7 +281,16 @@ func kinks(p []Position) (n int) {
 // segments are both smoothable: flagged marnet, smoothed, user-accepted or
 // tss-unknown, and not passage-tagged. Kinks on lanes, passages and connectors
 // are kept on purpose.
-func freeKinks(g *Graph, r Route) (n int) {
+func freeKinks(g *Graph, r Route) int { return kinksWhere(g, r, nil, false) }
+
+// kinksIn counts free kinks at vertices inside box (lon0, lat0, lon1, lat1),
+// also counting MARNET edges inside a scheme area (flagged osm-tss).
+func kinksIn(g *Graph, r Route, box [4]float64) int { return kinksWhere(g, r, &box, true) }
+
+// kinksWhere counts kinks (turns that add over 3%) between two free segments:
+// MARNET-derived and not a passage. box, when set, limits the kink vertices;
+// tssMarnet also counts MARNET edges flagged osm-tss.
+func kinksWhere(g *Graph, r Route, box *[4]float64, tssMarnet bool) (n int) {
 	flags := make([]string, len(r.Path)-1)
 	for _, s := range r.Stretches {
 		for k := s.From; k < s.To; k++ {
@@ -296,10 +305,15 @@ func freeKinks(g *Graph, r Route) (n int) {
 		switch flags[k] {
 		case "marnet", "smoothed", "user-accepted", "tss-unknown":
 			return segs[k] < 0 || g.pass[segs[k]] == 0
+		case "osm-tss":
+			return tssMarnet && segs[k] >= 0 && g.flags[segs[k]]&(edgeLane|edgeJoin) == 0 && g.pass[segs[k]] == 0
 		}
 		return false
 	}
 	for i := 1; i+1 < len(r.Path); i++ {
+		if p := r.Path[i]; box != nil && (p[0] < box[0] || p[0] > box[2] || p[1] < box[1] || p[1] > box[3]) {
+			continue
+		}
 		if (Distance(r.Path[i-1], r.Path[i])+Distance(r.Path[i], r.Path[i+1]))/Distance(r.Path[i-1], r.Path[i+1]) > 1.03 &&
 			free(i-1) && free(i) {
 			n++
@@ -382,11 +396,6 @@ func TestNarrowPassagesSafe(t *testing.T) {
 		}
 		if v := g.tss.violations(r.Path, lifted); len(v) > 0 {
 			t.Errorf("%s: TSS violations: %v", c.name, v)
-		}
-		for _, s := range r.Stretches {
-			if (s.Flag == "smoothed" || s.Flag == "user-accepted") && g.tss.SegmentTouchesArea(r.Path[s.From], r.Path[s.To]) {
-				t.Errorf("%s: %s stretch %v touches a scheme area", c.name, s.Flag, s)
-			}
 		}
 		tol := g.land.Tolerance
 		for _, p := range r.Proposals {
