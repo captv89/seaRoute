@@ -28,16 +28,18 @@ func (q *queue) Pop() any {
 // open reports whether a request may use edge e. Wrong-way edges never are;
 // edges of a blocked passage are not; TSS-blocked edges are not unless noTSS
 // is set or their scheme is lifted (lifted is indexed by scheme, nil = none);
-// lane and join edges are not when noTSS is set.
-func (g *Graph) open(e int32, blocked, lifted []bool, noTSS bool) bool {
+// lane and join edges are not when noTSS is set; edges closed by depth are not.
+func (g *Graph) open(e int32, sc searchCtx) bool {
 	f := g.flags[e]
 	switch {
-	case f&edgeWrongWay != 0, blocked[g.pass[e]]:
+	case f&edgeWrongWay != 0, sc.blocked[g.pass[e]]:
 		return false
-	case noTSS:
+	case sc.shallow != nil && sc.shallow[e]:
+		return false
+	case sc.noTSS:
 		return f&(edgeLane|edgeJoin) == 0
 	case f&edgeTSSBlocked != 0:
-		return lifted != nil && lifted[g.scheme[e]]
+		return sc.lifted != nil && sc.lifted[g.scheme[e]]
 	}
 	return true
 }
@@ -48,7 +50,7 @@ func (g *Graph) open(e int32, blocked, lifted []bool, noTSS bool) bool {
 // A* uses Graph.estimate, a lower bound on the remaining distance that
 // never overestimates and grows by at most each edge's length, so A*
 // returns the same shortest path as Dijkstra while visiting fewer nodes.
-func (g *Graph) search(s, t int32, blocked, lifted []bool, noTSS bool, alg Algorithm) ([]int32, []int32, float64, bool) {
+func (g *Graph) search(s, t int32, sc searchCtx, alg Algorithm) ([]int32, []int32, float64, bool) {
 	n := len(g.nodes)
 	dist := make([]float64, n)
 	for i := range dist {
@@ -76,7 +78,7 @@ func (g *Graph) search(s, t int32, blocked, lifted []bool, noTSS bool, alg Algor
 			break
 		}
 		for e := g.first[v]; e < g.first[v+1]; e++ {
-			if !g.open(e, blocked, lifted, noTSS) {
+			if !g.open(e, sc) {
 				continue
 			}
 			u := g.to[e]

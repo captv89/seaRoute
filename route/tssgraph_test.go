@@ -242,8 +242,8 @@ func TestAccessJoin(t *testing.T) {
 func TestLoadAll(t *testing.T) {
 	g := testTSSGraph(t)
 	s := g.stats
-	t.Logf("LoadAll %v (TSS build %v); nodes %d (MARNET %d); edges: MARNET %d, lane %d, join %d (far %d, chain %d, access nodes %d); blocked: zone/line %d, against-lane %d, own lane edges %d; version %s",
-		tssGraphTook, s.tssBuild, len(g.nodes), g.marnetNodes, s.marnet, s.lane, s.join, s.joinFar, s.chain, s.access, s.blockedCross, s.blockedLane, s.blockedOwn, g.Version())
+	t.Logf("LoadAll %v (TSS build %v, min-depth build %v); nodes %d (MARNET %d); edges: MARNET %d, lane %d, join %d (far %d, chain %d, access nodes %d); blocked: zone/line %d, against-lane %d, own lane edges %d; version %s",
+		tssGraphTook, s.tssBuild, s.depthBuild, len(g.nodes), g.marnetNodes, s.marnet, s.lane, s.join, s.joinFar, s.chain, s.access, s.blockedCross, s.blockedLane, s.blockedOwn, g.Version())
 	if s.tssBuild > 10*time.Second {
 		t.Errorf("TSS build took %v, want < 10 s", s.tssBuild)
 	}

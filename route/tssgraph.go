@@ -52,6 +52,7 @@ type tssStats struct {
 	blockedLane  int // directed MARNET edges blocked only for running against a lane
 	blockedOwn   int // forward lane or join edges blocked (lane data crossing a zone or line)
 	tssBuild     time.Duration
+	depthBuild   time.Duration // per-edge minimum depth
 }
 
 // schemeReasons lists the TSS rules the rhumb leg a->b breaks in scheme s, as
@@ -511,8 +512,8 @@ func (g *Graph) sortedWithin(p Position, nodes []int32, rNM float64) []int32 {
 }
 
 // Version identifies the datasets the graph was built from:
-// "<network sha256[:8]>/<land version>/<tss version>", with "-" for a dataset
-// that is not loaded. Land version is "<date>/<tolerance>m".
+// "<network sha256[:8]>/<land version>/<tss version>/<depth version>", with "-"
+// for a dataset that is not loaded. Land version is "<date>/<tolerance>m".
 func (g *Graph) Version() string { return g.version }
 
 func landVersion(l *Land) string {
@@ -520,6 +521,13 @@ func landVersion(l *Land) string {
 		return "-"
 	}
 	return l.Version
+}
+
+func depthVersion(d *Depth) string {
+	if d == nil {
+		return "-"
+	}
+	return d.Version
 }
 
 func tssVersion(t *TSS) string {
@@ -548,7 +556,7 @@ func segmentsHash(segs []Segment) string {
 // reach runs Dijkstra from src over edges that open allows and returns the
 // distance to every node (+Inf when unreached). With rev set it runs backward:
 // from u it visits each v that has an open edge v -> u.
-func (g *Graph) reach(src int32, rev bool, blocked, lifted []bool) []float64 {
+func (g *Graph) reach(src int32, rev bool, sc searchCtx) []float64 {
 	dist := make([]float64, len(g.nodes))
 	for i := range dist {
 		dist[i] = math.Inf(1)
@@ -566,7 +574,7 @@ func (g *Graph) reach(src int32, rev bool, blocked, lifted []bool) []float64 {
 			if rev {
 				use = g.twin[e]
 			}
-			if !g.open(use, blocked, lifted, false) {
+			if !g.open(use, sc) {
 				continue
 			}
 			u := g.to[e]
@@ -584,9 +592,9 @@ func (g *Graph) reach(src int32, rev bool, blocked, lifted []bool) []float64 {
 // cheapest candidate that links what s reaches to what reaches t; if none
 // does, the one that enters the set reaching t closest to t. Ties go to the
 // lower scheme ID. ok is false when no candidate exists.
-func (g *Graph) liftFor(s, t int32, blocked, lifted []bool) (int32, bool) {
-	ds := g.reach(s, false, blocked, lifted)
-	dt := g.reach(t, true, blocked, lifted)
+func (g *Graph) liftFor(s, t int32, sc searchCtx) (int32, bool) {
+	ds := g.reach(s, false, sc)
+	dt := g.reach(t, true, sc)
 	best, bestCost, linked := int32(-1), math.Inf(1), false
 	better := func(k int32, cost float64) bool {
 		if cost != bestCost {
@@ -597,7 +605,7 @@ func (g *Graph) liftFor(s, t int32, blocked, lifted []bool) (int32, bool) {
 	for v := range g.nodes {
 		for e := g.first[v]; e < g.first[v+1]; e++ {
 			k := g.scheme[e]
-			if g.flags[e]&(edgeWrongWay|edgeTSSBlocked) != edgeTSSBlocked || blocked[g.pass[e]] || k < 0 || (lifted != nil && lifted[k]) {
+			if g.flags[e]&(edgeWrongWay|edgeTSSBlocked) != edgeTSSBlocked || sc.blocked[g.pass[e]] || k < 0 || (sc.shallow != nil && sc.shallow[e]) || (sc.lifted != nil && sc.lifted[k]) {
 				continue
 			}
 			u := g.to[e]
