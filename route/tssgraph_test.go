@@ -446,3 +446,25 @@ func TestDoverStraightenedBothWays(t *testing.T) {
 		}
 	}
 }
+
+func TestJoinKeepsTolerance(t *testing.T) {
+	// As TestJoinAvoidsLand, but the island's south edge sits about 110 m
+	// north of the join leg (0, 0.1)-(0.05, 0.1): clear of the land line,
+	// inside the 200 m data tolerance.
+	tss := NewTSS([]TSSFeature{{Type: "lane", Scheme: "tss-l", OSMID: 1, Coords: []Position{{0.05, 0.1}, {0.25, 0.1}}}}, "v")
+	island := NewLand([][]Position{square(0.025, 0.1+0.0045, 0.0035)}, 200, "test/200m")
+	g := NewWith(channels(), island, tss)
+	start := int32(-1)
+	for v := g.marnetNodes; v < len(g.nodes); v++ {
+		if g.nodes[v] == (Position{0.05, 0.1}) {
+			start = int32(v)
+		}
+	}
+	for v := range g.marnetNodes {
+		for e := g.first[v]; e < g.first[v+1]; e++ {
+			if g.to[e] == start && g.flags[e]&edgeJoin != 0 && g.nodes[v] == (Position{0, 0.1}) {
+				t.Error("join from (0, 0.1) passes inside the land tolerance")
+			}
+		}
+	}
+}

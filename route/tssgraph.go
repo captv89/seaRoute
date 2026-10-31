@@ -435,7 +435,8 @@ func (g *Graph) addOneWay(es []edge, u, v int32, kind uint8, k int) []edge {
 	return append(es, fwd, edge{v, u, w, 0, kind | edgeWrongWay, int32(k)})
 }
 
-// joinOK reports whether a join leg a->b keeps off land and breaks no TSS rule.
+// joinOK reports whether a join leg a->b keeps off land (beyond the data
+// tolerance) and breaks no TSS rule.
 // The TSS rules are checked first: they are much cheaper than the land test.
 func (g *Graph) joinOK(a, b Position) bool {
 	for j := range g.tss.Schemes {
@@ -443,7 +444,7 @@ func (g *Graph) joinOK(a, b Position) bool {
 			return false
 		}
 	}
-	return g.land == nil || g.land.SegmentClearance(a, b, 1) > 0
+	return g.land == nil || g.land.SegmentClearance(a, b, g.land.Tolerance+1) > g.land.Tolerance
 }
 
 // joinCandidates returns the MARNET nodes and MARNET edge pairs (index of the
