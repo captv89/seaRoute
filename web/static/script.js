@@ -2098,7 +2098,10 @@
     const iconCompute = document.getElementById('icon-compute');
     const btnComputeText = document.getElementById('btn-compute-text');
 
+    let computeInFlight = false;
+
     function setComputeLoading(isLoading) {
+        computeInFlight = isLoading;
         if (btnCompute) btnCompute.disabled = isLoading;
         if (spinnerCompute) {
             if (isLoading) spinnerCompute.classList.remove('hidden');
@@ -2501,6 +2504,7 @@
                 : `${passageName(h.passage)}: ${legText} close to land`;
         }
         const kind = HAZARD_KIND_LABEL[h.kind] || h.kind;
+        if (h.severity === 'unchecked') return `${kind}: outside the land data`;
         if (h.severity === 'aground') return legs > 1 ? `${kind} aground (${legText})` : `${kind} aground`;
         return `${kind}: ${Number(h.min_clearance_nm).toFixed(1)} NM from land`;
     }
@@ -2511,12 +2515,29 @@
         return (h.fixes || []).filter(id => offered.has(id) && !rejectedProposalIds.has(id) && !acceptedProposalIds.has(id));
     }
 
+    const HAZARD_LOOK = {
+        aground: { label: 'Aground', icon: 'report', cls: 'is-aground' },
+        close: { label: 'Close pass', icon: 'warning', cls: 'is-close' },
+        unchecked: { label: 'Not checked', icon: 'help', cls: 'is-close' }
+    };
+
+    function hazardLook(h) {
+        return HAZARD_LOOK[h.severity] || HAZARD_LOOK.close;
+    }
+
+    function hazardClearanceText(h) {
+        if (h.severity === 'aground') return 'touches land data';
+        if (h.severity === 'unchecked') return 'unknown';
+        const nm = Number(h.min_clearance_nm);
+        return nm < 0.1 ? '< 0.1 NM' : `${nm.toFixed(1)} NM`;
+    }
+
     function hazardPopup(h, index) {
-        const aground = h.severity === 'aground';
+        const look = hazardLook(h);
         const fixes = hazardFixes(h);
         const rows = [
-            ['Severity', aground ? 'Aground' : 'Close pass'],
-            ['Clearance', aground ? 'touches land data' : `${Number(h.min_clearance_nm).toFixed(1)} NM`],
+            ['Severity', look.label],
+            ['Clearance', hazardClearanceText(h)],
             ['Legs', String(h.to - h.from)],
             ['From', formatLatLon(h.start)]
         ];
@@ -2524,8 +2545,8 @@
             ? `<button class="review-btn review-btn--warn" data-hazard-fix="${escapeHtml(fixes[0])}" type="button">Show fix</button>`
             : `<span class="review-tag">Needs attention</span>`;
         return `<div class="review-popup">
-            <div class="review-popup__head ${aground ? 'is-aground' : 'is-close'}">
-                <span class="material-symbols-outlined" aria-hidden="true">${aground ? 'report' : 'warning'}</span>
+            <div class="review-popup__head ${look.cls}">
+                <span class="material-symbols-outlined" aria-hidden="true">${look.icon}</span>
                 <span>${escapeHtml(hazardTitle(h))}</span>
             </div>
             <dl class="review-popup__rows">${rows.map(([k, v]) => `<dt>${k}</dt><dd>${escapeHtml(v)}</dd>`).join('')}</dl>
@@ -2598,15 +2619,15 @@
     }
 
     function hazardItem(h, index) {
-        const aground = h.severity === 'aground';
+        const look = hazardLook(h);
         const fixes = hazardFixes(h);
         const key = `hazard:${index}`;
         const status = fixes.length > 0
             ? `<button class="review-btn review-btn--warn" data-hazard-fix="${escapeHtml(fixes[0])}" type="button">Fix available: accept shortcut</button>`
             : `<span class="review-tag">Needs attention</span>`;
-        return `<li class="review-item ${aground ? 'is-aground' : 'is-close'}" data-review-key="${key}">
+        return `<li class="review-item ${look.cls}" data-review-key="${key}">
             <button class="review-item__main" data-review-select="${key}" type="button">
-                <span class="material-symbols-outlined review-item__icon" aria-hidden="true">${aground ? 'report' : 'warning'}</span>
+                <span class="material-symbols-outlined review-item__icon" aria-hidden="true">${look.icon}</span>
                 <span class="flex flex-col min-w-0 gap-0.5">
                     <span class="font-mono text-[10px] text-on-surface">${escapeHtml(hazardTitle(h))}</span>
                     <span class="font-mono text-[9px] text-on-surface-variant tabular-nums">${escapeHtml(formatLatLon(h.start))}</span>
@@ -2636,17 +2657,20 @@
             const seg = latLngs.slice(h.from, h.to + 1);
             if (seg.length < 2) return;
             const aground = h.severity === 'aground';
-            addReviewLayer(`hazard:${i}`, seg, {
+            const style = {
                 color: aground ? red : amber,
                 weight: aground ? 5 : 4,
                 opacity: 0.95,
                 lineCap: 'round',
                 lineJoin: 'round'
-            }, hazardPopup(h, i));
+            };
+            if (h.severity === 'unchecked') style.dashArray = '1 7'; // dotted: not known, not near
+            addReviewLayer(`hazard:${i}`, seg, style, hazardPopup(h, i));
         });
 
+        // Aground and unchecked runs stay listed; close passes collapse
         const aground = [], close = [];
-        hazards.forEach((h, i) => (h.severity === 'aground' ? aground : close).push([h, i]));
+        hazards.forEach((h, i) => (h.severity === 'close' ? close : aground).push([h, i]));
         card.classList.toggle('hidden', hazards.length === 0);
         card.classList.toggle('flex', hazards.length > 0);
         if (countEl) countEl.textContent = String(hazards.length);
@@ -2734,6 +2758,9 @@
         const btn = e.target.closest('button');
         if (!btn || btn.disabled) return;
         const d = btn.dataset;
+        // A popup rebuilt during a compute has live buttons: a second accept
+        // would be built from the old accepted set and drop the first.
+        if (computeInFlight && (d.proposalAccept || d.proposalUndo || d.proposalReject)) return;
         if (d.proposalAccept) setProposalAccepted([d.proposalAccept], true);
         else if (d.proposalUndo) setProposalAccepted([d.proposalUndo], false);
         else if (d.proposalReject) rejectProposal(d.proposalReject);

@@ -47,7 +47,7 @@ type distanceOut struct {
 	Warnings      []route.Warning  `json:"warnings" jsonschema:"traffic schemes whose rules the route lifts"`
 	IgnoredAccept []string         `json:"ignored_accept" jsonschema:"accept IDs that matched no proposal on this route"`
 	Stretches     []route.Stretch  `json:"stretches,omitempty" jsonschema:"provenance of runs of path, when include_path is set"`
-	Hazards       []route.Hazard   `json:"hazards" jsonschema:"runs of the route that touch land (aground) or pass closer than clearance_nm (close); from and to index path"`
+	Hazards       []route.Hazard   `json:"hazards" jsonschema:"runs of the route that touch land (aground), pass closer than clearance_nm (close), or are connectors outside the land data (unchecked); from and to index path"`
 }
 
 // proposalOut is a route.Proposal; Path is set only with include_path.
@@ -82,7 +82,7 @@ type routeOut struct {
 	Warnings      []route.Warning  `json:"warnings" jsonschema:"traffic schemes whose rules the route lifts"`
 	IgnoredAccept []string         `json:"ignored_accept" jsonschema:"accept IDs that matched no proposal on this route"`
 	Stretches     []route.Stretch  `json:"stretches,omitempty"`
-	Hazards       []route.Hazard   `json:"hazards" jsonschema:"runs of the route that touch land (aground) or pass closer than clearance_nm (close); from and to index path"`
+	Hazards       []route.Hazard   `json:"hazards" jsonschema:"runs of the route that touch land (aground), pass closer than clearance_nm (close), or are connectors outside the land data (unchecked); from and to index path"`
 }
 
 type passagesOut struct {

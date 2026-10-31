@@ -111,3 +111,33 @@ func TestRealHazards(t *testing.T) {
 		}
 	}
 }
+
+func TestCloseHazardNotFixedByCloserProposal(t *testing.T) {
+	// Base A-B-C passes 1.8 NM from land to the south of B; the chord A-C
+	// passes 1.5 NM from land to the north. The proposal is closer to land
+	// than the hazard, so it is no fix.
+	south := -0.06 - 1.8*MetresPerNM/degLatM
+	g := NewWith(chainSegs(kA, kB, kC), landOf(rect(0.06, passLat, 0.14, 0.1), rect(0.08, -0.3, 0.12, south)), coverTSS())
+	r := routeOn(t, g, Options{Kinks: true, ClearanceNM: 2}, kA, kC)
+	if len(r.Proposals) != 1 || len(r.Hazards) != 1 || r.Hazards[0].Severity != "close" {
+		t.Fatalf("proposals %+v hazards %+v", r.Proposals, r.Hazards)
+	}
+	if len(r.Hazards[0].Fixes) != 0 {
+		t.Errorf("close hazard at %.1f NM lists proposal at %.1f NM as a fix", r.Hazards[0].MinClearanceNM, r.Proposals[0].MinClearanceNM)
+	}
+}
+
+func TestConnectorOutsideCorridorUnchecked(t *testing.T) {
+	land := landOf(rect(5, 5, 6, 6))
+	land.CorridorNM = 10
+	g := NewWith(chainSegs(Position{0, 0}, Position{1, 0}), land, nil)
+	r := routeOn(t, g, Options{}, Position{0, 1}, Position{1, 0})
+	if len(r.Hazards) != 1 || r.Hazards[0].Severity != "unchecked" || r.Hazards[0].Kind != "connector" || r.Hazards[0].Note == "" {
+		t.Fatalf("hazards %+v", r.Hazards)
+	}
+	land.CorridorNM = 0
+	g = NewWith(chainSegs(Position{0, 0}, Position{1, 0}), land, nil)
+	if r = routeOn(t, g, Options{}, Position{0, 1}, Position{1, 0}); len(r.Hazards) != 0 {
+		t.Errorf("full coverage: hazards %+v", r.Hazards)
+	}
+}

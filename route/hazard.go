@@ -11,8 +11,10 @@ type Hazard struct {
 	To    int      `json:"to"`
 	Start Position `json:"start"` // Path[From]
 	End   Position `json:"end"`   // Path[To]
-	// Severity is "aground" (within the land data tolerance of land) or
-	// "close" (clear of land, nearer than the clearance).
+	// Severity is "aground" (within the land data tolerance of land),
+	// "close" (clear of land, nearer than the clearance) or "unchecked" (a
+	// connector that leaves the area the land data covers, so its clearance
+	// is unknown).
 	Severity string `json:"severity"`
 	// MinClearanceNM is the smallest clearance beyond the land tolerance,
 	// rounded to 0.1; 0 when aground.
@@ -27,6 +29,7 @@ type Hazard struct {
 const (
 	notePassage   = "Passage narrower than the land data resolves; follow the canal or fairway and pilotage."
 	noteConnector = "Port approach: connects the port to the network."
+	noteUnchecked = "Land data does not cover this approach; check the chart."
 )
 
 // hazards checks every segment of path against land and merges adjacent runs
@@ -53,13 +56,19 @@ func (g *Graph) hazards(legs []Leg, path []Position, props []Proposal, opts Opti
 		for _, code := range l.segs {
 			a, b := path[k], path[k+1]
 			d := g.land.SegmentClearance(a, b, limit)
-			if d >= limit {
+			var sev string
+			clear := d - tol
+			switch {
+			case d <= tol:
+				sev, clear = "aground", 0
+			case code == segConnector && !g.inCorridor(a, b, limit):
+				// Clear only of the land the dataset holds.
+				sev, clear = "unchecked", 0
+			case d < limit:
+				sev = "close"
+			default:
 				k++
 				continue
-			}
-			sev, clear := "close", d-tol
-			if d <= tol {
-				sev, clear = "aground", 0
 			}
 			kind, pass := g.segKind(code), ""
 			if code >= 0 {
@@ -82,6 +91,8 @@ func (g *Graph) hazards(legs []Leg, path []Position, props []Proposal, opts Opti
 		h := &out[i]
 		h.MinClearanceNM = math.Round(h.MinClearanceNM/MetresPerNM*10) / 10
 		switch {
+		case h.Severity == "unchecked":
+			h.Note = noteUnchecked
 		case h.Passage != "":
 			h.Note = notePassage
 		case h.Kind == "connector":
@@ -89,7 +100,9 @@ func (g *Graph) hazards(legs []Leg, path []Position, props []Proposal, opts Opti
 		}
 		h.Fixes = []string{}
 		for _, p := range props {
-			if !accepted[p.ID] && p.from < h.To && p.to > h.From {
+			// A close pass is fixed only by a shortcut that keeps farther off.
+			better := h.Severity != "close" || p.MinClearanceNM > h.MinClearanceNM
+			if !accepted[p.ID] && p.from < h.To && p.to > h.From && better {
 				h.Fixes = append(h.Fixes, p.ID)
 			}
 		}
