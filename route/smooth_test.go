@@ -426,7 +426,7 @@ func TestRoutePerformance(t *testing.T) {
 		start := time.Now()
 		r := routeOn(t, g, Options{Kinks: true}, c.from, c.to)
 		took := time.Since(start)
-		t.Logf("%s: %v, %d vertices, %d proposals, %d stretches", c.name, took, len(r.Path), len(r.Proposals), len(r.Stretches))
+		t.Logf("%s: %v, %d vertices, %d proposals, %d stretches, %d hazards", c.name, took, len(r.Path), len(r.Proposals), len(r.Stretches), len(r.Hazards))
 		if took > time.Second {
 			t.Errorf("%s took %v", c.name, took)
 		}

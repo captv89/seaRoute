@@ -54,6 +54,10 @@ type Proposal struct {
 	Reason         string     `json:"reason"` // "below clearance" or "no TSS data"
 	MinClearanceNM float64    `json:"min_clearance_nm"`
 	SavedNM        float64    `json:"saved_nm"`
+
+	// from and to index the proposal's end vertices in Route.Path (in
+	// Leg.Path inside smoothLeg); set only for proposals not accepted.
+	from, to int
 }
 
 // Stretch labels path[From..To] of Route.Path with where it came from.
@@ -300,6 +304,7 @@ func (s *smoother) smoothLeg(l *Leg) []Proposal {
 
 	var props []Proposal
 	var taken []span
+	shift := 0 // vertices removed by the taken spans so far
 	for _, sp := range s.scan(pts, segs, classProposal) {
 		a, b := pts[sp.i], pts[sp.j]
 		id := proposalID(ver, pts[sp.i:sp.j+1])
@@ -317,6 +322,9 @@ func (s *smoother) smoothLeg(l *Leg) []Proposal {
 		if s.accept[id] {
 			s.used[id] = true
 			taken = append(taken, sp)
+			shift += sp.j - sp.i - 1
+		} else {
+			props[len(props)-1].from, props[len(props)-1].to = sp.i-shift, sp.j-shift
 		}
 	}
 	l.Path, l.segs = apply(pts, segs, taken, segAccepted)
@@ -336,32 +344,39 @@ func (l *Leg) measure() {
 	}
 }
 
+// segFlags returns the flag and scheme of every segment of the concatenated
+// route path (see segFlag).
+func (g *Graph) segFlags(legs []Leg) (flags, schemes []string) {
+	unknown := map[Position]bool{}
+	for _, l := range legs {
+		for k, code := range l.segs {
+			f, sc := g.segFlag(code, l.Path[k], l.Path[k+1], l.lifted, unknown)
+			flags, schemes = append(flags, f), append(schemes, sc)
+		}
+	}
+	return flags, schemes
+}
+
 // stretches labels the segments of the concatenated route path. Flag
 // precedence per segment: connector, user-accepted, smoothed, tss-unresolved,
 // osm-tss, tss-unknown, marnet. Adjacent segments with the same flag and
 // scheme merge.
-func (g *Graph) stretches(legs []Leg) []Stretch {
+func stretches(flags, schemes []string) []Stretch {
 	out := []Stretch{}
-	unknown := map[Position]bool{}
-	base := 0
-	for _, l := range legs {
-		for k, code := range l.segs {
-			flag, scheme := g.segFlag(code, l.Path[k], l.Path[k+1], l.lifted, unknown)
-			from := base + k
-			if n := len(out); n > 0 && out[n-1].Flag == flag && out[n-1].Scheme == scheme && out[n-1].To == from {
-				out[n-1].To = from + 1
-				continue
-			}
-			sev := "label"
-			switch flag {
-			case "tss-unresolved":
-				sev = "warning"
-			case "tss-unknown":
-				sev = "info"
-			}
-			out = append(out, Stretch{From: from, To: from + 1, Flag: flag, Severity: sev, Scheme: scheme})
+	for from, flag := range flags {
+		scheme := schemes[from]
+		if n := len(out); n > 0 && out[n-1].Flag == flag && out[n-1].Scheme == scheme && out[n-1].To == from {
+			out[n-1].To = from + 1
+			continue
 		}
-		base += len(l.Path) - 1
+		sev := "label"
+		switch flag {
+		case "tss-unresolved":
+			sev = "warning"
+		case "tss-unknown":
+			sev = "info"
+		}
+		out = append(out, Stretch{From: from, To: from + 1, Flag: flag, Severity: sev, Scheme: scheme})
 	}
 	return out
 }

@@ -127,6 +127,9 @@ type Route struct {
 	Stretches []Stretch `json:"stretches"`
 	// IgnoredAccept lists Options.Accept IDs that matched nothing on this route.
 	IgnoredAccept []string `json:"ignored_accept"`
+	// Hazards are runs of Path that touch land or pass closer than the
+	// clearance. Empty without land data.
+	Hazards []Hazard `json:"hazards"`
 }
 
 // DistanceNM returns the total distance in nautical miles.
@@ -478,7 +481,11 @@ func (g *Graph) Route(points []Position, opts Options) (Route, error) {
 			return Route{}, fmt.Errorf("leg %d: %w", i+1, err)
 		}
 		if sm != nil {
-			r.Proposals = append(r.Proposals, sm.smoothLeg(&leg)...)
+			base := max(0, len(r.Path)-1) // index of the leg start in r.Path
+			for _, p := range sm.smoothLeg(&leg) {
+				p.from, p.to = p.from+base, p.to+base
+				r.Proposals = append(r.Proposals, p)
+			}
 		}
 		r.Legs = append(r.Legs, leg)
 		for _, k := range leg.liftOrder {
@@ -508,8 +515,10 @@ func (g *Graph) Route(points []Position, opts Options) (Route, error) {
 	if r.Passages == nil {
 		r.Passages = []string{}
 	}
-	r.Stretches = g.stretches(r.Legs)
+	flags, schemes := g.segFlags(r.Legs)
+	r.Stretches = stretches(flags, schemes)
 	r.IgnoredAccept = ignoredAccept(opts.Accept, sm)
+	r.Hazards = g.hazards(r.Legs, r.Path, r.Proposals, opts)
 	return r, nil
 }
 
