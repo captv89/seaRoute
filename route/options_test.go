@@ -42,3 +42,24 @@ func TestCheckVesselLimits(t *testing.T) {
 		}
 	}
 }
+
+func TestNewVessel(t *testing.T) {
+	v, err := NewVessel(nil, nil, "")
+	if err != nil || v != (Vessel{DraughtM: 10, SpeedKn: 14, Type: Bulk}) {
+		t.Errorf("defaults = %+v, %v", v, err)
+	}
+	zero, eight := 0.0, 8.0
+	if _, err := NewVessel(&zero, nil, ""); err == nil {
+		t.Error("explicit 0 draught: want error")
+	}
+	if _, err := NewVessel(nil, &zero, ""); err == nil {
+		t.Error("explicit 0 speed: want error")
+	}
+	v, err = NewVessel(&eight, nil, "tanker")
+	if err != nil || v.DraughtM != 8 || v.Type != Tanker {
+		t.Errorf("explicit = %+v, %v", v, err)
+	}
+	if _, err := NewVessel(nil, nil, "ferry"); err == nil {
+		t.Error("unknown type: want error")
+	}
+}

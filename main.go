@@ -62,17 +62,7 @@ type WaypointRequest struct {
 // vessel applies the defaults for absent fields and validates the result.
 // An explicit zero is out of range, not a request for the default.
 func (r WaypointRequest) vessel() (route.Vessel, error) {
-	v := route.Vessel{DraughtM: route.DefaultDraughtM, SpeedKn: route.DefaultSpeedKn, Type: route.DefaultVesselType}
-	if r.DraughtM != nil {
-		v.DraughtM = *r.DraughtM
-	}
-	if r.SpeedKn != nil {
-		v.SpeedKn = *r.SpeedKn
-	}
-	if r.VesselType != "" {
-		v.Type = route.VesselType(r.VesselType)
-	}
-	return v, route.CheckVessel(v)
+	return route.NewVessel(r.DraughtM, r.SpeedKn, r.VesselType)
 }
 
 // maxWaypointsBody caps the /waypoints body; 200 IDs of 32 chars is under 10 KB.

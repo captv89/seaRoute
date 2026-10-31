@@ -31,3 +31,20 @@ func CheckVessel(v Vessel) error {
 	}
 	return nil
 }
+
+// NewVessel builds a vessel from optional request fields and validates it. A
+// nil pointer or empty type means the default; an explicit value, including 0,
+// is kept as given.
+func NewVessel(draughtM, speedKn *float64, vesselType string) (Vessel, error) {
+	v := Vessel{DraughtM: DefaultDraughtM, SpeedKn: DefaultSpeedKn, Type: DefaultVesselType}
+	if draughtM != nil {
+		v.DraughtM = *draughtM
+	}
+	if speedKn != nil {
+		v.SpeedKn = *speedKn
+	}
+	if vesselType != "" {
+		v.Type = VesselType(vesselType)
+	}
+	return v, CheckVessel(v)
+}

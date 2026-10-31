@@ -3,6 +3,7 @@ package mcpserver
 import (
 	"context"
 	"encoding/json"
+	"math"
 	"os"
 	"slices"
 	"strings"
@@ -230,7 +231,7 @@ func TestVesselValidationToolError(t *testing.T) {
 func TestRouteDepthDefaults(t *testing.T) {
 	var out routeOut
 	call(t, session(t), "route", map[string]any{"points": []map[string]any{{"port": "Rotterdam"}, {"lat": 1.26, "lon": 103.8}}}, &out)
-	if out.Depth.DraughtM != 10 || out.Notices == nil || len(out.Notices) != 0 {
+	if out.Depth.DraughtM != 10 || math.Abs(out.Depth.LimitM-13.568) > 1e-6 || out.Notices == nil || len(out.Notices) != 0 {
 		t.Errorf("depth %+v notices %#v; want draught 10 and empty notices", out.Depth, out.Notices)
 	}
 }

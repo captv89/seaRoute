@@ -192,17 +192,8 @@ func routeOptions(p Passages, clearance *float64, vs Vessel) (route.Options, err
 	if err := route.CheckClearance(c); err != nil {
 		return route.Options{}, err
 	}
-	v := route.Vessel{DraughtM: route.DefaultDraughtM, SpeedKn: route.DefaultSpeedKn, Type: route.DefaultVesselType}
-	if vs.DraughtM != nil {
-		v.DraughtM = *vs.DraughtM
-	}
-	if vs.SpeedKn != nil {
-		v.SpeedKn = *vs.SpeedKn
-	}
-	if vs.VesselType != "" {
-		v.Type = route.VesselType(vs.VesselType)
-	}
-	if err := route.CheckVessel(v); err != nil {
+	v, err := route.NewVessel(vs.DraughtM, vs.SpeedKn, vs.VesselType)
+	if err != nil {
 		return route.Options{}, err
 	}
 	return route.Options{
