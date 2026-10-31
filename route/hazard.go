@@ -85,6 +85,9 @@ func (g *Graph) hazards(legs []Leg, path []Position, opts Options, c *pathCtx) [
 				k++
 				continue
 			}
+			if pass == "" && g.depth != nil {
+				pass = g.approachOf(a, b) // depth not judged here: the passage table governs
+			}
 			if sev != "unchecked" && inApproach[k] {
 				sev = "approach"
 			}
@@ -152,8 +155,9 @@ func (g *Graph) tooShallow(a, b Position, code int32, pass string, c *pathCtx) b
 	if code >= 0 && PassageLimits[pass].MaxDraughtM > 0 {
 		return false
 	}
-	d, known := g.depth.SegmentMin(a, b)
-	return known && d < c.depthLimit(a, b)
+	lim := c.depthLimit(a, b)
+	d, known := g.segmentDepth(a, b, g.depthRun(code), lim)
+	return known && d < lim && g.approachOf(a, b) == ""
 }
 
 // approachSegs marks the path segments inside a port approach: from each
@@ -173,6 +177,8 @@ func (g *Graph) approachSegs(path []Position, c *pathCtx, limit float64) []bool 
 			if c.nearConfined(p, p) {
 				lim = c.limitConfinedM
 			}
+			// The raw reading, not segmentDepth: a land reading or a shallow
+			// cell near land is not safe water, so the approach goes on.
 			if d, known := g.depth.At(p); known && d < lim {
 				return false
 			}

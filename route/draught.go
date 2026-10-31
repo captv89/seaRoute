@@ -31,10 +31,11 @@ type Notice struct {
 	Passages []string   `json:"passages"` // passage tags on the avoided stretch
 }
 
-// buildMinDepth fills g.minDepth: the shallowest stored depth along each edge,
-// +Inf when unknown, without depth data, or in a passage whose PassageLimits
+// buildMinDepth fills g.minDepth: the controlling stored depth along each edge,
+// +Inf when unknown, without depth data, in a passage whose PassageLimits
 // entry fixes a maximum draught (the table value governs there, through the
-// passage block). Passages with a limit of 0 (malacca, dover) use the data.
+// passage block) or within passageApproachNM of such a passage. The value is
+// segmentDepth: cleaned against OSM land and robust to isolated cells.
 func (g *Graph) buildMinDepth() {
 	start := time.Now()
 	g.minDepth = make([]float32, len(g.to))
@@ -48,6 +49,11 @@ func (g *Graph) buildMinDepth() {
 	tabled := make([]bool, len(g.passes))
 	for i, name := range g.passes {
 		tabled[i] = PassageLimits[name].MaxDraughtM > 0
+	}
+	g.buildApproach()
+	nearTabled := make([]bool, len(g.nodes)) // within passageApproachNM of a fixed-limit passage node
+	for v, p := range g.nodes {
+		nearTabled[v] = g.approachPassage(p) != ""
 	}
 	const chunk = 2048
 	var wg sync.WaitGroup
@@ -72,8 +78,8 @@ func (g *Graph) buildMinDepth() {
 							continue // the lower index of a pair fills both
 						}
 						m := inf
-						if !tabled[g.pass[e]] {
-							if d, known := g.depth.SegmentMin(g.nodes[v], g.nodes[g.to[e]]); known {
+						if !tabled[g.pass[e]] && !nearTabled[v] && !nearTabled[g.to[e]] {
+							if d, known := g.segmentDepth(g.nodes[v], g.nodes[g.to[e]], g.depthRun(e), 255); known {
 								m = float32(d)
 							}
 						}

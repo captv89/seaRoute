@@ -165,7 +165,7 @@ func (g *Graph) safeLeg(a, b Position, c *pathCtx) bool {
 		if c.nearConfined(a, b) {
 			lim = c.limitConfinedM
 		}
-		if d, known := g.depth.SegmentMin(a, b); known && d < lim {
+		if d, known := g.segmentDepth(a, b, runMarnet, lim); known && d < lim && g.approachOf(a, b) == "" {
 			return false
 		}
 	}

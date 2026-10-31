@@ -695,7 +695,7 @@ func TestWaypointsVesselDefaults(t *testing.T) {
 		Features []struct {
 			Properties struct {
 				Depth   route.DepthLimit `json:"depth"`
-				Notices json.RawMessage  `json:"notices"`
+				Notices []route.Notice   `json:"notices"`
 			} `json:"properties"`
 		} `json:"features"`
 	}
@@ -706,8 +706,16 @@ func TestWaypointsVesselDefaults(t *testing.T) {
 	if p.Depth.DraughtM != 10 || math.Abs(p.Depth.LimitM-13.568) > 1e-6 {
 		t.Errorf("depth = %+v, want draught 10, limit 13.568", p.Depth)
 	}
-	if string(p.Notices) != "[]" {
-		t.Errorf("notices = %s, want []", p.Notices)
+	// With the real GEBCO grid the Dutch coast may add a reroute notice; the
+	// default vessel must still have a route deep enough (the Elbe fairway is
+	// below the grid's resolution and must not close it).
+	if p.Notices == nil {
+		t.Error("notices is null, want an array")
+	}
+	for _, n := range p.Notices {
+		if n.Kind == "draught-no-route" {
+			t.Errorf("default vessel has no route deep enough: %+v", n)
+		}
 	}
 }
 

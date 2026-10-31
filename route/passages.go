@@ -29,8 +29,8 @@ var PassageLimits = map[string]PassageLimit{
 		Source: "Corinth Canal S.A. 2026 commercial brochure, 6.50 m maximum permissible draft (some older sources give 7.3 m)",
 	},
 	"malacca": {
-		MaxDraughtM: 0, Confined: true,
-		Source: "per plan, unverified: no fixed draught limit; confined squat applied",
+		MaxDraughtM: 20.5, Confined: true,
+		Source: "Malaccamax design draught 20.5 m (en.wikipedia.org/wiki/Malaccamax); IMO rules for the Straits of Malacca and Singapore require 3.5 m under-keel clearance for deep-draught vessels (15 m or more). No IMO or MPA document fixes 20.5 m as a limit: unverified; GEBCO cannot resolve the deep-water route",
 	},
 	"dover": {
 		MaxDraughtM: 0, Confined: true,

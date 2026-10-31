@@ -154,7 +154,8 @@ type Graph struct {
 	scheme      []int32 // per directed edge: responsible scheme (index into tss.Schemes), -1 for none
 	twin        []int32 // per directed edge: the reverse edge
 	land        *Land
-	corridor    map[int64][]int32 // MARNET vertices by 1-degree cell, for inCorridor
+	approach    map[int64][]approachNode // nodes of fixed-limit passages (depth), by 0.5 degree cell
+	corridor    map[int64][]int32        // MARNET vertices by 1-degree cell, for inCorridor
 	tss         *TSS
 	depth       *Depth
 	minDepth    []float32 // per directed edge: shallowest depth along it, +Inf when unknown or exempt

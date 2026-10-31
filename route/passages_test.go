@@ -24,7 +24,7 @@ func TestPassageLimits(t *testing.T) {
 		"panama":  {MaxDraughtM: 15.24, Confined: true},
 		"kiel":    {MaxDraughtM: 9.5, Confined: true},
 		"corinth": {Confined: true},
-		"malacca": {MaxDraughtM: 0, Confined: true},
+		"malacca": {MaxDraughtM: 20.5, Confined: true},
 		"dover":   {MaxDraughtM: 0, Confined: true},
 	}
 	for tag, w := range want {
