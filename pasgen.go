@@ -40,6 +40,7 @@ type FeatureProperties struct {
 	Stretches     []route.Stretch  `json:"stretches"`
 	Warnings      []route.Warning  `json:"warnings"`
 	IgnoredAccept []string         `json:"ignored_accept"`
+	Hazards       []route.Hazard   `json:"hazards"`
 }
 
 type Feature struct {
@@ -149,6 +150,7 @@ func generateOutput(r route.Route, kinks bool, clearanceNM float64, oCoords rout
 			Stretches:     nonNil(r.Stretches),
 			Warnings:      nonNil(r.Warnings),
 			IgnoredAccept: nonNil(r.IgnoredAccept),
+			Hazards:       nonNil(r.Hazards),
 		},
 		ID: "1",
 	}

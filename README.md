@@ -170,13 +170,14 @@ Request (all kink fields optional):
 
 Traffic separation scheme (TSS) handling is always on. Every leg is a rhumb line.
 
-Response `properties` gains `kinks` and `clearance_nm` (the effective values), `proposals[]` (`id`, geometry, `reason`, `min_clearance_nm`, `saved_nm`), `stretches[]` (index range into the path, `flag`, `severity`, `scheme`), `warnings[]` and `ignored_accept[]`. Each waypoint has a `flag` naming the provenance of the stretch that arrives at it (`marnet`, `smoothed`, `user-accepted`, `osm-tss`, `tss-unknown`, `tss-unresolved`, `connector`); the origin is `connector`.
+Response `properties` gains `kinks` and `clearance_nm` (the effective values), `proposals[]` (`id`, geometry, `reason`, `min_clearance_nm`, `saved_nm`), `stretches[]` (index range into the path, `flag`, `severity`, `scheme`), `warnings[]`, `ignored_accept[]` and `hazards[]`. Each hazard is a run of path segments that touch land (`severity` `aground`, within the land data tolerance) or pass closer than `clearance_nm` (`close`), with `from`/`to` (index range into the path), `start`/`end` positions, `min_clearance_nm`, `kind` (`marnet`, `osm-tss`, `connector`, `smoothed`, `user-accepted`), `passage`, `note` and `fixes[]` (IDs of pending proposals that replace part of it). Hazards are reported with or without `kinks`. The MCP `route` and `distance_to_go` tools return the same `hazards`. Each waypoint has a `flag` naming the provenance of the stretch that arrives at it (`marnet`, `smoothed`, `user-accepted`, `osm-tss`, `tss-unknown`, `tss-unresolved`, `connector`); the origin is `connector`.
 
 ---
 
 ## Limitations
 
 * TSS data is community-maintained (OpenSeaMap / OpenStreetMap) and its coverage is incomplete. Stretches near land outside the covered areas are flagged `tss-unknown`; where TSS rules leave no route, the flagged `tss-unresolved` stretch ignores one scheme.
+* The land data is simplified (50 m) and covers a corridor around the MARNET network. Canals and channels narrower than that read as aground and are flagged as hazards. MARNET itself is not a surveyed track.
 * A licensed ENC (S-57/S-101 from a hydrographic office or chart distributor) is the authoritative source for charted hazards and traffic schemes. seaRoute does not use one.
 * seaRoute is not for navigation. A passage plan still needs official charts.
 

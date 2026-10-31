@@ -47,6 +47,7 @@ type distanceOut struct {
 	Warnings      []route.Warning  `json:"warnings" jsonschema:"traffic schemes whose rules the route lifts"`
 	IgnoredAccept []string         `json:"ignored_accept" jsonschema:"accept IDs that matched no proposal on this route"`
 	Stretches     []route.Stretch  `json:"stretches,omitempty" jsonschema:"provenance of runs of path, when include_path is set"`
+	Hazards       []route.Hazard   `json:"hazards" jsonschema:"runs of the route that touch land (aground) or pass closer than clearance_nm (close); from and to index path"`
 }
 
 // proposalOut is a route.Proposal; Path is set only with include_path.
@@ -81,6 +82,7 @@ type routeOut struct {
 	Warnings      []route.Warning  `json:"warnings" jsonschema:"traffic schemes whose rules the route lifts"`
 	IgnoredAccept []string         `json:"ignored_accept" jsonschema:"accept IDs that matched no proposal on this route"`
 	Stretches     []route.Stretch  `json:"stretches,omitempty"`
+	Hazards       []route.Hazard   `json:"hazards" jsonschema:"runs of the route that touch land (aground) or pass closer than clearance_nm (close); from and to index path"`
 }
 
 type passagesOut struct {
@@ -97,7 +99,7 @@ func New(g *route.Graph, ports PortFinder) *mcp.Server {
 
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "distance_to_go",
-		Description: "Sea distance in nautical miles from a position to a destination along the shipping network (Eurostat MARNET). Distances are TSS-aware. Kinks are smoothed with a land clearance; further shortcuts come back as proposals, which are never applied unless their IDs are passed in accept.",
+		Description: "Sea distance in nautical miles from a position to a destination along the shipping network (Eurostat MARNET). Distances are TSS-aware. Kinks are smoothed with a land clearance; further shortcuts come back as proposals, which are never applied unless their IDs are passed in accept. Segments that touch land or pass closer than clearance_nm come back in hazards.",
 		Annotations: readOnly,
 	}, func(_ context.Context, _ *mcp.CallToolRequest, in distanceIn) (*mcp.CallToolResult, distanceOut, error) {
 		from, err := resolve(in.From)
@@ -120,6 +122,7 @@ func New(g *route.Graph, ports PortFinder) *mcp.Server {
 			DistanceNM: round1(r.DistanceNM()), Passages: r.Passages,
 			Proposals: proposalsOut(r.Proposals, in.IncludePath),
 			Warnings:  orEmpty(r.Warnings), IgnoredAccept: orEmpty(r.IgnoredAccept),
+			Hazards: orEmpty(r.Hazards),
 		}
 		if in.IncludePath {
 			out.Path = r.Path
@@ -130,7 +133,7 @@ func New(g *route.Graph, ports PortFinder) *mcp.Server {
 
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "route",
-		Description: "Shortest sea route through two or more points, in order, along the shipping network. Returns total and per-leg distance in nautical miles and the canals and straits used. Distances are TSS-aware. Kink proposals are never applied unless their IDs are passed in accept.",
+		Description: "Shortest sea route through two or more points, in order, along the shipping network. Returns total and per-leg distance in nautical miles and the canals and straits used. Distances are TSS-aware. Kink proposals are never applied unless their IDs are passed in accept. Segments that touch land or pass closer than clearance_nm come back in hazards.",
 		Annotations: readOnly,
 	}, func(_ context.Context, _ *mcp.CallToolRequest, in routeIn) (*mcp.CallToolResult, routeOut, error) {
 		if len(in.Points) < 2 {
@@ -156,6 +159,7 @@ func New(g *route.Graph, ports PortFinder) *mcp.Server {
 			DistanceNM: round1(r.DistanceNM()), Passages: r.Passages,
 			Proposals: proposalsOut(r.Proposals, in.IncludePath),
 			Warnings:  orEmpty(r.Warnings), IgnoredAccept: orEmpty(r.IgnoredAccept),
+			Hazards: orEmpty(r.Hazards),
 		}
 		for _, l := range r.Legs {
 			out.Legs = append(out.Legs, legOut{DistanceNM: round1(l.DistanceM / route.MetresPerNM), Passages: l.Passages})

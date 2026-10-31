@@ -588,7 +588,7 @@ func TestWaypointsKinkDefaults(t *testing.T) {
 	if string(props["clearance_nm"]) != "2" {
 		t.Errorf("clearance_nm = %s, want 2", props["clearance_nm"])
 	}
-	for _, k := range []string{"proposals", "stretches", "warnings", "ignored_accept"} {
+	for _, k := range []string{"proposals", "stretches", "warnings", "ignored_accept", "hazards"} {
 		if v := string(props[k]); !strings.HasPrefix(v, "[") {
 			t.Errorf("%s = %s, want an array", k, v)
 		}

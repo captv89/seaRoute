@@ -224,3 +224,21 @@ func TestClearanceOutOfRangeToolError(t *testing.T) {
 		t.Error("overlong accept ID: want tool error")
 	}
 }
+
+func TestRouteReturnsHazards(t *testing.T) {
+	cs := fullSession(t)
+	var out routeOut
+	call(t, cs, "route", map[string]any{"points": []map[string]any{{"port": "Rotterdam"}, {"lat": 1.26, "lon": 103.8}}}, &out)
+	suez := false
+	for _, h := range out.Hazards {
+		suez = suez || h.Passage == "suez"
+	}
+	if len(out.Hazards) == 0 || !suez {
+		t.Errorf("want hazards including suez; got %+v", out.Hazards)
+	}
+	var d distanceOut
+	call(t, cs, "distance_to_go", withArgs(nil), &d)
+	if d.Hazards == nil || len(d.Hazards) == 0 {
+		t.Errorf("distance_to_go hazards = %#v", d.Hazards)
+	}
+}
