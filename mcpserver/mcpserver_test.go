@@ -102,11 +102,13 @@ func TestDistanceToGoPath(t *testing.T) {
 func TestDistanceToGoAvoid(t *testing.T) {
 	cs := session(t)
 	var via, round distanceOut
-	call(t, cs, "distance_to_go", map[string]any{"from": map[string]any{"port": "Rotterdam"}, "to": map[string]any{"port": "Gdynia"}}, &via)
-	call(t, cs, "distance_to_go", map[string]any{"from": map[string]any{"lat": 51.9, "lon": 4.44}, "to": map[string]any{"port": "Gdynia"}, "avoid": []string{"kiel"}}, &round)
-	t.Logf("via Kiel %.1f nm %v; avoiding %.1f nm %v", via.DistanceNM, via.Passages, round.DistanceNM, round.Passages)
-	if !slices.Contains(via.Passages, "kiel") || slices.Contains(round.Passages, "kiel") || round.DistanceNM <= via.DistanceNM {
-		t.Errorf("avoid kiel not applied: %+v vs %+v", via, round)
+	from := map[string]any{"lat": 51.9, "lon": 4.44}
+	to := map[string]any{"lat": 1.26, "lon": 103.8}
+	call(t, cs, "distance_to_go", map[string]any{"from": from, "to": to}, &via)
+	call(t, cs, "distance_to_go", map[string]any{"from": from, "to": to, "avoid": []string{"suez"}}, &round)
+	t.Logf("default %.1f nm %v; avoiding suez %.1f nm %v", via.DistanceNM, via.Passages, round.DistanceNM, round.Passages)
+	if !slices.Contains(via.Passages, "suez") || slices.Contains(round.Passages, "suez") || round.DistanceNM <= via.DistanceNM {
+		t.Errorf("avoid suez not applied: %+v vs %+v", via, round)
 	}
 }
 
