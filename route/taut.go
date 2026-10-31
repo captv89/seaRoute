@@ -150,21 +150,8 @@ func (c *pathCtx) nearConfined(a, b Position) bool {
 func (g *Graph) safeLeg(a, b Position, c *pathCtx) bool {
 	relaxed := c.nearEnd(a, b)
 	if g.land != nil {
-		tol := g.land.Tolerance
-		need := tol + 1 // relaxed: must not touch land
-		if !relaxed {
-			need = c.clearM + tol
-			for _, p := range [2]Position{a, b} {
-				if jc, ok := c.joins[p]; ok && jc < need {
-					need = jc
-				}
-			}
-			need *= 0.99
-		}
-		if !g.openWater(a, b, need) {
-			if d := g.land.SegmentClearance(a, b, need); d < need || (relaxed && d <= tol) {
-				return false
-			}
+		if !g.landClear(a, b, c, relaxed) {
+			return false
 		}
 		if g.land.CorridorNM != 0 && !g.covered(a, b, c) {
 			return false
@@ -183,6 +170,67 @@ func (g *Graph) safeLeg(a, b Position, c *pathCtx) bool {
 		}
 	}
 	return true
+}
+
+// joinReachNM is how far from a join the join's own clearance applies.
+const joinReachNM = 2.0
+
+// landClear checks the clearance of the leg a-b. Near a join (a run end whose
+// clearance is below the requested one) only the first joinReachNM of the leg
+// is held to the join's clearance, floored at "does not touch land"; the rest
+// keeps the full clearance.
+func (g *Graph) landClear(a, b Position, c *pathCtx, relaxed bool) bool {
+	tol := g.land.Tolerance
+	check := func(p, q Position, need float64, touchOnly bool) bool {
+		if g.openWater(p, q, need) {
+			return true
+		}
+		d := g.land.SegmentClearance(p, q, need)
+		return d >= need && !(touchOnly && d <= tol)
+	}
+	if relaxed {
+		return check(a, b, tol+1, true)
+	}
+	full := c.clearM + tol
+	needOf := func(p Position) float64 {
+		if jc, ok := c.joins[p]; ok && jc < full {
+			return math.Max(jc*0.99, tol+1)
+		}
+		return full
+	}
+	needA, needB := needOf(a), needOf(b)
+	if needA == full && needB == full {
+		return check(a, b, full, false)
+	}
+	// Cut points as fractions of the leg: [0,tA] needA, [tA,tB] full, [tB,1] needB.
+	l := Distance(a, b)
+	tA, tB := 0.0, 1.0
+	if needA < full {
+		tA = math.Min(1, joinReachNM*MetresPerNM/l)
+	}
+	if needB < full {
+		tB = math.Max(tA, 1-joinReachNM*MetresPerNM/l)
+	}
+	at := func(t float64) Position {
+		switch t {
+		case 0:
+			return a
+		case 1:
+			return b
+		}
+		bl := b[0]
+		if bl-a[0] > 180 {
+			bl -= 360
+		} else if a[0]-bl > 180 {
+			bl += 360
+		}
+		ma, mb := Mercator(a), Mercator(Position{bl, b[1]})
+		return Position{math.Remainder((ma[0]+t*(mb[0]-ma[0]))*180/math.Pi, 360), invMercatorLat(ma[1] + t*(mb[1]-ma[1]))}
+	}
+	pa, pb := at(tA), at(tB)
+	return (tA == 0 || check(a, pa, needA, false)) &&
+		(tB <= tA || check(pa, pb, full, false)) &&
+		(tB == 1 || check(pb, b, needB, false))
 }
 
 // breaksTSS is TSS.breaksRules without the schemes the leg lifted. A leg that
@@ -364,7 +412,7 @@ type latticeNode struct {
 	k   float64 // lateral offset in NM, for tie-breaking
 }
 
-// station places stations every tautStationNM of arc along pts, with lattice
+// lattice places stations every tautStationNM of arc along pts, with lattice
 // points at the lateral offsets (scaled) perpendicular to the local bearing.
 // The ends are single nodes. Points failing the point check are dropped.
 func (g *Graph) lattice(pts []Position, c *pathCtx, scale float64) [][]latticeNode {

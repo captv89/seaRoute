@@ -2,6 +2,7 @@ package route
 
 import (
 	"math"
+	"math/rand/v2"
 	"runtime"
 	"testing"
 	"time"
@@ -112,5 +113,85 @@ func TestWithinMatchesPointDistance(t *testing.T) {
 				t.Fatalf("%v: Within %v, PointDistance says %v", p, got, want)
 			}
 		}
+	}
+}
+
+// bruteClearance is SegmentClearance without the cell walk and the bounding-box
+// prune: the minimum over every edge, capped at limit.
+func bruteClearance(l *Land, a, b Position, limit float64) float64 {
+	seen := map[uint32]bool{}
+	var edges []uint32
+	for _, e := range l.refs {
+		if !seen[e] {
+			seen[e] = true
+			edges = append(edges, e)
+		}
+	}
+	best := limit
+	for _, pc := range splitAntimeridian(a, b) {
+		ma, mb := Mercator(pc[0]), Mercator(pc[1])
+		for _, e := range edges {
+			best = math.Min(best, l.edgeClearance(ma, mb, e))
+		}
+	}
+	return best
+}
+
+func TestSegmentClearanceMatchesBruteForce(t *testing.T) {
+	rng := rand.New(rand.NewPCG(7, 11))
+	for _, tc := range []struct {
+		name     string
+		lon0     float64
+		lat0     float64
+		spanLon  float64
+		spanLat  float64
+		crossing bool
+	}{
+		{"lat50", 0, 50, 4, 2, false},
+		{"lat70", 20, 70, 6, 2, false},
+		{"antimeridian", 178, 40, 4, 2, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var rings [][]Position
+			for range 40 {
+				cx := tc.lon0 + rng.Float64()*tc.spanLon
+				cy := tc.lat0 + rng.Float64()*tc.spanLat
+				r := 0.02 + rng.Float64()*0.1
+				var ring []Position
+				for k := range 6 {
+					ang := 2 * math.Pi * float64(k) / 6
+					lon := cx + r*(0.7+0.6*rng.Float64())*math.Cos(ang)
+					if lon > 180 {
+						lon -= 360
+					}
+					ring = append(ring, Position{lon, cy + r*(0.7+0.6*rng.Float64())*math.Sin(ang)})
+				}
+				rings = append(rings, append(ring, ring[0]))
+			}
+			l := NewLand(rings, 0, "test")
+			pt := func() Position {
+				lon := tc.lon0 + rng.Float64()*tc.spanLon
+				if lon > 180 {
+					lon -= 360
+				}
+				return Position{lon, tc.lat0 + rng.Float64()*tc.spanLat}
+			}
+			zero := 0
+			for range 400 {
+				a, b := pt(), pt()
+				for _, limit := range []float64{2 * MetresPerNM, 20 * MetresPerNM} {
+					got, want := l.SegmentClearance(a, b, limit), bruteClearance(l, a, b, limit)
+					if math.Abs(got-want) > 1e-6*math.Max(1, want) {
+						t.Fatalf("%v -> %v limit %.0f: got %.3f, brute force %.3f", a, b, limit, got, want)
+					}
+					if want == 0 {
+						zero++
+					}
+				}
+			}
+			if zero == 0 {
+				t.Error("no random leg touched land: the test does not exercise the prune")
+			}
+		})
 	}
 }

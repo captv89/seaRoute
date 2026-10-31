@@ -112,27 +112,59 @@ func routeCase(t *testing.T, tc tautCase) Route {
 
 func TestTautNoGrounding(t *testing.T) {
 	g := testFullGraph(t)
+	tol := g.land.Tolerance
 	for _, tc := range tautCases {
 		t.Run(tc.name, func(t *testing.T) {
 			r := routeCase(t, tc)
 			base := ctxFor(g, Options{}, tc.pts)
-			cp := coarseLeg(t, g, tc.pts[0], tc.pts[1]).Path
-			taut, coarse := 0, 0
+			coarse := coarseLeg(t, g, tc.pts[0], tc.pts[1])
+			cp := coarse.Path
+			free := 0
+			for k := range coarse.segs {
+				if !g.pinnedSeg(&coarse, k) {
+					free++
+				}
+			}
+			taut, left := 0, 0
+			off := 0 // index of the leg's first segment in r.Path
+			tautSeg := map[int]bool{}
 			for _, l := range r.Legs {
 				c := legCtxFor(g, base, l, cp)
 				for k, code := range l.segs {
+					a, b := l.Path[k], l.Path[k+1]
 					switch {
 					case code == segTaut:
 						taut++
-						if !g.safeLeg(l.Path[k], l.Path[k+1], c) {
-							t.Errorf("taut segment %v -> %v is not safe", l.Path[k], l.Path[k+1])
+						tautSeg[off+k] = true
+						if !g.safeLeg(a, b, c) {
+							t.Errorf("taut segment %v -> %v is not safe", a, b)
 						}
 					case code >= 0 && !g.pinnedSeg(&l, k):
-						coarse++
+						left++
+					}
+					// Independent of safeLeg: no free segment touches land.
+					if code == segTaut || (code >= 0 && !g.pinnedSeg(&l, k)) {
+						if d := g.land.SegmentClearance(a, b, tol+1); d <= tol {
+							t.Errorf("free segment %v -> %v touches land", a, b)
+						}
+					}
+				}
+				off += len(l.segs)
+			}
+			if free > 0 && taut == 0 {
+				t.Errorf("%d free coarse segments but no taut segment: every run fell back", free)
+			}
+			for _, h := range r.Hazards {
+				if h.Severity != "aground" {
+					continue
+				}
+				for k := h.From; k < h.To; k++ {
+					if tautSeg[k] {
+						t.Errorf("aground hazard %d..%d covers taut segment %d", h.From, h.To, k)
 					}
 				}
 			}
-			t.Logf("%d taut segments, %d free segments left as drawn, %.0f NM", taut, coarse, r.DistanceM/MetresPerNM)
+			t.Logf("%d taut segments, %d free segments left as drawn (of %d free in the coarse leg), %.0f NM", taut, left, free, r.DistanceM/MetresPerNM)
 		})
 	}
 }
@@ -150,8 +182,33 @@ func TestTautIsTaut(t *testing.T) {
 					if l.segs[k-1] != segTaut || l.segs[k] != segTaut {
 						continue
 					}
-					if g.safeLeg(l.Path[k-1], l.Path[k+1], c) {
+					p, q := l.Path[k-1], l.Path[k+1]
+					if g.safeLeg(p, q, c) {
 						t.Errorf("vertex %v could be dropped", l.Path[k])
+						continue
+					}
+					// Independent reasons the chord is refused: land, TSS, depth or
+					// leaving the covered area. At least one must hold.
+					need := c.clearM + g.land.Tolerance
+					why := g.land.SegmentClearance(p, q, need) < need ||
+						(g.tss != nil && g.tss.breaksRules(p, q))
+					if d, known := func() (float64, bool) {
+						if g.depth == nil {
+							return 255, false
+						}
+						return g.depth.SegmentMin(p, q)
+					}(); known && d < c.limitConfinedM {
+						why = true
+					}
+					if !why {
+						for _, pc := range splitAntimeridian(p, q) {
+							if !g.inCorridor(pc[0], pc[1], tautCorridorM) {
+								why = true
+							}
+						}
+					}
+					if !why {
+						t.Errorf("chord %v -> %v is refused for no independent reason", p, q)
 					}
 				}
 			}
@@ -360,5 +417,44 @@ func TestTautSyntheticAvoidsShoal(t *testing.T) {
 	}
 	if len(r.Path) > 4 {
 		t.Errorf("path %v not straightened", r.Path)
+	}
+}
+
+// joinGraph has land well away from the legs below, so only the land under test matters.
+func joinGraph(rings ...[]Position) *Graph {
+	return NewWith(chainSegs(Position{0, 0}, Position{1, 0}), landOf(rings...), nil)
+}
+
+func TestSafeLegJoinRelaxationIsLocal(t *testing.T) {
+	// The join at the origin is 0.2 NM off a coast that runs along lat 0.2 NM.
+	coast := rect(-1, 0.2/60, 1, 0.5)
+	g := joinGraph(coast)
+	o := Position{0, 0}
+	c := &pathCtx{clearM: 2 * MetresPerNM, joins: map[Position]float64{o: g.land.PointDistance(o, 1e6)}}
+	if jc := c.joins[o]; math.Abs(jc-0.2*MetresPerNM) > 5 {
+		t.Fatalf("join clearance %.0f m", jc)
+	}
+	if g.safeLeg(o, Position{0.5, 0}, c) {
+		t.Error("a leg hugging the coast at 0.2 NM for 30 NM is accepted")
+	}
+	if !g.safeLeg(o, Position{0, -0.3}, c) {
+		t.Error("a leg leaving the coast from the join is rejected")
+	}
+	// Without the join entry the same leg away from the coast is judged at 2 NM
+	// from the start, so it fails: the join is what lets it leave.
+	if g.safeLeg(o, Position{0, -0.3}, &pathCtx{clearM: 2 * MetresPerNM}) {
+		t.Error("leg from a point inside the clearance accepted without a join")
+	}
+}
+
+func TestSafeLegJoinOnLandRejectsCrossing(t *testing.T) {
+	g := joinGraph(rect(0.1, -0.1, 0.3, 0.1))
+	j := Position{0.1, 0} // exactly on the west edge
+	c := &pathCtx{clearM: 2 * MetresPerNM, joins: map[Position]float64{j: g.land.PointDistance(j, 1e6)}}
+	if c.joins[j] > 1e-6 {
+		t.Fatalf("join clearance %v, want 0", c.joins[j])
+	}
+	if g.safeLeg(j, Position{0.5, 0}, c) {
+		t.Error("a leg from a join on land across the island is accepted")
 	}
 }
