@@ -54,6 +54,8 @@ type Options struct {
 	NoTSS bool
 	// ClearanceNM is the land clearance hazards are measured against; 0 means 2.
 	ClearanceNM float64
+	// Vessel is the ship the route is planned for; zero fields mean the defaults.
+	Vessel Vessel
 }
 
 // ClosedByDefault are passages a route avoids unless Options.Allow opens
