@@ -5,6 +5,7 @@ import (
 	"compress/gzip"
 	"encoding/json"
 	"io"
+	"math"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -584,7 +585,7 @@ func TestWaypointsDefaults(t *testing.T) {
 	if string(props["clearance_nm"]) != "2" {
 		t.Errorf("clearance_nm = %s, want 2", props["clearance_nm"])
 	}
-	for _, k := range []string{"stretches", "warnings", "hazards"} {
+	for _, k := range []string{"stretches", "warnings", "hazards", "notices"} {
 		if v := string(props[k]); !strings.HasPrefix(v, "[") {
 			t.Errorf("%s = %s, want an array", k, v)
 		}
@@ -676,6 +677,51 @@ func TestWaypointsRejectsNoKinkFields(t *testing.T) {
 	for _, k := range []string{"proposals", "ignored_accept", "kinks"} {
 		if _, ok := props[k]; ok {
 			t.Errorf("response still has %q", k)
+		}
+	}
+}
+
+func TestWaypointsVesselDefaults(t *testing.T) {
+	r := setupTestRouter(t)
+	w := postWaypoints(t, r, map[string]any{"fromPort": "Rotterdam", "toPort": "Hamburg"})
+	if w.Code != http.StatusOK {
+		t.Fatalf("status %d: %s", w.Code, w.Body.String())
+	}
+	var res struct {
+		Features []struct {
+			Properties struct {
+				Depth   route.DepthLimit `json:"depth"`
+				Notices json.RawMessage  `json:"notices"`
+			} `json:"properties"`
+		} `json:"features"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &res); err != nil {
+		t.Fatal(err)
+	}
+	p := res.Features[0].Properties
+	if p.Depth.DraughtM != 10 || math.Abs(p.Depth.LimitM-13.568) > 1e-6 {
+		t.Errorf("depth = %+v, want draught 10, limit 13.568", p.Depth)
+	}
+	if string(p.Notices) != "[]" {
+		t.Errorf("notices = %s, want []", p.Notices)
+	}
+}
+
+func TestWaypointsVesselValidation(t *testing.T) {
+	r := setupTestRouter(t)
+	for _, tc := range []struct {
+		field string
+		val   any
+		want  string
+	}{
+		{"draught_m", 30.0, "draught_m must be between 1 and 25"},
+		{"draught_m", 0.0, "draught_m must be between 1 and 25"},
+		{"speed_kn", 0.0, "speed_kn must be between 1 and 30"},
+		{"vessel_type", "ferry", "vessel_type must be one of"},
+	} {
+		w := postWaypoints(t, r, map[string]any{"fromPort": "Rotterdam", "toPort": "Hamburg", tc.field: tc.val})
+		if w.Code != http.StatusBadRequest || !strings.Contains(w.Body.String(), tc.want) {
+			t.Errorf("%s=%v: status %d body %s, want 400 containing %q", tc.field, tc.val, w.Code, w.Body.String(), tc.want)
 		}
 	}
 }

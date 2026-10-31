@@ -38,6 +38,12 @@ type FeatureProperties struct {
 	Stretches   []route.Stretch `json:"stretches"`
 	Warnings    []route.Warning `json:"warnings"`
 	Hazards     []route.Hazard  `json:"hazards"`
+
+	// Depth is the depth the vessel needs; ConfinedDepthM the same in a canal
+	// or strait. Notices say where the draught changed the route.
+	Depth          route.DepthLimit `json:"depth"`
+	ConfinedDepthM float64          `json:"confined_depth_limit_m"`
+	Notices        []route.Notice   `json:"notices"`
 }
 
 type Feature struct {
@@ -145,6 +151,10 @@ func generateOutput(r route.Route, clearanceNM float64, oCoords route.Position, 
 			Stretches:   nonNil(r.Stretches),
 			Warnings:    nonNil(r.Warnings),
 			Hazards:     nonNil(r.Hazards),
+
+			Depth:          r.Depth,
+			ConfinedDepthM: r.ConfinedDepthM,
+			Notices:        nonNil(r.Notices),
 		},
 		ID: "1",
 	}

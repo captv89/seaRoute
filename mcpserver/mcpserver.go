@@ -29,21 +29,32 @@ type Passages struct {
 	Allow []string `json:"allow,omitempty" jsonschema:"passages closed by default to open, e.g. northeast"`
 }
 
+// Vessel is the ship a route is planned for. Absent fields use the defaults.
+type Vessel struct {
+	DraughtM   *float64 `json:"draught_m,omitempty" jsonschema:"vessel draught in metres, 1 to 25; default 10"`
+	SpeedKn    *float64 `json:"speed_kn,omitempty" jsonschema:"speed in knots for squat, 1 to 30; default 14"`
+	VesselType string   `json:"vessel_type,omitempty" jsonschema:"tanker, bulk, general or container; default bulk"`
+}
+
 type distanceIn struct {
 	From Point `json:"from" jsonschema:"ship position"`
 	To   Point `json:"to" jsonschema:"destination"`
 	Passages
 	IncludePath bool     `json:"include_path,omitempty" jsonschema:"return the route geometry as [lon, lat] pairs"`
 	ClearanceNM *float64 `json:"clearance_nm,omitempty" jsonschema:"land clearance in nautical miles, 0.5 to 10; default 2"`
+	Vessel
 }
 
 type distanceOut struct {
-	DistanceNM float64          `json:"distance_nm" jsonschema:"sea distance in nautical miles, rounded to 0.1"`
-	Passages   []string         `json:"passages" jsonschema:"tagged canals and straits on the route, in order"`
-	Path       []route.Position `json:"path,omitempty" jsonschema:"route geometry as [lon, lat] pairs, when include_path is set"`
-	Warnings   []route.Warning  `json:"warnings" jsonschema:"traffic schemes whose rules the route lifts"`
-	Stretches  []route.Stretch  `json:"stretches,omitempty" jsonschema:"provenance of runs of path, when include_path is set"`
-	Hazards    []route.Hazard   `json:"hazards" jsonschema:"runs of the route that touch land (aground), pass closer than clearance_nm (close), or are connectors outside the land data (unchecked); from and to index path"`
+	DistanceNM     float64          `json:"distance_nm" jsonschema:"sea distance in nautical miles, rounded to 0.1"`
+	Passages       []string         `json:"passages" jsonschema:"tagged canals and straits on the route, in order"`
+	Path           []route.Position `json:"path,omitempty" jsonschema:"route geometry as [lon, lat] pairs, when include_path is set"`
+	Warnings       []route.Warning  `json:"warnings" jsonschema:"traffic schemes whose rules the route lifts"`
+	Stretches      []route.Stretch  `json:"stretches,omitempty" jsonschema:"provenance of runs of path, when include_path is set"`
+	Hazards        []route.Hazard   `json:"hazards" jsonschema:"runs of the route that touch land (aground), pass closer than clearance_nm (close), or are connectors outside the land data (unchecked); from and to index path"`
+	Depth          route.DepthLimit `json:"depth" jsonschema:"depth the vessel needs: draught, squat, margin and limit in metres"`
+	ConfinedDepthM float64          `json:"confined_depth_limit_m" jsonschema:"depth limit in a canal or strait, where squat is larger"`
+	Notices        []route.Notice   `json:"notices" jsonschema:"where the draught changed the route"`
 }
 
 type routeIn struct {
@@ -51,6 +62,7 @@ type routeIn struct {
 	Passages
 	IncludePath bool     `json:"include_path,omitempty" jsonschema:"return the route geometry as [lon, lat] pairs"`
 	ClearanceNM *float64 `json:"clearance_nm,omitempty" jsonschema:"land clearance in nautical miles, 0.5 to 10; default 2"`
+	Vessel
 }
 
 type legOut struct {
@@ -59,13 +71,16 @@ type legOut struct {
 }
 
 type routeOut struct {
-	DistanceNM float64          `json:"distance_nm"`
-	Passages   []string         `json:"passages"`
-	Legs       []legOut         `json:"legs"`
-	Path       []route.Position `json:"path,omitempty"`
-	Warnings   []route.Warning  `json:"warnings" jsonschema:"traffic schemes whose rules the route lifts"`
-	Stretches  []route.Stretch  `json:"stretches,omitempty"`
-	Hazards    []route.Hazard   `json:"hazards" jsonschema:"runs of the route that touch land (aground), pass closer than clearance_nm (close), or are connectors outside the land data (unchecked); from and to index path"`
+	DistanceNM     float64          `json:"distance_nm"`
+	Passages       []string         `json:"passages"`
+	Legs           []legOut         `json:"legs"`
+	Path           []route.Position `json:"path,omitempty"`
+	Warnings       []route.Warning  `json:"warnings" jsonschema:"traffic schemes whose rules the route lifts"`
+	Stretches      []route.Stretch  `json:"stretches,omitempty"`
+	Hazards        []route.Hazard   `json:"hazards" jsonschema:"runs of the route that touch land (aground), pass closer than clearance_nm (close), or are connectors outside the land data (unchecked); from and to index path"`
+	Depth          route.DepthLimit `json:"depth" jsonschema:"depth the vessel needs: draught, squat, margin and limit in metres"`
+	ConfinedDepthM float64          `json:"confined_depth_limit_m" jsonschema:"depth limit in a canal or strait, where squat is larger"`
+	Notices        []route.Notice   `json:"notices" jsonschema:"where the draught changed the route"`
 }
 
 type passagesOut struct {
@@ -82,7 +97,7 @@ func New(g *route.Graph, ports PortFinder) *mcp.Server {
 
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "distance_to_go",
-		Description: "Sea distance in nautical miles from a position to a destination along the shipping network (Eurostat MARNET). Distances are TSS-aware. Segments that touch land or pass closer than clearance_nm come back in hazards.",
+		Description: "Sea distance in nautical miles from a position to a destination along the shipping network (Eurostat MARNET). Distances are TSS-aware. Segments that touch land or pass closer than clearance_nm come back in hazards. The route stays in water deeper than draught + squat + margin where depth data exists; when the draught does not fit, it goes the long way and notices say why.",
 		Annotations: readOnly,
 	}, func(_ context.Context, _ *mcp.CallToolRequest, in distanceIn) (*mcp.CallToolResult, distanceOut, error) {
 		from, err := resolve(in.From)
@@ -93,7 +108,7 @@ func New(g *route.Graph, ports PortFinder) *mcp.Server {
 		if err != nil {
 			return nil, distanceOut{}, fmt.Errorf("to: %w", err)
 		}
-		opts, err := routeOptions(in.Passages, in.ClearanceNM)
+		opts, err := routeOptions(in.Passages, in.ClearanceNM, in.Vessel)
 		if err != nil {
 			return nil, distanceOut{}, err
 		}
@@ -105,6 +120,8 @@ func New(g *route.Graph, ports PortFinder) *mcp.Server {
 			DistanceNM: round1(r.DistanceNM()), Passages: r.Passages,
 			Warnings: orEmpty(r.Warnings),
 			Hazards:  orEmpty(r.Hazards),
+			Depth:    r.Depth, ConfinedDepthM: r.ConfinedDepthM,
+			Notices: orEmpty(r.Notices),
 		}
 		if in.IncludePath {
 			out.Path = r.Path
@@ -115,7 +132,7 @@ func New(g *route.Graph, ports PortFinder) *mcp.Server {
 
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "route",
-		Description: "Shortest sea route through two or more points, in order, along the shipping network. Returns total and per-leg distance in nautical miles and the canals and straits used. Distances are TSS-aware. Segments that touch land or pass closer than clearance_nm come back in hazards.",
+		Description: "Shortest sea route through two or more points, in order, along the shipping network. Returns total and per-leg distance in nautical miles and the canals and straits used. Distances are TSS-aware. Segments that touch land or pass closer than clearance_nm come back in hazards. The route stays in water deeper than draught + squat + margin where depth data exists; when the draught does not fit, it goes the long way and notices say why.",
 		Annotations: readOnly,
 	}, func(_ context.Context, _ *mcp.CallToolRequest, in routeIn) (*mcp.CallToolResult, routeOut, error) {
 		if len(in.Points) < 2 {
@@ -129,7 +146,7 @@ func New(g *route.Graph, ports PortFinder) *mcp.Server {
 			}
 			pts[i] = pos
 		}
-		opts, err := routeOptions(in.Passages, in.ClearanceNM)
+		opts, err := routeOptions(in.Passages, in.ClearanceNM, in.Vessel)
 		if err != nil {
 			return nil, routeOut{}, err
 		}
@@ -141,6 +158,8 @@ func New(g *route.Graph, ports PortFinder) *mcp.Server {
 			DistanceNM: round1(r.DistanceNM()), Passages: r.Passages,
 			Warnings: orEmpty(r.Warnings),
 			Hazards:  orEmpty(r.Hazards),
+			Depth:    r.Depth, ConfinedDepthM: r.ConfinedDepthM,
+			Notices: orEmpty(r.Notices),
 		}
 		for _, l := range r.Legs {
 			out.Legs = append(out.Legs, legOut{DistanceNM: round1(l.DistanceM / route.MetresPerNM), Passages: l.Passages})
@@ -162,9 +181,10 @@ func New(g *route.Graph, ports PortFinder) *mcp.Server {
 	return s
 }
 
-// routeOptions applies the REST default (clearance 2 NM) and checks the limit
-// shared with REST.
-func routeOptions(p Passages, clearance *float64) (route.Options, error) {
+// routeOptions applies the REST defaults (clearance 2 NM, draught 10 m,
+// speed 14 kn, bulk) and checks the limits shared with REST. An explicit zero
+// is out of range, not the default.
+func routeOptions(p Passages, clearance *float64, vs Vessel) (route.Options, error) {
 	c := route.DefaultClearanceNM
 	if clearance != nil {
 		c = *clearance
@@ -172,9 +192,23 @@ func routeOptions(p Passages, clearance *float64) (route.Options, error) {
 	if err := route.CheckClearance(c); err != nil {
 		return route.Options{}, err
 	}
+	v := route.Vessel{DraughtM: route.DefaultDraughtM, SpeedKn: route.DefaultSpeedKn, Type: route.DefaultVesselType}
+	if vs.DraughtM != nil {
+		v.DraughtM = *vs.DraughtM
+	}
+	if vs.SpeedKn != nil {
+		v.SpeedKn = *vs.SpeedKn
+	}
+	if vs.VesselType != "" {
+		v.Type = route.VesselType(vs.VesselType)
+	}
+	if err := route.CheckVessel(v); err != nil {
+		return route.Options{}, err
+	}
 	return route.Options{
 		Avoid: p.Avoid, Allow: p.Allow,
 		ClearanceNM: c,
+		Vessel:      v,
 	}, nil
 }
 

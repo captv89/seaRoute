@@ -51,6 +51,28 @@ type WaypointRequest struct {
 	Allow []string `json:"allow,omitempty"`
 	// ClearanceNM is the land clearance in nautical miles, 0.5-10. Default 2.
 	ClearanceNM *float64 `json:"clearance_nm,omitempty"`
+	// DraughtM is the vessel draught in metres, 1-25. Default 10.
+	DraughtM *float64 `json:"draught_m,omitempty"`
+	// SpeedKn is the speed in knots used for squat, 1-30. Default 14.
+	SpeedKn *float64 `json:"speed_kn,omitempty"`
+	// VesselType is tanker, bulk, general or container. Default bulk.
+	VesselType string `json:"vessel_type,omitempty"`
+}
+
+// vessel applies the defaults for absent fields and validates the result.
+// An explicit zero is out of range, not a request for the default.
+func (r WaypointRequest) vessel() (route.Vessel, error) {
+	v := route.Vessel{DraughtM: route.DefaultDraughtM, SpeedKn: route.DefaultSpeedKn, Type: route.DefaultVesselType}
+	if r.DraughtM != nil {
+		v.DraughtM = *r.DraughtM
+	}
+	if r.SpeedKn != nil {
+		v.SpeedKn = *r.SpeedKn
+	}
+	if r.VesselType != "" {
+		v.Type = route.VesselType(r.VesselType)
+	}
+	return v, route.CheckVessel(v)
 }
 
 // maxWaypointsBody caps the /waypoints body; 200 IDs of 32 chars is under 10 KB.
@@ -416,6 +438,12 @@ func setupRoutes(router *gin.Engine, app *App) {
 			return
 		}
 
+		vessel, err := req.vessel()
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
+
 		originCoords, fromName, err := resolvePoint(req.From, req.FromPort, app)
 		if err != nil {
 			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -440,6 +468,7 @@ func setupRoutes(router *gin.Engine, app *App) {
 			Allow:       req.Allow,
 			Algorithm:   alg,
 			ClearanceNM: clearance,
+			Vessel:      vessel,
 		}
 
 		// Calculate the passage using the cached route graph

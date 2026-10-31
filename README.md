@@ -165,10 +165,15 @@ Request (optional field):
 | Field | Default | Description |
 |---|---|---|
 | `clearance_nm` | `2` | Land clearance hazards are measured against, 0.5 to 10 NM. Anything outside the range returns HTTP 400. |
+| `draught_m` | `10` | Vessel draught in metres, 1 to 25. An explicit `0` or out-of-range value returns HTTP 400. |
+| `speed_kn` | `14` | Speed in knots for squat, 1 to 30. An explicit `0` or out-of-range value returns HTTP 400. |
+| `vessel_type` | `bulk` | `tanker`, `bulk`, `general` or `container`; sets the block coefficient (0.80, 0.80, 0.70, 0.60). |
+
+The route stays in water deeper than draught + squat + margin where depth data exists. Squat is Cb x V^2 / 100 in open water and Cb x V^2 / 50 in canals and straits; the margin is the larger of 2 m and 10% of the draught. When the draught does not fit, the route goes the long way and `notices` say why. The same fields (`draught_m`, `speed_kn`, `vessel_type`) are accepted by the MCP `route` and `distance_to_go` tools.
 
 Traffic separation scheme (TSS) handling is always on. Every leg is a rhumb line.
 
-Response `properties` gains `clearance_nm` (the effective value), `stretches[]` (index range into the path, `flag`, `severity`, `scheme`), `warnings[]` and `hazards[]`. Each hazard is a run of path segments that touch land (`severity` `aground`, within the land data tolerance) or pass closer than `clearance_nm` (`close`), or a port connector that leaves the area the land data covers (`unchecked`, clearance unknown), with `from`/`to` (index range into the path), `start`/`end` positions, `min_clearance_nm`, `kind` (`marnet`, `osm-tss`, `connector`), `passage` and `note`. The MCP `route` and `distance_to_go` tools return the same `hazards`. Each waypoint has a `flag` naming the provenance of the stretch that arrives at it (`marnet`, `osm-tss`, `tss-unknown`, `tss-unresolved`, `connector`); the origin is `connector`.
+Response `properties` gains `clearance_nm` (the effective value), `stretches[]` (index range into the path, `flag`, `severity`, `scheme`), `warnings[]`, `hazards[]`, `depth` (`draught_m`, `squat_m`, `margin_m` and `depth_limit_m`, the depth needed in open water), `confined_depth_limit_m` (the limit in a canal or strait) and `notices[]` (empty when the draught changed nothing; each has `kind` `draught-reroute` or `draught-no-route`, `text`, `extra_nm`, `avoided` and `passages`). The MCP tools return `depth`, `confined_depth_limit_m` and `notices` too. Each hazard is a run of path segments that touch land (`severity` `aground`, within the land data tolerance) or pass closer than `clearance_nm` (`close`), or a port connector that leaves the area the land data covers (`unchecked`, clearance unknown), with `from`/`to` (index range into the path), `start`/`end` positions, `min_clearance_nm`, `kind` (`marnet`, `osm-tss`, `connector`), `passage` and `note`. The MCP `route` and `distance_to_go` tools return the same `hazards`. Each waypoint has a `flag` naming the provenance of the stretch that arrives at it (`marnet`, `osm-tss`, `tss-unknown`, `tss-unresolved`, `connector`); the origin is `connector`.
 
 ---
 

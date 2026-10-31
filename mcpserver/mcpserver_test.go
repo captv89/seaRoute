@@ -3,6 +3,7 @@ package mcpserver
 import (
 	"context"
 	"encoding/json"
+	"os"
 	"slices"
 	"strings"
 	"sync"
@@ -18,6 +19,8 @@ var ports = map[string]route.Position{
 	"Gdynia":    {18.546982540197764, 54.538336522499797},
 }
 
+const depthFile = "../dataset/depth_gebco.bin.gz"
+
 var (
 	fullOnce  sync.Once
 	fullGraph *route.Graph
@@ -28,11 +31,15 @@ var (
 func fullSession(t *testing.T) *mcp.ClientSession {
 	t.Helper()
 	fullOnce.Do(func() {
-		fullGraph, fullErr = route.LoadAll(route.Datasets{
+		d := route.Datasets{
 			Network: "../dataset/marnet_plus_5km.geojson",
 			Land:    "../dataset/land_osm.bin.gz",
 			TSS:     "../dataset/tss_osm.geojson.gz",
-		})
+		}
+		if _, err := os.Stat(depthFile); err == nil {
+			d.Depth = depthFile
+		}
+		fullGraph, fullErr = route.LoadAll(d)
 	})
 	if fullErr != nil {
 		t.Fatal(fullErr)
@@ -195,4 +202,64 @@ func TestRouteReturnsHazards(t *testing.T) {
 	if d.Hazards == nil || len(d.Hazards) == 0 {
 		t.Errorf("distance_to_go hazards = %#v", d.Hazards)
 	}
+}
+
+func TestDistanceToGoKielDraught(t *testing.T) {
+	cs := session(t)
+	args := map[string]any{"from": map[string]any{"port": "Rotterdam"}, "to": map[string]any{"port": "Gdynia"}}
+	var deep, shoal distanceOut
+	call(t, cs, "distance_to_go", args, &deep)
+	args["draught_m"] = 8
+	call(t, cs, "distance_to_go", args, &shoal)
+	if slices.Contains(deep.Passages, "kiel") || !slices.Contains(shoal.Passages, "kiel") {
+		t.Errorf("default draught %v, 8 m draught %v; want Kiel only with 8 m", deep.Passages, shoal.Passages)
+	}
+}
+
+func TestVesselValidationToolError(t *testing.T) {
+	cs := session(t)
+	for _, extra := range []map[string]any{
+		{"draught_m": 0}, {"draught_m": 26}, {"speed_kn": 0}, {"speed_kn": 31}, {"vessel_type": "ferry"},
+	} {
+		if res := call(t, cs, "distance_to_go", withArgs(extra), nil); !res.IsError {
+			t.Errorf("%v: want tool error", extra)
+		}
+	}
+}
+
+func TestRouteDepthDefaults(t *testing.T) {
+	var out routeOut
+	call(t, session(t), "route", map[string]any{"points": []map[string]any{{"port": "Rotterdam"}, {"lat": 1.26, "lon": 103.8}}}, &out)
+	if out.Depth.DraughtM != 10 || out.Notices == nil || len(out.Notices) != 0 {
+		t.Errorf("depth %+v notices %#v; want draught 10 and empty notices", out.Depth, out.Notices)
+	}
+}
+
+// Jeddah to Piraeus at 21 m cannot use Suez (20.1 m limit); needs no depth data.
+func TestRouteSuezDraughtNotice(t *testing.T) {
+	var out routeOut
+	pts := []map[string]any{{"lat": 21.48, "lon": 39.17}, {"lat": 37.94, "lon": 23.64}}
+	call(t, session(t), "route", map[string]any{"points": pts, "draught_m": 21}, &out)
+	found := false
+	for _, n := range out.Notices {
+		found = found || strings.Contains(n.Text, "suez limit of 20.1 m")
+	}
+	if !found {
+		t.Errorf("no suez limit notice: %+v", out.Notices)
+	}
+}
+
+func TestMCPRouteDraughtNotice(t *testing.T) {
+	if _, err := os.Stat(depthFile); err != nil {
+		t.Skip("depth dataset not built")
+	}
+	var out routeOut
+	pts := []map[string]any{{"lat": 26.65, "lon": 50.17}, {"lat": 36.05, "lon": 120.3}}
+	call(t, fullSession(t), "route", map[string]any{"points": pts, "draught_m": 22}, &out)
+	for _, n := range out.Notices {
+		if n.Kind == "draught-reroute" {
+			return
+		}
+	}
+	t.Errorf("no draught-reroute notice: %+v", out.Notices)
 }
