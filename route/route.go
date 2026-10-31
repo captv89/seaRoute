@@ -483,6 +483,10 @@ func (g *Graph) Route(points []Position, opts Options) (Route, error) {
 		snapped[i] = v
 	}
 
+	pc := pathCtx{clearM: DefaultClearanceNM * MetresPerNM, limitM: rr.lim.LimitM, limitConfinedM: rr.limConfine, ends: points, noTSS: opts.NoTSS}
+	if opts.ClearanceNM > 0 {
+		pc.clearM = opts.ClearanceNM * MetresPerNM
+	}
 	r := Route{Warnings: []Warning{}, Stretches: []Stretch{}, Notices: []Notice{}, Depth: rr.lim, ConfinedDepthM: rr.limConfine}
 	noRoute := false
 	warned := map[int32]bool{}
@@ -495,9 +499,13 @@ func (g *Graph) Route(points []Position, opts Options) (Route, error) {
 			to = g.nodes[snapped[i+1]]
 		}
 		leg, err := g.leg(from, to, snapped[i], snapped[i+1], constrained, opts.Algorithm)
+		noRouteLeg := false
 		if err != nil && limited {
 			// No path deep enough: show the shortest one, and say so once.
-			if leg, err = g.leg(from, to, snapped[i], snapped[i+1], plain, opts.Algorithm); err == nil && !noRoute {
+			if leg, err = g.leg(from, to, snapped[i], snapped[i+1], plain, opts.Algorithm); err == nil {
+				noRouteLeg = true
+			}
+			if noRouteLeg && !noRoute {
 				noRoute = true
 				r.Notices = append(r.Notices, noRouteNotice(vessel, rr.lim))
 			}
@@ -510,6 +518,11 @@ func (g *Graph) Route(points []Position, opts Options) (Route, error) {
 		if err != nil {
 			return Route{}, fmt.Errorf("leg %d: %w", i+1, err)
 		}
+		lc := pc
+		if noRouteLeg {
+			lc.limitM = 0 // no path is deep enough: shape the shortest one by land only
+		}
+		g.tautLeg(&leg, &lc)
 		r.Legs = append(r.Legs, leg)
 		for _, k := range leg.liftOrder {
 			if !warned[k] {

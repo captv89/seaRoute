@@ -101,7 +101,7 @@ func (g *Graph) segKind(code int32) string {
 	switch {
 	case code == segConnector:
 		return "connector"
-	case g.flags[code]&(edgeLane|edgeJoin) != 0:
+	case code >= 0 && g.flags[code]&(edgeLane|edgeJoin) != 0:
 		return "osm-tss"
 	}
 	return "marnet"

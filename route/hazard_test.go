@@ -6,31 +6,69 @@ import (
 	"time"
 )
 
+// coarseHazards runs the hazard check on the network path alone, as Route
+// builds it before the taut stage reshapes it, so the checks see land the
+// network path touches.
+func coarseHazards(t *testing.T, g *Graph, opts Options, pts ...Position) (hazards []Hazard, path []Position) {
+	t.Helper()
+	blocked, _ := g.blockedPasses(nil, nil)
+	sc := searchCtx{blocked: blocked}
+	snapped := make([]int32, len(pts))
+	for i, p := range pts {
+		v, ok := g.nearest(p, sc)
+		if !ok {
+			t.Fatal("no usable node")
+		}
+		snapped[i] = v
+	}
+	var legs []Leg
+	for i := 0; i+1 < len(pts); i++ {
+		from, to := pts[i], pts[i+1]
+		if i > 0 {
+			from = g.nodes[snapped[i]]
+		}
+		if i+2 < len(pts) {
+			to = g.nodes[snapped[i+1]]
+		}
+		l, err := g.leg(from, to, snapped[i], snapped[i+1], sc, AStar)
+		if err != nil {
+			t.Fatal(err)
+		}
+		legs = append(legs, l)
+		if i == 0 {
+			path = append(path, l.Path...)
+		} else {
+			path = append(path, l.Path[1:]...)
+		}
+	}
+	return g.hazards(legs, path, opts), path
+}
+
 func TestHazardAground(t *testing.T) {
 	g := NewWith(chainSegs(Position{0, 0}, Position{1, 0}), landOf(rect(0.4, -0.1, 0.6, 0.1)), nil)
-	r := routeOn(t, g, Options{}, Position{0, 0}, Position{1, 0})
+	hz, _ := coarseHazards(t, g, Options{}, Position{0, 0}, Position{1, 0})
 	want := []Hazard{{From: 0, To: 1, Start: Position{0, 0}, End: Position{1, 0}, Severity: "aground", Kind: "marnet"}}
-	if !reflect.DeepEqual(r.Hazards, want) {
-		t.Errorf("hazards %+v", r.Hazards)
+	if !reflect.DeepEqual(hz, want) {
+		t.Errorf("hazards %+v", hz)
 	}
 }
 
 func TestHazardClose(t *testing.T) {
 	g := NewWith(chainSegs(Position{0, 0}, Position{1, 0}), landOf(rect(0.4, passLat, 0.6, 0.1)), nil)
-	r := routeOn(t, g, Options{ClearanceNM: 2}, Position{0, 0}, Position{1, 0})
-	if len(r.Hazards) != 1 || r.Hazards[0].Severity != "close" || r.Hazards[0].MinClearanceNM != 1.5 {
-		t.Errorf("hazards %+v", r.Hazards)
+	hz, _ := coarseHazards(t, g, Options{ClearanceNM: 2}, Position{0, 0}, Position{1, 0})
+	if len(hz) != 1 || hz[0].Severity != "close" || hz[0].MinClearanceNM != 1.5 {
+		t.Errorf("hazards %+v", hz)
 	}
-	if r = routeOn(t, g, Options{ClearanceNM: 1}, Position{0, 0}, Position{1, 0}); len(r.Hazards) != 0 {
-		t.Errorf("1 NM clearance: hazards %+v", r.Hazards)
+	if hz, _ = coarseHazards(t, g, Options{ClearanceNM: 1}, Position{0, 0}, Position{1, 0}); len(hz) != 0 {
+		t.Errorf("1 NM clearance: hazards %+v", hz)
 	}
 }
 
 func TestHazardsMerge(t *testing.T) {
 	g := NewWith(chainSegs(Position{0, 0}, Position{0.5, 0}, Position{1, 0}), landOf(rect(0.2, -0.05, 0.8, 0.05)), nil)
-	r := routeOn(t, g, Options{}, Position{0, 0}, Position{1, 0})
-	if len(r.Hazards) != 1 || r.Hazards[0].From != 0 || r.Hazards[0].To != 2 {
-		t.Errorf("hazards %+v", r.Hazards)
+	hz, _ := coarseHazards(t, g, Options{}, Position{0, 0}, Position{1, 0})
+	if len(hz) != 1 || hz[0].From != 0 || hz[0].To != 2 {
+		t.Errorf("hazards %+v", hz)
 	}
 }
 
@@ -44,9 +82,9 @@ func TestHazardsEmptyWithoutLand(t *testing.T) {
 func TestHazardIndicesAcrossLegs(t *testing.T) {
 	// Two legs via (1, 0); land only on the second leg.
 	g := NewWith(chainSegs(Position{0, 0}, Position{1, 0}, Position{2, 0}), landOf(rect(1.4, -0.1, 1.6, 0.1)), nil)
-	r := routeOn(t, g, Options{}, Position{0, 0}, Position{1, 0}, Position{2, 0})
-	if len(r.Hazards) != 1 || r.Hazards[0].From != 1 || r.Hazards[0].To != 2 || r.Hazards[0].Start != (Position{1, 0}) {
-		t.Errorf("hazards %+v path %v", r.Hazards, r.Path)
+	hz, path := coarseHazards(t, g, Options{}, Position{0, 0}, Position{1, 0}, Position{2, 0})
+	if len(hz) != 1 || hz[0].From != 1 || hz[0].To != 2 || hz[0].Start != (Position{1, 0}) {
+		t.Errorf("hazards %+v path %v", hz, path)
 	}
 }
 

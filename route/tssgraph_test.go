@@ -260,7 +260,16 @@ func TestLoadAll(t *testing.T) {
 func TestNoTSSMatchesMarnet(t *testing.T) {
 	g := testTSSGraph(t)
 	want := mustRoute(t, Options{}, rotterdam, singapore)
-	got := routeOn(t, g, Options{NoTSS: true}, rotterdam, singapore)
+	// Compare the network searches: Route also straightens the TSS graph's
+	// path (taut stage), which the plain MARNET graph, with no land, cannot.
+	blocked, _ := g.blockedPasses(nil, nil)
+	sc := searchCtx{blocked: blocked, noTSS: true}
+	s, _ := g.nearest(rotterdam, sc)
+	e, _ := g.nearest(singapore, sc)
+	got, err := g.leg(rotterdam, singapore, s, e, sc, AStar)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if math.Abs(got.DistanceM-want.DistanceM) > 1e-6 {
 		t.Errorf("NoTSS %.3f m, MARNET %.3f m", got.DistanceM, want.DistanceM)
 	}

@@ -3,7 +3,12 @@ package route
 import "math"
 
 // Leg.segs codes below zero; zero and above are network edge indices.
-const segConnector int32 = -1
+const (
+	segConnector int32 = -1
+	// segTaut marks a segment of the taut safe-water path (taut.go). It reads as
+	// provenance "marnet"; TSS-area checks still apply as for a MARNET edge.
+	segTaut int32 = -2
+)
 
 // Stretch labels path[From..To] of Route.Path with where it came from.
 type Stretch struct {
@@ -95,8 +100,11 @@ func (g *Graph) segFlag(code int32, a, b Position, lifted []bool, unknown map[Po
 		}
 	}
 	name := func(k int) string { return g.tss.Schemes[k].ID }
-	f := g.flags[code]
-	k := int(g.scheme[code])
+	var f uint8
+	k := -1
+	if code >= 0 {
+		f, k = g.flags[code], int(g.scheme[code])
+	}
 	isLifted := func(k int) bool { return k >= 0 && lifted != nil && lifted[k] }
 	switch {
 	case f&edgeTSSBlocked != 0 && isLifted(k):

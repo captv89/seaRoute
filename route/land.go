@@ -46,6 +46,7 @@ type Land struct {
 	// Vertices in 1e-6 degrees. Each ring is stored closed (first vertex
 	// repeated at the end); edge i is vertex i to vertex i+1.
 	vx, vy []int32
+	my     []float64 // Mercator y of each vertex, so edge queries skip the logarithm
 	cells  map[int64]cellRange
 	refs   []uint32 // edge (start vertex) indices grouped by cell
 }
@@ -115,6 +116,10 @@ func (b *landBuilder) build(tol float64, version string) *Land {
 				l.cells[k] = c
 			}
 		}
+	}
+	l.my = make([]float64, len(l.vy))
+	for i, y := range l.vy {
+		l.my[i] = Mercator(Position{0, float64(y) / landMicro})[1]
 	}
 	b.edges = nil
 	return l
@@ -322,6 +327,12 @@ func (l *Land) pieceClearance(a, b Position, limit float64) float64 {
 	ex = math.Min(ex, 360)
 	seen := make(map[int64]struct{})
 	best := limit
+	// An edge whose Mercator bounding box is farther from the leg's than best
+	// cannot be nearer: metres = R * gap * cos(lat) with lat inside the band
+	// the visited cells span, so cosMin bounds the conversion from below.
+	cosMin := math.Max(math.Cos(math.Min(89.9, maxLat+ey)*rad), 0)
+	bx0, bx1 := math.Min(ma[0], mb[0]), math.Max(ma[0], mb[0])
+	by0, by1 := math.Min(ma[1], mb[1]), math.Max(ma[1], mb[1])
 	for i := 0; i <= n; i++ {
 		t := float64(i) / float64(n)
 		lon := (ma[0] + t*(mb[0]-ma[0])) / rad
@@ -342,6 +353,18 @@ func (l *Land) pieceClearance(a, b Position, limit float64) float64 {
 				}
 				seen[k] = struct{}{}
 				for _, e := range l.refs[c.off : c.off+c.n] {
+					ex0, ex1 := float64(l.vx[e])/landMicro*rad, float64(l.vx[e+1])/landMicro*rad
+					if ex0 > ex1 {
+						ex0, ex1 = ex1, ex0
+					}
+					ey0, ey1 := l.my[e], l.my[e+1]
+					if ey0 > ey1 {
+						ey0, ey1 = ey1, ey0
+					}
+					gx, gy := math.Max(0, math.Max(bx0-ex1, ex0-bx1)), math.Max(0, math.Max(by0-ey1, ey0-by1))
+					if earthRadiusM*cosMin*math.Hypot(gx, gy) >= best {
+						continue
+					}
 					if d := l.edgeClearance(ma, mb, e); d < best {
 						if best = d; best == 0 {
 							return 0
@@ -356,8 +379,9 @@ func (l *Land) pieceClearance(a, b Position, limit float64) float64 {
 
 // edgeClearance is the metre distance from the Mercator leg ma-mb to edge e.
 func (l *Land) edgeClearance(ma, mb [2]float64, e uint32) float64 {
-	c := Mercator(Position{float64(l.vx[e]) / landMicro, float64(l.vy[e]) / landMicro})
-	d := Mercator(Position{float64(l.vx[e+1]) / landMicro, float64(l.vy[e+1]) / landMicro})
+	const rad = math.Pi / 180
+	c := [2]float64{float64(l.vx[e]) / landMicro * rad, l.my[e]}
+	d := [2]float64{float64(l.vx[e+1]) / landMicro * rad, l.my[e+1]}
 	gap, onLeg := segSegDist(ma, mb, c, d)
 	if gap == 0 {
 		return 0
