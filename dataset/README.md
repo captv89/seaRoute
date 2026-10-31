@@ -63,7 +63,11 @@
 - Regenerate: `go run ./cmd/tss-import -in <overpass.json> -out dataset/tss_osm.geojson.gz`
 
 ## depth_gebco.bin.gz — water depth for draught limits
-- Source: GEBCO Bathymetric Compilation Group (2026) GEBCO 2026 Grid (doi:10.5285/4f68d5c7-45eb-f999-e063-7086abc036fa)
-- Licence: GEBCO terms of use (free to use with attribution). The raw GEBCO grid is not committed.
-- Status: placeholder. Tile count, size and load time will be filled in when the dataset is built.
-- Regenerate: `go run ./cmd/depth-import -asc '<gebco tiles glob>' -network dataset/marnet_plus_5km.geojson -date <YYYY-MM-DD> -out dataset/depth_gebco.bin.gz`
+- Source: GEBCO Bathymetric Compilation Group (2026) GEBCO 2026 Grid (doi:10.5285/4f68d5c7-45eb-f999-e063-7086abc036fa), ice-surface elevation, Esri ASCII tiles (8 tiles, 15 arc-seconds, about 20 GB). The raw grid is not committed.
+- Licence: public domain; attribution requested (the credit line above).
+- Format: gzip of `SRDEPTH2\n` + JSON header + per-tile cells + the worldwide deep-ocean mask. Cell values: 0 = land, drying or NODATA, 1-254 = depth in whole metres rounded down, 255 = 255 m or deeper. Tiles are 0.5 degrees (120x120 cells); an all-255 tile is stored as `Deep` with no cells. The mask is 720x360 bytes (one per 0.5 degree tile worldwide, row-major from 180 W / 90 S) holding each tile's minimum depth in the same encoding (0 for tiles with no data). `SRDEPTH1` files (no mask) still load. Read by `route.LoadDepth`.
+- Coverage: tiles within 30 NM of MARNET vertices (the same as the land data): 44,666 tiles, of which 27,877 are Deep and 16,789 hold cells. The mask covers the whole globe.
+- Size: 52,186,153 bytes (52.2 MB); the mask adds about 0.26 MB uncompressed.
+- Load: about 0.95 s and 279 MB of heap for `LoadDepth` on the dev machine (Apple silicon).
+- Build: 123 s and about 370 MB peak RSS (rows are streamed; no tile is held in memory).
+- Regenerate: `go run ./cmd/depth-import -asc '/Volumes/Mac Drive/data/gebco_2026/gebco_2026_*_ascii.asc' -network dataset/marnet_plus_5km.geojson -corridor 30 -date 2026-01-01 -out dataset/depth_gebco.bin.gz`

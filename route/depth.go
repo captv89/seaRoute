@@ -17,7 +17,10 @@ const (
 	depthCellsPerTile = 120 // 15 arc-seconds
 	depthCellDeg      = depthTileDeg / depthCellsPerTile
 	depthSampleM      = 200.0
-	depthMagic        = "SRDEPTH1\n"
+	depthMagic1       = "SRDEPTH1\n" // tiles only (no deep-ocean mask)
+	depthMagic        = "SRDEPTH2\n" // tiles, then the deep-ocean mask
+	depthMaskW        = 720          // mask columns: 360 degrees / 0.5
+	depthMaskH        = 360
 	depthMaxTiles     = 720 * 360 // every 0.5 degree tile on Earth
 	depthMaxHeaderLen = 1 << 16
 	depthSource       = "gebco2026"
@@ -39,6 +42,7 @@ type DepthTile struct {
 type Depth struct {
 	Version string // "<date>/gebco2026"
 	tiles   map[int64]*DepthTile
+	mask    []uint8 // depthMaskW*depthMaskH minimum depth per 0.5 degree tile, row-major from (-180,-90); nil when absent
 }
 
 // NewDepth builds a Depth from tiles; for the loader and synthetic tests.
@@ -49,6 +53,46 @@ func NewDepth(tiles []DepthTile, version string) *Depth {
 		d.tiles[cellKey(t.CX, t.CY)] = &t
 	}
 	return d
+}
+
+// NewDepthMask is NewDepth plus the worldwide deep-ocean mask: one byte per
+// 0.5 degree tile (720 columns from 180 W, 360 rows from 90 S), the minimum
+// depth over the tile in the cell encoding. mask must have 720*360 bytes or be nil.
+func NewDepthMask(tiles []DepthTile, mask []uint8, version string) *Depth {
+	d := NewDepth(tiles, version)
+	if len(mask) == depthMaskW*depthMaskH {
+		d.mask = mask
+	}
+	return d
+}
+
+// TileMinDepth returns the minimum stored depth in metres over the 0.5 degree
+// tile containing p (0 when the mask is absent, so callers treat unknown as
+// shallow).
+func (d *Depth) TileMinDepth(p Position) float64 {
+	if d.mask == nil {
+		return 0
+	}
+	cx := int(math.Floor(wrapLon(p[0])/depthTileDeg)) + depthMaskW/2
+	cy := int(math.Floor(p[1]/depthTileDeg)) + depthMaskH/2
+	if cx < 0 || cx >= depthMaskW || cy < 0 || cy >= depthMaskH {
+		return 0
+	}
+	return float64(d.mask[cy*depthMaskW+cx])
+}
+
+// DeepTiles reports whether every 0.5 degree tile the rhumb leg a-b passes
+// through has a minimum depth of at least minM. The leg is walked at most 0.25
+// degrees (15 NM) apart and split at the antimeridian.
+func (d *Depth) DeepTiles(a, b Position, minM float64) bool {
+	for _, pc := range splitAntimeridian(a, b) {
+		for _, p := range rhumbSamples(pc[0], pc[1], 15) {
+			if d.TileMinDepth(p) < minM {
+				return false
+			}
+		}
+	}
+	return true
 }
 
 // wrapLon maps a longitude into [-180, 180).
@@ -125,17 +169,22 @@ func (d *Depth) SegmentMin(a, b Position) (m float64, known bool) {
 	return m, known
 }
 
-// WriteDepth writes tiles in the SRDEPTH1 format read by LoadDepth: gzip of
-// the magic line, a JSON header line, then per tile zigzag-varint CX and CY, a
-// byte (1 = deep, 0 = cells) and, when not deep, 14400 cell bytes.
-func WriteDepth(w io.Writer, tiles []DepthTile, date string) error {
+// WriteDepth writes tiles in the SRDEPTH2 format read by LoadDepth: gzip of
+// the magic line, a JSON header line, per tile zigzag-varint CX and CY, a byte
+// (1 = deep, 0 = cells) and, when not deep, 14400 cell bytes, then the
+// deep-ocean mask (720*360 bytes, see NewDepthMask) when the header says
+// "mask":true. mask may be nil to write none.
+func WriteDepth(w io.Writer, tiles []DepthTile, mask []uint8, date string) error {
+	if mask != nil && len(mask) != depthMaskW*depthMaskH {
+		return fmt.Errorf("mask has %d bytes, want %d", len(mask), depthMaskW*depthMaskH)
+	}
 	zw, err := gzip.NewWriterLevel(w, gzip.BestCompression)
 	if err != nil {
 		return err
 	}
 	bw := bufio.NewWriter(zw)
 	bw.WriteString(depthMagic)
-	hj, err := json.Marshal(depthHeader{Source: depthSource, Date: date, TileDeg: depthTileDeg, Arcsec: 15, Tiles: len(tiles)})
+	hj, err := json.Marshal(depthHeader{Source: depthSource, Date: date, TileDeg: depthTileDeg, Arcsec: 15, Tiles: len(tiles), Mask: mask != nil})
 	if err != nil {
 		return err
 	}
@@ -155,6 +204,7 @@ func WriteDepth(w io.Writer, tiles []DepthTile, date string) error {
 		bw.WriteByte(0)
 		bw.Write(t.M)
 	}
+	bw.Write(mask)
 	if err := bw.Flush(); err != nil {
 		return err
 	}
@@ -167,6 +217,7 @@ type depthHeader struct {
 	TileDeg float64 `json:"tile_deg"`
 	Arcsec  int     `json:"arcsec"`
 	Tiles   int     `json:"tiles"`
+	Mask    bool    `json:"mask,omitempty"`
 }
 
 // LoadDepth reads a dataset written by WriteDepth (cmd/depth-import). The file
@@ -201,7 +252,7 @@ func readDepth(br *bufio.Reader) (*Depth, error) {
 	if _, err := io.ReadFull(br, magic); err != nil {
 		return nil, eof(err)
 	}
-	if string(magic) != depthMagic {
+	if string(magic) != depthMagic && string(magic) != depthMagic1 {
 		return nil, errors.New("bad magic")
 	}
 	var line []byte
@@ -265,5 +316,12 @@ func readDepth(br *bufio.Reader) (*Depth, error) {
 		}
 		tiles = append(tiles, t)
 	}
-	return NewDepth(tiles, fmt.Sprintf("%s/%s", hdr.Date, hdr.Source)), nil
+	var mask []uint8
+	if hdr.Mask {
+		mask = make([]uint8, depthMaskW*depthMaskH)
+		if _, err := io.ReadFull(br, mask); err != nil {
+			return nil, eof(err)
+		}
+	}
+	return NewDepthMask(tiles, mask, fmt.Sprintf("%s/%s", hdr.Date, hdr.Source)), nil
 }

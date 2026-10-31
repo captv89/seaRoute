@@ -116,7 +116,7 @@ func main() {
 	log.Printf("Loaded %d ports", len(app.PortData))
 
 	// Pre-load and cache the route graph at startup
-	// Land and TSS data are optional: without a file that feature is off.
+	// Land, TSS and depth data are optional: without a file that feature is off.
 	datasets := route.Datasets{Network: "dataset/marnet_plus_5km.geojson"}
 	for _, opt := range []struct {
 		name, path string
@@ -124,6 +124,7 @@ func main() {
 	}{
 		{"land", "dataset/land_osm.bin.gz", &datasets.Land},
 		{"TSS", "dataset/tss_osm.geojson.gz", &datasets.TSS},
+		{"depth", "dataset/depth_gebco.bin.gz", &datasets.Depth},
 	} {
 		if _, statErr := os.Stat(opt.path); statErr != nil {
 			log.Printf("Warning: %s dataset %s not found, %s handling is off", opt.name, opt.path, opt.name)

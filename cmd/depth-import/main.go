@@ -30,6 +30,8 @@ const (
 	tileDeg      = 0.5
 	cellsPerTile = 120
 	cellsPerDeg  = 240 // 15 arc-seconds
+	maskW        = 720 // deep-ocean mask columns
+	maskH        = 360
 )
 
 func main() {
@@ -72,7 +74,7 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	if err := route.WriteDepth(f, tiles, *date); err != nil {
+	if err := route.WriteDepth(f, tiles, tl.mask(), *date); err != nil {
 		log.Fatal(err)
 	}
 	if err := f.Close(); err != nil {
@@ -106,10 +108,33 @@ type tiler struct {
 	done  []route.DepthTile
 	seen  map[[2]int32]bool
 	bandY int32 // cy of the band being collected
+
+	// minD is the worldwide deep-ocean mask under construction, 720x360 tiles
+	// row-major from (-180,-90): the minimum cell value of every 0.5 degree
+	// tile, over all rows (corridor or not). touched marks tiles the input covered.
+	minD    []uint8
+	touched []bool
 }
 
 func newTiler(want map[[2]int32]bool) *tiler {
-	return &tiler{want: want, band: map[[2]int32]*acc{}, seen: map[[2]int32]bool{}}
+	t := &tiler{want: want, band: map[[2]int32]*acc{}, seen: map[[2]int32]bool{},
+		minD: make([]uint8, maskW*maskH), touched: make([]bool, maskW*maskH)}
+	for i := range t.minD {
+		t.minD[i] = 255
+	}
+	return t
+}
+
+// mask returns the deep-ocean mask: the minimum depth of each 0.5 degree tile,
+// 0 for tiles the input did not cover at all.
+func (t *tiler) mask() []uint8 {
+	out := make([]uint8, len(t.minD))
+	for i, v := range t.minD {
+		if t.touched[i] {
+			out[i] = v
+		}
+	}
+	return out
 }
 
 func floorDiv(a, b int64) int64 {
@@ -153,6 +178,16 @@ func (t *tiler) row(h esriHeader, row int, vals []uint8, nodata []bool) error {
 		i := int(xi - int64(cx)*cellsPerTile)
 		n := min(cellsPerTile-i, h.Ncols-c)
 		k := [2]int32{cx, cy}
+		if mi := int(cy+maskH/2)*maskW + int(cx+maskW/2); mi >= 0 && mi < len(t.minD) {
+			t.touched[mi] = true
+			lo := t.minD[mi]
+			for _, v := range vals[c : c+n] {
+				if v < lo {
+					lo = v
+				}
+			}
+			t.minD[mi] = lo
+		}
 		if t.want[k] {
 			a := t.band[k]
 			if a == nil {

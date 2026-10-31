@@ -24,15 +24,19 @@ var (
 	testGraphErr  error
 )
 
-// testGraph loads the full datasets (network, land, TSS) once per test run.
+// testGraph loads the full datasets (network, land, TSS, depth when built) once per test run.
 func testGraph(t *testing.T) *route.Graph {
 	t.Helper()
 	testGraphOnce.Do(func() {
-		testGraphVal, testGraphErr = route.LoadAll(route.Datasets{
+		d := route.Datasets{
 			Network: "dataset/marnet_plus_5km.geojson",
 			Land:    "dataset/land_osm.bin.gz",
 			TSS:     "dataset/tss_osm.geojson.gz",
-		})
+		}
+		if _, err := os.Stat("dataset/depth_gebco.bin.gz"); err == nil {
+			d.Depth = "dataset/depth_gebco.bin.gz"
+		}
+		testGraphVal, testGraphErr = route.LoadAll(d)
 	})
 	if testGraphErr != nil {
 		t.Fatalf("failed to load route graph: %v", testGraphErr)

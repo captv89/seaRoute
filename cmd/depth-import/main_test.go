@@ -112,3 +112,23 @@ func TestTilerDeepAndNoData(t *testing.T) {
 	}
 	var _ route.DepthTile = tiles[0]
 }
+
+func TestTilerMask(t *testing.T) {
+	// Tile 0 is NODATA-free but holds a 7 m cell; tile 1 is all deep; tiles
+	// elsewhere were never covered by the input.
+	src := fixture(func(c, j int) string {
+		if c == 5 && j == 30 {
+			return "-7.9"
+		}
+		return "-2000"
+	})
+	tl := newTiler(map[[2]int32]bool{})
+	if _, err := readEsriASCII(strings.NewReader(src), tl.row); err != nil {
+		t.Fatal(err)
+	}
+	m := tl.mask()
+	at := func(cx, cy int) uint8 { return m[(cy+180)*720+cx+360] }
+	if at(0, 0) != 7 || at(1, 0) != 255 || at(5, 5) != 0 {
+		t.Errorf("mask = %d, %d, %d; want 7, 255, 0", at(0, 0), at(1, 0), at(5, 5))
+	}
+}
