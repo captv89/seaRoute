@@ -229,15 +229,34 @@
                 </div>
             </div>
 
-            <!-- 3b. LAND CLEARANCE (hazard threshold) -->
+            <!-- 3b. VESSEL (draught, type, land clearance) -->
             <div class="p-2.5 rounded-sm bg-surface-container-low border border-surface-container-high flex flex-col gap-2">
-                <div class="flex items-center justify-between">
-                    <label class="font-label-sm text-[10px] uppercase font-bold text-primary flex items-center gap-1.5">
-                        <span class="material-symbols-outlined text-[14px]">straighten</span> Land Clearance
-                    </label>
-                    <span class="font-mono text-[9px] text-on-surface-variant">Rhumb legs</span>
+                <span class="font-label-sm text-[10px] uppercase font-bold text-primary flex items-center gap-1.5">
+                    <span class="material-symbols-outlined text-[14px]" aria-hidden="true">directions_boat</span> Vessel
+                </span>
+                <div class="flex items-center justify-between gap-2">
+                    <label class="font-mono text-[10px] uppercase text-on-surface-variant" for="draught-input">Draught</label>
+                    <div class="flex items-stretch border border-surface-container-high rounded-sm bg-surface-container-lowest">
+                        <button aria-label="Decrease draught" class="w-6 flex items-center justify-center text-on-surface-variant hover:text-primary hover:bg-surface-container disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer transition-colors" id="draught-dec" type="button">
+                            <span class="material-symbols-outlined text-[14px]">remove</span>
+                        </button>
+                        <input aria-label="Draught in metres" class="w-12 py-1 text-center font-mono text-[11px] text-on-surface bg-transparent border-0 focus:ring-0 focus:outline-none tabular-nums" id="draught-input" inputmode="decimal" max="25" min="1" step="0.5" type="number" value="10"/>
+                        <button aria-label="Increase draught" class="w-6 flex items-center justify-center text-on-surface-variant hover:text-primary hover:bg-surface-container disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer transition-colors" id="draught-inc" type="button">
+                            <span class="material-symbols-outlined text-[14px]">add</span>
+                        </button>
+                        <span class="px-1.5 flex items-center font-mono text-[9px] text-on-surface-variant border-l border-surface-container-high">M</span>
+                    </div>
                 </div>
-                <div class="flex items-center justify-between gap-2" id="clearance-row">
+                <div class="flex items-center justify-between gap-2">
+                    <span class="font-mono text-[10px] uppercase text-on-surface-variant" id="vessel-type-label">Type</span>
+                    <div class="flex flex-1 max-w-[220px] items-stretch border border-surface-container-high rounded-sm bg-surface-container-lowest divide-x divide-surface-container-high" role="group" aria-labelledby="vessel-type-label" id="vessel-type-group">
+                        <button aria-pressed="false" class="vessel-type-btn flex-1 px-1 py-1 font-mono text-[10px] cursor-pointer transition-colors text-on-surface-variant hover:text-on-surface hover:bg-surface-container" data-vessel-type="tanker" type="button">Tanker</button>
+                        <button aria-pressed="true" class="vessel-type-btn flex-1 px-1 py-1 font-mono text-[10px] cursor-pointer transition-colors bg-primary-container text-on-primary-container font-semibold" data-vessel-type="bulk" type="button">Bulk</button>
+                        <button aria-pressed="false" class="vessel-type-btn flex-1 px-1 py-1 font-mono text-[10px] cursor-pointer transition-colors text-on-surface-variant hover:text-on-surface hover:bg-surface-container" data-vessel-type="general" type="button">General</button>
+                        <button aria-pressed="false" class="vessel-type-btn flex-1 px-1 py-1 font-mono text-[10px] cursor-pointer transition-colors text-on-surface-variant hover:text-on-surface hover:bg-surface-container" data-vessel-type="container" type="button">Container</button>
+                    </div>
+                </div>
+                <div class="flex items-center justify-between gap-2">
                     <label class="font-mono text-[10px] uppercase text-on-surface-variant" for="clearance-input">Land clearance</label>
                     <div class="flex items-stretch border border-surface-container-high rounded-sm bg-surface-container-lowest">
                         <button aria-label="Decrease clearance" class="w-6 flex items-center justify-center text-on-surface-variant hover:text-primary hover:bg-surface-container disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer transition-colors" id="clearance-dec" type="button">
@@ -250,6 +269,7 @@
                         <span class="px-1.5 flex items-center font-mono text-[9px] text-on-surface-variant border-l border-surface-container-high">NM</span>
                     </div>
                 </div>
+                <p class="font-mono text-[9px] text-on-surface-variant leading-tight" id="depth-readout" aria-live="polite">Depth limit is worked out with the route (uses the transit speed).</p>
             </div>
 
             <!-- Compute Action Button -->
@@ -267,6 +287,14 @@
                 <ul class="flex flex-col gap-1 font-mono text-[10px] text-on-surface leading-tight" id="route-warnings-list"></ul>
             </div>
 
+            <!-- Draught notices: reroutes and no-route -->
+            <section class="hidden p-2.5 rounded-sm bg-surface-container-low border border-warning/40 flex-col gap-2" id="notices-card" aria-labelledby="notices-title">
+                <h3 class="font-label-sm text-[10px] font-bold uppercase text-warning flex items-center gap-1.5" id="notices-title">
+                    <span class="material-symbols-outlined text-[14px]" aria-hidden="true">sailing</span> Draught Notices
+                </h3>
+                <ul class="flex flex-col gap-1.5" id="notices-list"></ul>
+            </section>
+
             <!-- Route hazards: segments on or near land -->
             <section class="hidden p-2.5 rounded-sm bg-surface-container-low border border-error/40 flex-col gap-2" id="hazards-card" aria-labelledby="hazards-title">
                 <div class="flex items-center justify-between gap-2">
@@ -276,7 +304,7 @@
                     </h3>
                 </div>
                 <p class="text-[9px] font-mono text-on-surface-variant leading-tight">
-                    Legs that touch land or pass inside the clearance. Select one to find it on the map.
+                    Legs that touch land, run shallow, or pass inside the clearance. Select one to find it on the map.
                 </p>
                 <ul class="flex flex-col gap-1.5" id="hazards-list"></ul>
                 <div class="hidden flex-col gap-1.5" id="hazards-close-group">

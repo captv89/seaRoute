@@ -2109,38 +2109,80 @@
         }
     }
 
-    // Land clearance controls
-    const clearanceInput = document.getElementById('clearance-input');
-    const clearanceDec = document.getElementById('clearance-dec');
-    const clearanceInc = document.getElementById('clearance-inc');
-    const CLEARANCE_MIN = 0.5;
-    const CLEARANCE_MAX = 10;
-    const CLEARANCE_DEFAULT = 2;
-
-    function readClearance() {
-        const v = parseFloat(clearanceInput ? clearanceInput.value : '');
-        if (isNaN(v)) return CLEARANCE_DEFAULT;
-        return Math.min(CLEARANCE_MAX, Math.max(CLEARANCE_MIN, Math.round(v * 2) / 2));
+    // Vessel controls: clamped 0.5-step steppers (clearance, draught) and a type selector.
+    // Any change re-requests the route when one is already on the map.
+    function rerouteIfShown() {
+        if (currentRouteData) computeRoute({ keepView: true });
     }
 
-    function writeClearance(v) {
-        if (clearanceInput) clearanceInput.value = String(v);
-        syncClearanceState();
-    }
-
-    function syncClearanceState() {
-        const v = readClearance();
-        if (clearanceDec) clearanceDec.disabled = v <= CLEARANCE_MIN;
-        if (clearanceInc) clearanceInc.disabled = v >= CLEARANCE_MAX;
-    }
-
-    if (clearanceInput) {
+    function makeStepper(id, min, max, def, onChange) {
+        const input = document.getElementById(`${id}-input`);
+        const dec = document.getElementById(`${id}-dec`);
+        const inc = document.getElementById(`${id}-inc`);
+        const read = () => {
+            const v = parseFloat(input ? input.value : '');
+            if (isNaN(v)) return def;
+            return Math.min(max, Math.max(min, Math.round(v * 2) / 2));
+        };
+        const sync = () => {
+            const v = read();
+            if (dec) dec.disabled = v <= min;
+            if (inc) inc.disabled = v >= max;
+        };
+        let last = read();
+        const write = (v) => {
+            if (input) input.value = String(v);
+            sync();
+            if (v !== last) {
+                last = v;
+                if (onChange) onChange();
+            }
+        };
         // Snap to a valid step once the user is done typing.
-        clearanceInput.addEventListener('change', () => writeClearance(readClearance()));
+        if (input) input.addEventListener('change', () => write(read()));
+        if (dec) dec.addEventListener('click', () => write(Math.max(min, read() - 0.5)));
+        if (inc) inc.addEventListener('click', () => write(Math.min(max, read() + 0.5)));
+        sync();
+        return read;
     }
-    if (clearanceDec) clearanceDec.addEventListener('click', () => writeClearance(Math.max(CLEARANCE_MIN, readClearance() - 0.5)));
-    if (clearanceInc) clearanceInc.addEventListener('click', () => writeClearance(Math.min(CLEARANCE_MAX, readClearance() + 0.5)));
-    syncClearanceState();
+
+    const readClearance = makeStepper('clearance', 0.5, 10, 2, null);
+    const readDraught = makeStepper('draught', 1, 25, 10, () => rerouteIfShown());
+
+    let vesselType = 'bulk';
+    const VESSEL_ON = ['bg-primary-container', 'text-on-primary-container', 'font-semibold'];
+    const VESSEL_OFF = ['text-on-surface-variant', 'hover:text-on-surface', 'hover:bg-surface-container'];
+    document.querySelectorAll('.vessel-type-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+            if (btn.dataset.vesselType === vesselType) return;
+            vesselType = btn.dataset.vesselType;
+            document.querySelectorAll('.vessel-type-btn').forEach(b => {
+                const on = b === btn;
+                b.setAttribute('aria-pressed', String(on));
+                b.classList.remove(...VESSEL_ON, ...VESSEL_OFF);
+                b.classList.add(...(on ? VESSEL_ON : VESSEL_OFF));
+            });
+            rerouteIfShown();
+        });
+    });
+
+    // Slider value is the voyage speed the squat allowance is computed at.
+    function currentSpeedKn() {
+        const sl = document.getElementById('speed-slider');
+        return (sl ? parseFloat(sl.value) : 18) || 18;
+    }
+    (function bindSpeedReroute() {
+        const sl = document.getElementById('speed-slider');
+        // 'change' fires on release, so dragging does not flood the server
+        if (sl) sl.addEventListener('change', rerouteIfShown);
+    })();
+
+    function renderDepthReadout(props) {
+        const el = document.getElementById('depth-readout');
+        const d = props.depth;
+        if (!el || !d) return;
+        el.textContent = `Depth limit ${Number(d.depth_limit_m).toFixed(1)} m = ${Number(d.draught_m).toFixed(1)} draught + ${Number(d.squat_m).toFixed(1)} squat + ${Number(d.margin_m).toFixed(1)} margin`;
+    }
 
     /**
      * opts.keepView: do not re-fit the map to the route
@@ -2171,7 +2213,10 @@
             to: { lat: toLat, lon: toLon },
             algorithm: currentAlgorithm,
             avoid: avoidList,
-            clearance_nm: clearanceNM
+            clearance_nm: clearanceNM,
+            draught_m: readDraught(),
+            vessel_type: vesselType,
+            speed_kn: currentSpeedKn()
         };
 
         const reqId = ++routeRequestSeq;
@@ -2229,6 +2274,16 @@
 
         // Convert [lon, lat] coordinates to Leaflet [lat, lon]
         const latLngs = coords.map(c => [c[1], c[0]]);
+
+        // Avoided stretches (draught reroutes): faint dashed, under the route, not clickable
+        (props.notices || []).forEach(n => {
+            const av = (n.avoided || []).map(c => [c[1], c[0]]);
+            if (av.length < 2) return;
+            routeLayerGroup.addLayer(L.polyline(av, {
+                color: '#94a3b8', weight: 3, opacity: 0.35, dashArray: '6 8',
+                interactive: false, lineCap: 'round', lineJoin: 'round'
+            }));
+        });
 
         // 1. Double polyline: Cyan Glow + White/Cyan Flow Dash
         const isDark = document.documentElement.classList.contains('dark');
@@ -2404,8 +2459,48 @@
             unknownNote.classList.toggle('flex', hasUnknown);
         }
 
+        renderDepthReadout(props);
+        renderDraughtNotices(props);
         renderHazards(props);
     }
+
+    // Draught notices: one row per reroute / no-route, click fits the avoided stretch
+    let noticeAvoided = [];
+
+    function renderDraughtNotices(props) {
+        const card = document.getElementById('notices-card');
+        const list = document.getElementById('notices-list');
+        if (!card || !list) return;
+        const notices = props.notices || [];
+        noticeAvoided = notices.map(n => n.avoided || []);
+        card.classList.toggle('hidden', notices.length === 0);
+        card.classList.toggle('flex', notices.length > 0);
+        list.innerHTML = notices.map((n, i) => {
+            const noRoute = n.kind === 'draught-no-route';
+            const icon = noRoute ? 'block' : 'alt_route';
+            const tone = noRoute ? 'text-error' : 'text-warning';
+            const chip = !noRoute && Number(n.extra_nm) > 0
+                ? `<span class="shrink-0 font-mono text-[9px] px-1.5 py-0.5 rounded-sm bg-warning/15 border border-warning/40 text-warning tabular-nums">+${Math.round(Number(n.extra_nm)).toLocaleString()} NM</span>`
+                : '';
+            const body = `<span class="material-symbols-outlined review-item__icon ${tone}" aria-hidden="true">${icon}</span>
+                <span class="flex-1 min-w-0 font-mono text-[10px] text-on-surface leading-snug">${escapeHtml(n.text)}</span>${chip}`;
+            return noticeAvoided[i].length >= 2
+                ? `<li class="review-item"><button class="review-item__main" data-notice-fit="${i}" type="button">${body}</button></li>`
+                : `<li class="review-item"><div class="review-item__main" style="cursor:default">${body}</div></li>`;
+        }).join('');
+    }
+
+    (function bindNotices() {
+        const card = document.getElementById('notices-card');
+        if (!card) return;
+        card.addEventListener('click', (e) => {
+            const btn = e.target.closest('[data-notice-fit]');
+            if (!btn) return;
+            const av = noticeAvoided[Number(btn.dataset.noticeFit)] || [];
+            if (av.length < 2) return;
+            map.fitBounds(L.latLngBounds(av.map(c => [c[1], c[0]])), { padding: [40, 40], maxZoom: 8 });
+        });
+    })();
 
     // =========================================================================
     // 9.2 Route review: hazards, on the map and in the side pane
@@ -2445,19 +2540,24 @@
         const legs = h.to - h.from;
         const legText = `${legs} ${legs === 1 ? 'leg' : 'legs'}`;
         if (h.passage) {
+            if (h.severity === 'shallow') return `${passageName(h.passage)}: ${legText} too shallow`;
             return h.severity === 'aground'
                 ? `${passageName(h.passage)}: ${legText} aground`
                 : `${passageName(h.passage)}: ${legText} close to land`;
         }
         const kind = HAZARD_KIND_LABEL[h.kind] || h.kind;
         if (h.severity === 'unchecked') return `${kind}: outside the land data`;
+        if (h.severity === 'shallow') return `${kind}: ${legText} too shallow`;
+        if (h.severity === 'approach') return `Port approach: ${legText} ${legs === 1 ? 'is' : 'are'} tight`;
         if (h.severity === 'aground') return legs > 1 ? `${kind} aground (${legText})` : `${kind} aground`;
         return `${kind}: ${Number(h.min_clearance_nm).toFixed(1)} NM from land`;
     }
 
     const HAZARD_LOOK = {
         aground: { label: 'Aground', icon: 'report', cls: 'is-aground' },
+        shallow: { label: 'Shallow', icon: 'report', cls: 'is-aground' },
         close: { label: 'Close pass', icon: 'warning', cls: 'is-close' },
+        approach: { label: 'Port approach', icon: 'warning', cls: 'is-close' },
         unchecked: { label: 'Not checked', icon: 'help', cls: 'is-close' }
     };
 
@@ -2467,6 +2567,7 @@
 
     function hazardClearanceText(h) {
         if (h.severity === 'aground') return 'touches land data';
+        if (h.severity === 'shallow') return 'less water than the depth limit';
         if (h.severity === 'unchecked') return 'unknown';
         const nm = Number(h.min_clearance_nm);
         return nm < 0.1 ? '< 0.1 NM' : `${nm.toFixed(1)} NM`;
@@ -2480,7 +2581,6 @@
             ['Legs', String(h.to - h.from)],
             ['From', formatLatLon(h.start)]
         ];
-        const action = `<span class="review-tag">Needs attention</span>`;
         return `<div class="review-popup">
             <div class="review-popup__head ${look.cls}">
                 <span class="material-symbols-outlined" aria-hidden="true">${look.icon}</span>
@@ -2488,7 +2588,7 @@
             </div>
             <dl class="review-popup__rows">${rows.map(([k, v]) => `<dt>${k}</dt><dd>${escapeHtml(v)}</dd>`).join('')}</dl>
             ${h.note ? `<p class="review-popup__note">${escapeHtml(h.note)}</p>` : ''}
-            <div class="review-popup__actions">${action}</div>
+            <div class="review-popup__actions"><span class="review-tag">Needs attention</span></div>
         </div>`;
     }
 
@@ -2538,7 +2638,6 @@
     function hazardItem(h, index) {
         const look = hazardLook(h);
         const key = `hazard:${index}`;
-        const status = `<span class="review-tag">Needs attention</span>`;
         return `<li class="review-item ${look.cls}" data-review-key="${key}">
             <button class="review-item__main" data-review-select="${key}" type="button">
                 <span class="material-symbols-outlined review-item__icon" aria-hidden="true">${look.icon}</span>
@@ -2548,7 +2647,7 @@
                     ${h.note ? `<span class="text-[9px] text-on-surface-variant leading-tight">${escapeHtml(h.note)}</span>` : ''}
                 </span>
             </button>
-            <span class="review-item__actions">${status}</span>
+            <span class="review-item__actions"><span class="review-tag">Needs attention</span></span>
         </li>`;
     }
 
@@ -2570,7 +2669,7 @@
         hazards.forEach((h, i) => {
             const seg = latLngs.slice(h.from, h.to + 1);
             if (seg.length < 2) return;
-            const aground = h.severity === 'aground';
+            const aground = h.severity === 'aground' || h.severity === 'shallow';
             const style = {
                 color: aground ? red : amber,
                 weight: aground ? 5 : 4,
@@ -2582,9 +2681,9 @@
             addReviewLayer(`hazard:${i}`, seg, style, hazardPopup(h, i));
         });
 
-        // Aground and unchecked runs stay listed; close passes collapse
+        // Aground, shallow and unchecked runs stay listed; close passes and port approaches collapse
         const aground = [], close = [];
-        hazards.forEach((h, i) => (h.severity === 'close' ? close : aground).push([h, i]));
+        hazards.forEach((h, i) => (h.severity === 'close' || h.severity === 'approach' ? close : aground).push([h, i]));
         card.classList.toggle('hidden', hazards.length === 0);
         card.classList.toggle('flex', hazards.length > 0);
         if (countEl) countEl.textContent = String(hazards.length);
@@ -2596,7 +2695,12 @@
             group.classList.toggle('hidden', close.length === 0);
             group.classList.toggle('flex', close.length > 0);
             const clearance = Number(props.clearance_nm || 2);
-            summary.textContent = `${close.length} close ${close.length === 1 ? 'pass' : 'passes'} (under ${clearance} NM)`;
+            const nApproach = close.filter(([h]) => h.severity === 'approach').length;
+            const nClose = close.length - nApproach;
+            const parts = [];
+            if (nClose) parts.push(`${nClose} close ${nClose === 1 ? 'pass' : 'passes'} (under ${clearance} NM)`);
+            if (nApproach) parts.push(`${nApproach} port ${nApproach === 1 ? 'approach' : 'approaches'}`);
+            summary.textContent = parts.join(', ');
             closeList.innerHTML = close.map(([h, i]) => hazardItem(h, i)).join('');
             setHazardsCloseExpanded(hazardsCloseExpanded);
         }
