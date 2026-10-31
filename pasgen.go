@@ -15,6 +15,8 @@ type WaypointItem struct {
 	CumDistanceM  float64        `json:"cum_distance_m"`
 	CumDistanceNM float64        `json:"cum_distance_nm"`
 	Passage       string         `json:"passage,omitempty"`
+	// Flag is the provenance of the stretch that arrives at this vertex.
+	Flag string `json:"flag"`
 }
 
 type FeatureProperties struct {
@@ -30,6 +32,15 @@ type FeatureProperties struct {
 	RouteName   string         `json:"route_name"`
 	Passages    []string       `json:"passages"`
 	Waypoints   []WaypointItem `json:"waypoints"`
+
+	// Kinks and ClearanceNM echo the effective settings of the request.
+	Kinks         bool             `json:"kinks"`
+	ClearanceNM   float64          `json:"clearance_nm"`
+	Proposals     []route.Proposal `json:"proposals"`
+	Stretches     []route.Stretch  `json:"stretches"`
+	Warnings      []route.Warning  `json:"warnings"`
+	IgnoredAccept []string         `json:"ignored_accept"`
+	Hazards       []route.Hazard   `json:"hazards"`
 }
 
 type Feature struct {
@@ -48,7 +59,7 @@ type Output struct {
 	Features []Feature `json:"features"`
 }
 
-func generateOutput(r route.Route, oCoords route.Position, dCoords route.Position, totalDistance float64, oToWpDist float64, wpToDDist float64, Wp2WpDist float64, routeName string, passages []string) Output {
+func generateOutput(r route.Route, kinks bool, clearanceNM float64, oCoords route.Position, dCoords route.Position, totalDistance float64, oToWpDist float64, wpToDDist float64, Wp2WpDist float64, routeName string, passages []string) Output {
 	totalDistNM := totalDistance / 1.852
 	totalDistMI := totalDistance * 0.621371
 
@@ -79,6 +90,19 @@ func generateOutput(r route.Route, oCoords route.Position, dCoords route.Positio
 			}
 		}
 
+		// The origin is a connector; later vertices take the flag of the
+		// stretch whose segment ends there.
+		flag := "connector"
+		if i > 0 {
+			flag = "marnet"
+			for _, st := range r.Stretches {
+				if st.From < i && i <= st.To {
+					flag = st.Flag
+					break
+				}
+			}
+		}
+
 		waypoints[i] = WaypointItem{
 			Index:         i + 1,
 			Name:          name,
@@ -88,6 +112,7 @@ func generateOutput(r route.Route, oCoords route.Position, dCoords route.Positio
 			CumDistanceM:  cumDistM,
 			CumDistanceNM: cumDistNM,
 			Passage:       passage,
+			Flag:          flag,
 		}
 	}
 
@@ -118,6 +143,14 @@ func generateOutput(r route.Route, oCoords route.Position, dCoords route.Positio
 			RouteName:   routeName,
 			Passages:    passages,
 			Waypoints:   waypoints,
+
+			Kinks:         kinks,
+			ClearanceNM:   clearanceNM,
+			Proposals:     nonNil(r.Proposals),
+			Stretches:     nonNil(r.Stretches),
+			Warnings:      nonNil(r.Warnings),
+			IgnoredAccept: nonNil(r.IgnoredAccept),
+			Hazards:       nonNil(r.Hazards),
 		},
 		ID: "1",
 	}
@@ -126,4 +159,12 @@ func generateOutput(r route.Route, oCoords route.Position, dCoords route.Positio
 	output.Name = "Short Sea Route"
 
 	return output
+}
+
+// nonNil keeps empty slices as [] in the JSON, never null.
+func nonNil[T any](s []T) []T {
+	if s == nil {
+		return []T{}
+	}
+	return s
 }

@@ -10,11 +10,35 @@ import (
 	"os"
 	"regexp"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/captv89/seaRoute/route"
 	"github.com/gin-gonic/gin"
 )
+
+var (
+	testGraphOnce sync.Once
+	testGraphVal  *route.Graph
+	testGraphErr  error
+)
+
+// testGraph loads the full datasets (network, land, TSS) once per test run.
+func testGraph(t *testing.T) *route.Graph {
+	t.Helper()
+	testGraphOnce.Do(func() {
+		testGraphVal, testGraphErr = route.LoadAll(route.Datasets{
+			Network: "dataset/marnet_plus_5km.geojson",
+			Land:    "dataset/land_osm.bin.gz",
+			TSS:     "dataset/tss_osm.geojson.gz",
+		})
+	})
+	if testGraphErr != nil {
+		t.Fatalf("failed to load route graph: %v", testGraphErr)
+	}
+	return testGraphVal
+}
 
 func setupTestRouter(t *testing.T) *gin.Engine {
 	gin.SetMode(gin.TestMode)
@@ -24,11 +48,7 @@ func setupTestRouter(t *testing.T) *gin.Engine {
 		t.Fatalf("failed to load ports: %v", err)
 	}
 	app.PortData = ports
-	rg, err := route.Load("dataset/marnet_plus_5km.geojson")
-	if err != nil {
-		t.Fatalf("failed to load route graph: %v", err)
-	}
-	app.RouteGraph = rg
+	app.RouteGraph = testGraph(t)
 
 	router := gin.New()
 	setupRoutes(router, app)
@@ -533,5 +553,174 @@ func TestCSPReportOnlyMode(t *testing.T) {
 	}
 	if !strings.Contains(w.Header().Get("Content-Security-Policy-Report-Only"), "'strict-dynamic'") {
 		t.Error("missing Content-Security-Policy-Report-Only header")
+	}
+}
+
+// postWaypoints sends a /waypoints request and returns the recorder.
+func postWaypoints(t *testing.T, r *gin.Engine, payload map[string]any) *httptest.ResponseRecorder {
+	t.Helper()
+	b, _ := json.Marshal(payload)
+	req := httptest.NewRequest(http.MethodPost, "/waypoints", bytes.NewReader(b))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	return w
+}
+
+func TestWaypointsKinkDefaults(t *testing.T) {
+	r := setupTestRouter(t)
+	w := postWaypoints(t, r, map[string]any{"fromPort": "Rotterdam", "toPort": "Singapore"})
+	if w.Code != http.StatusOK {
+		t.Fatalf("status %d: %s", w.Code, w.Body.String())
+	}
+	var res struct {
+		Features []struct {
+			Properties map[string]json.RawMessage `json:"properties"`
+		} `json:"features"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &res); err != nil {
+		t.Fatal(err)
+	}
+	props := res.Features[0].Properties
+	if string(props["kinks"]) != "true" {
+		t.Errorf("kinks = %s, want true", props["kinks"])
+	}
+	if string(props["clearance_nm"]) != "2" {
+		t.Errorf("clearance_nm = %s, want 2", props["clearance_nm"])
+	}
+	for _, k := range []string{"proposals", "stretches", "warnings", "ignored_accept", "hazards"} {
+		if v := string(props[k]); !strings.HasPrefix(v, "[") {
+			t.Errorf("%s = %s, want an array", k, v)
+		}
+	}
+}
+
+func TestWaypointsClearanceRange(t *testing.T) {
+	r := setupTestRouter(t)
+	for _, tc := range []struct {
+		c    float64
+		want int
+	}{{0.4, 400}, {10.5, 400}, {0.5, 200}, {10, 200}} {
+		w := postWaypoints(t, r, map[string]any{"fromPort": "Rotterdam", "toPort": "Hamburg", "clearance_nm": tc.c})
+		if w.Code != tc.want {
+			t.Errorf("clearance_nm %v: status %d, want %d", tc.c, w.Code, tc.want)
+		}
+	}
+}
+
+func TestWaypointsAcceptLimits(t *testing.T) {
+	r := setupTestRouter(t)
+	many := make([]string, 201)
+	for i := range many {
+		many[i] = "k-abc"
+	}
+	cases := map[string]any{
+		"201 ids":    many,
+		"33 chars":   []string{strings.Repeat("a", 33)},
+		"bind error": []int{1},
+		"mixed":      []any{"ok", 1},
+		"10000 ids":  make([]string, 10000),
+		"1MB id":     []string{strings.Repeat("a", 1<<20)},
+	}
+	for name, accept := range cases {
+		start := time.Now()
+		w := postWaypoints(t, r, map[string]any{"fromPort": "Rotterdam", "toPort": "Hamburg", "accept": accept})
+		if w.Code != http.StatusBadRequest {
+			t.Errorf("%s: status %d, want 400", name, w.Code)
+		}
+		if d := time.Since(start); d > 100*time.Millisecond {
+			t.Errorf("%s: rejection took %v, want < 100ms", name, d)
+		}
+	}
+	ok := make([]string, 200)
+	for i := range ok {
+		ok[i] = strings.Repeat("a", 32)
+	}
+	if w := postWaypoints(t, r, map[string]any{"fromPort": "Rotterdam", "toPort": "Hamburg", "accept": ok}); w.Code != http.StatusOK {
+		t.Errorf("200 ids of 32 chars: status %d, want 200", w.Code)
+	}
+}
+
+func TestWaypointsTotalsMatchPath(t *testing.T) {
+	r := setupTestRouter(t)
+	w := postWaypoints(t, r, map[string]any{"fromPort": "Rotterdam", "toPort": "Singapore"})
+	if w.Code != http.StatusOK {
+		t.Fatalf("status %d", w.Code)
+	}
+	var res struct {
+		Features []struct {
+			Properties struct {
+				TotalDist float64 `json:"total_dist"`
+				Waypoints []struct {
+					LegDistanceM float64 `json:"leg_distance_m"`
+					Flag         string  `json:"flag"`
+				} `json:"waypoints"`
+			} `json:"properties"`
+		} `json:"features"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &res); err != nil {
+		t.Fatal(err)
+	}
+	p := res.Features[0].Properties
+	var sum float64
+	for _, wp := range p.Waypoints {
+		sum += wp.LegDistanceM
+	}
+	// total_dist is in km, leg distances in metres
+	if d := sum - p.TotalDist*1000; d > 1 || d < -1 {
+		t.Errorf("sum of legs %.1f m, total_dist %.1f m", sum, p.TotalDist*1000)
+	}
+	if p.Waypoints[0].Flag != "connector" {
+		t.Errorf("origin flag = %q, want connector", p.Waypoints[0].Flag)
+	}
+	for i, wp := range p.Waypoints {
+		if wp.Flag == "" {
+			t.Errorf("waypoint %d has no flag", i)
+		}
+	}
+}
+
+func TestLayersTSS(t *testing.T) {
+	r := gin.New()
+	setupRoutes(r, &App{})
+	req := httptest.NewRequest(http.MethodGet, "/layers/tss", nil)
+	req.Header.Set("Accept-Encoding", "gzip")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status %d", w.Code)
+	}
+	if ce := w.Header().Get("Content-Encoding"); ce != "gzip" {
+		t.Errorf("Content-Encoding = %q, want gzip", ce)
+	}
+}
+
+func TestWaypointsKinksOff(t *testing.T) {
+	r := setupTestRouter(t)
+	w := postWaypoints(t, r, map[string]any{"fromPort": "Rotterdam", "toPort": "Singapore", "kinks": false, "accept": []string{"k-abc"}})
+	if w.Code != http.StatusOK {
+		t.Fatalf("status %d: %s", w.Code, w.Body.String())
+	}
+	var res struct {
+		Features []struct {
+			Properties struct {
+				Kinks         bool     `json:"kinks"`
+				Proposals     []any    `json:"proposals"`
+				IgnoredAccept []string `json:"ignored_accept"`
+			} `json:"properties"`
+		} `json:"features"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &res); err != nil {
+		t.Fatal(err)
+	}
+	p := res.Features[0].Properties
+	if p.Kinks {
+		t.Error("kinks echoed true, want false")
+	}
+	if len(p.Proposals) != 0 {
+		t.Errorf("got %d proposals, want 0", len(p.Proposals))
+	}
+	if len(p.IgnoredAccept) != 1 || p.IgnoredAccept[0] != "k-abc" {
+		t.Errorf("ignored_accept = %v, want [k-abc]", p.IgnoredAccept)
 	}
 }

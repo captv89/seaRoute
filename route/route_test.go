@@ -229,3 +229,49 @@ func BenchmarkAStarShort(b *testing.B)    { benchRoute(b, AStar, rotterdam, gdyn
 func BenchmarkDijkstraShort(b *testing.B) { benchRoute(b, Dijkstra, rotterdam, gdynia) }
 func BenchmarkAStarLong(b *testing.B)     { benchRoute(b, AStar, rotterdam, singapore) }
 func BenchmarkDijkstraLong(b *testing.B)  { benchRoute(b, Dijkstra, rotterdam, singapore) }
+
+// haversine is the great-circle distance in metres, kept as a reference.
+func haversine(a, b Position) float64 {
+	const rad = math.Pi / 180
+	lat1, lat2 := a[1]*rad, b[1]*rad
+	dLat := lat2 - lat1
+	dLon := (b[0] - a[0]) * rad
+	h := math.Sin(dLat/2)*math.Sin(dLat/2) + math.Cos(lat1)*math.Cos(lat2)*math.Sin(dLon/2)*math.Sin(dLon/2)
+	return 2 * earthRadiusM * math.Asin(math.Min(1, math.Sqrt(h)))
+}
+
+const metresPerNM = 1852.0
+
+func TestRhumbDistanceMeridian(t *testing.T) {
+	got := Distance(Position{0, 0}, Position{0, 1}) / metresPerNM
+	if math.Abs(got-60.0) > 0.1 {
+		t.Errorf("meridian degree = %.3f NM, want 60.0", got)
+	}
+}
+
+func TestRhumbDistanceParallel(t *testing.T) {
+	got := Distance(Position{0, 60}, Position{1, 60}) / metresPerNM
+	if math.Abs(got-30.0) > 0.1 {
+		t.Errorf("parallel degree at 60N = %.3f NM, want 30.0", got)
+	}
+}
+
+func TestRhumbLongerThanGreatCircle(t *testing.T) {
+	rh, gc := Distance(rotterdam, singapore), haversine(rotterdam, singapore)
+	if rh <= gc {
+		t.Errorf("rhumb %.0f m should exceed great circle %.0f m", rh, gc)
+	}
+}
+
+func TestRhumbAntimeridian(t *testing.T) {
+	got := Distance(Position{179.5, 10}, Position{-179.5, 10}) / metresPerNM
+	if math.Abs(got-59.1) > 1 {
+		t.Errorf("antimeridian leg = %.2f NM, want about 59", got)
+	}
+}
+
+func TestMercatorEquator(t *testing.T) {
+	if m := Mercator(Position{0, 0}); m != [2]float64{0, 0} {
+		t.Errorf("Mercator(0,0) = %v, want [0 0]", m)
+	}
+}

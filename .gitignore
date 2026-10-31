@@ -11,6 +11,7 @@ seaRoute
 # Test & coverage artifacts
 coverage.out
 *.out
+*.test
 
 # Datasets: Keep only marnet_plus_5km.geojson and compressed .gz files
 dataset/*.geojson

@@ -27,6 +27,19 @@
                 <span class="text-primary font-semibold">CaptV89</span>
             </div>
         </div>
+        <div class="bg-surface-container-lowest p-4 rounded-sm border border-warning/40 flex flex-col gap-2">
+            <span class="text-warning font-bold text-[11px] uppercase tracking-wider">Limitations</span>
+            <ul class="flex flex-col gap-1.5 list-disc pl-4 text-on-surface-variant leading-relaxed">
+                <li>TSS data is community-maintained (OpenSeaMap / OpenStreetMap) and its coverage is incomplete. Stretches near land outside the covered areas are flagged <span class="text-on-surface">tss-unknown</span>; where TSS rules leave no route, the flagged <span class="text-on-surface">tss-unresolved</span> stretch ignores one scheme.</li>
+                <li>The land data is simplified (50 m) and covers a corridor around the MARNET network. Canals and channels narrower than that read as aground and are flagged as hazards. MARNET itself is not a surveyed track.</li>
+                <li>A licensed ENC (S-57/S-101 from a hydrographic office or chart distributor) is the authoritative source for charted hazards and traffic schemes. seaRoute does not use one.</li>
+                <li>seaRoute is not for navigation. A passage plan still needs official charts.</li>
+            </ul>
+        </div>
+        <p class="text-[11px] text-on-surface-variant leading-relaxed">
+            Land and Traffic Separation Scheme data: &copy; OpenStreetMap contributors, ODbL
+            (<a class="text-primary hover:underline" href="https://www.openstreetmap.org/copyright" target="_blank" rel="noreferrer">openstreetmap.org/copyright</a>).
+        </p>
         <div class="pt-2 flex items-center justify-between">
             <a href="/" class="flex items-center gap-1 text-primary hover:underline">
                 <span class="material-symbols-outlined text-[16px]">arrow_back</span> Return to Chart

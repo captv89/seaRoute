@@ -33,6 +33,7 @@ module.exports = {
                 "warning": "rgb(var(--color-warning) / <alpha-value>)",
                 "warning-container": "rgb(var(--color-warning-container) / <alpha-value>)",
                 "eca-cyan": "rgb(var(--color-eca-cyan) / <alpha-value>)",
+                "tss": "rgb(var(--color-tss) / <alpha-value>)",
                 "error": "rgb(var(--color-error) / <alpha-value>)",
                 "error-container": "rgb(var(--color-error-container) / <alpha-value>)"
             },
