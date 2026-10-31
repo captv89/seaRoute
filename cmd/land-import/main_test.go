@@ -14,6 +14,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/captv89/seaRoute/internal/corridor"
 )
 
 // writeShp writes a minimal polygon (type 5) shapefile with one record per
@@ -171,7 +173,7 @@ func square(lon, lat, d float64) [][2]float64 {
 
 func TestCorridorKeepsNearRings(t *testing.T) {
 	net := writeNetwork(t, [][2]float64{{0, 0}, {0.1, 0.1}})
-	cells, err := corridorCells(net, 30)
+	cells, err := corridor.Cells(net, 30, cellSize)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -187,7 +189,7 @@ func TestCorridorKeepsNearRings(t *testing.T) {
 
 func TestCorridorWrapsAntimeridian(t *testing.T) {
 	net := writeNetwork(t, [][2]float64{{179.99, 0}, {179.98, 0.1}})
-	cells, _ := corridorCells(net, 30)
+	cells, _ := corridor.Cells(net, 30, cellSize)
 	if !touchesCorridor(square(-179.9, 0, 0.01), cells) {
 		t.Fatal("ring across the antimeridian should be kept")
 	}
