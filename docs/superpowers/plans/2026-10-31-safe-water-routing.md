@@ -22,8 +22,8 @@
 - Performance: < 1 s per route on the VPS (4 cores) including the unconstrained comparison; total app memory < 1.5 GB.
 - Dataset files: each < 200 MB compressed. The raw GEBCO grid is never committed.
 - No new third-party Go dependencies.
-- Disclaimer copy (README and About): "Depths come from GEBCO 2025 and land from OpenStreetMap. Both are approximate and not for navigation; check the official chart."
-- GEBCO credit (README, About, dataset README): "GEBCO Compilation Group (2025) GEBCO 2025 Grid (doi:10.5285/37c52e96-24ea-67ce-e063-7086abc05f29)".
+- Disclaimer copy (README and About): "Depths come from GEBCO 2026 and land from OpenStreetMap. Both are approximate and not for navigation; check the official chart."
+- GEBCO credit (README, About, dataset README): "GEBCO Bathymetric Compilation Group (2026) GEBCO 2026 Grid (doi:10.5285/4f68d5c7-45eb-f999-e063-7086abc036fa)".
 
 ## Review Focus
 
@@ -113,26 +113,26 @@
   ```go
   const depthTileDeg = 0.5; const depthCellsPerTile = 120 // 15 arc-seconds
   type DepthTile struct { CX, CY int32; Deep bool; M []uint8 } // M: 120*120 row-major from the SW corner; nil when Deep
-  type Depth struct { Version string /* "<date>/gebco2025" */ }
+  type Depth struct { Version string /* "<date>/gebco2026" */ }
   func NewDepth(tiles []DepthTile, version string) *Depth
   func LoadDepth(path string) (*Depth, error)
   func (d *Depth) At(p Position) (m float64, known bool)
   func (d *Depth) SegmentMin(a, b Position) (m float64, known bool)
   ```
   Cell values: 0 = land or drying (GEBCO elevation ≥ 0), 1–254 = depth in whole metres rounded **down** (conservative), 255 = 255 m or deeper. A tile whose every cell is 255 is stored `Deep` with no cells. `known` is false outside the stored tiles. `SegmentMin` samples the rhumb leg every 200 m (ends included), skips a whole `Deep` tile at once, and returns the minimum; `known` is false if any sample is outside coverage (the minimum over the known samples is still returned).
-- File format: gzip of `"SRDEPTH1\n"` + JSON header line `{"source":"gebco2025","date":...,"tile_deg":0.5,"arcsec":15,"tiles":N}` + per tile: zigzag-varint `CX`, `CY`, one byte (1 = deep, 0 = cells), then 14400 bytes when not deep.
+- File format: gzip of `"SRDEPTH1\n"` + JSON header line `{"source":"gebco2026","date":...,"tile_deg":0.5,"arcsec":15,"tiles":N}` + per tile: zigzag-varint `CX`, `CY`, one byte (1 = deep, 0 = cells), then 14400 bytes when not deep.
 
 - [ ] **Step 1: Write the failing tests.**
   - `internal/corridor`: `TestCellsCoverNetworkVertex` on a 2-segment GeoJSON fixture: the vertex's cell and its neighbours within the radius are true.
   - `route/depth_test.go`: `TestDepthAt` (one tile with cell (10,20) = 7 and the rest 255: `At` at that cell's centre returns 7, known; at a deep tile 255; outside coverage known=false); `TestSegmentMinCrossesShoal` (a leg crossing the 7 m cell returns 7; a parallel leg 2 cells away returns 255); `TestSegmentMinAntimeridian` (tiles at CX -360 and 359, i.e. either side of ±180; a leg from 179.9 E to 179.9 W is known); `TestLoadDepthRoundTrip` (write with the importer's writer, read with `LoadDepth`, `At` matches).
   - `cmd/depth-import`: `TestReadEsriASCII` on a 4×3 fixture with `NODATA_value` and negative values (−12.7 → 12; +3 → 0; −300 → 255).
 - [ ] **Step 2: Run** `go test ./internal/... ./cmd/depth-import ./route -run 'Cells|Depth|SegmentMin|EsriASCII' -v` — Expected: FAIL.
-- [ ] **Step 3: Implement** `route/depth.go`, `internal/corridor`, and `cmd/depth-import`. Usage: `go run ./cmd/depth-import -asc 'gebco/*.asc' -network dataset/marnet_plus_5km.geojson -corridor 30 -date 2025-06-01 -out dataset/depth_gebco.bin.gz`. Input is the GEBCO_2025 grid as **Esri ASCII** tiles (gebco.net → Gridded bathymetry data → GEBCO_2025 Grid → Esri ASCII, 8 tiles), read one line at a time without holding a whole tile in memory. Keep only the tiles in `corridor.Cells(network, 30, 0.5)`, which is the same coverage as the land data.
+- [ ] **Step 3: Implement** `route/depth.go`, `internal/corridor`, and `cmd/depth-import`. Usage: `go run ./cmd/depth-import -asc 'gebco/*.asc' -network dataset/marnet_plus_5km.geojson -corridor 30 -date 2026-01-01 -out dataset/depth_gebco.bin.gz`. Input is the GEBCO_2026 grid as **Esri ASCII** tiles (https://data.ceda.ac.uk/bodc/gebco/global/gebco_2026/ice_surface_elevation/esri_ascii_raster, 8 tiles, already downloaded), read one line at a time without holding a whole tile in memory. Keep only the tiles in `corridor.Cells(network, 30, 0.5)`, which is the same coverage as the land data.
 - [ ] **Step 4: Run** the same command — Expected: PASS.
-- [ ] **Step 5: Build the dataset.** Download the 8 Esri ASCII tiles to `~/data/gebco_2025/` (outside the repo). Run the importer. Record in `dataset/README.md`: source, licence (public domain, attribution requested), the credit line from Global Constraints, the command, the tile count, the file size, and the load time. Expected: file < 200 MB. If it is larger, keep tiles only where some cell is < 60 m and treat the rest as Deep, then re-measure.
-- [ ] **Step 6: Wire it.** `Datasets{..., Depth: "dataset/depth_gebco.bin.gz"}` in `main.go` and in the full-graph test helpers (`main_test.go`, `mcpserver_test.go`, `route/tssgraph_test.go`). Add `TestLoadAllWithDepth` (the graph loads; `g.Version()` contains `gebco2025`).
+- [ ] **Step 5: Build the dataset.** Download the 8 Esri ASCII tiles to `"/Volumes/Mac Drive/data/gebco_2026/" (external SSD)` (outside the repo). Run the importer. Record in `dataset/README.md`: source, licence (public domain, attribution requested), the credit line from Global Constraints, the command, the tile count, the file size, and the load time. Expected: file < 200 MB. If it is larger, keep tiles only where some cell is < 60 m and treat the rest as Deep, then re-measure.
+- [ ] **Step 6: Wire it.** `Datasets{..., Depth: "dataset/depth_gebco.bin.gz"}` in `main.go` and in the full-graph test helpers (`main_test.go`, `mcpserver_test.go`, `route/tssgraph_test.go`). Add `TestLoadAllWithDepth` (the graph loads; `g.Version()` contains `gebco2026`).
 - [ ] **Step 7: Run** `go vet ./... && go test ./...` — Expected: PASS.
-- [ ] **Step 8: Commit** `feat(data): GEBCO 2025 depth dataset, importer and depth queries` (dataset file included; use Git LFS only if it exceeds 100 MB, GitHub's hard limit).
+- [ ] **Step 8: Commit** `feat(data): GEBCO 2026 depth dataset, importer and depth queries` (dataset file included; use Git LFS only if it exceeds 100 MB, GitHub's hard limit).
 
 ---
 

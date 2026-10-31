@@ -239,7 +239,7 @@ confined, with a source cited per row. Everywhere else is open water.
 
 ### GEBCO source (Claude's call)
 
-GEBCO is not fetched yet. `cmd/depth-import` reads the GEBCO_2025
+GEBCO is not fetched yet. `cmd/depth-import` reads the GEBCO_2026
 15-arc-second grid (NetCDF or GeoTIFF tiles from gebco.net, several GB,
 downloaded once by hand) and clips it to the land data's coverage area.
 The raw grid is never committed; only the derived dataset is.
@@ -256,8 +256,8 @@ budget.
   land within 30 NM of a MARNET vertex. The corridor must lie inside
   covered land data, so the importer's coverage must be at least the
   corridor width plus a margin.
-- **Depth:** GEBCO 2025, 15 arc-second grid (~450 m), public domain,
-  attribution requested (DOI 10.5285/37c52e96-24ea-67ce-e063-7086abc05f29).
+- **Depth:** GEBCO 2026, 15 arc-second grid (~450 m), public domain,
+  attribution requested (DOI 10.5285/4f68d5c7-45eb-f999-e063-7086abc036fa).
   New offline importer `cmd/depth-import` turns it into a compact dataset
   covering the same area as the land data. Only shallow water matters, so
   deep water can be stored coarsely or as a single "deep" value. Depth
