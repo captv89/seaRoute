@@ -361,8 +361,10 @@ func checkSmoothedClear(t *testing.T, g *Graph, r Route) {
 		if s.Flag != "smoothed" {
 			continue
 		}
-		if c := g.land.SegmentClearance(r.Path[s.From], r.Path[s.To], 5*MetresPerNM); c < 2*MetresPerNM {
-			t.Errorf("smoothed stretch %v clears land by %.2f nm", s, c/MetresPerNM)
+		for k := s.From; k < s.To; k++ { // each segment; a stretch can merge several
+			if c := g.land.SegmentClearance(r.Path[k], r.Path[k+1], 5*MetresPerNM); c < 2*MetresPerNM {
+				t.Errorf("smoothed segment %d of stretch %v clears land by %.2f nm", k, s, c/MetresPerNM)
+			}
 		}
 	}
 }
