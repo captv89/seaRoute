@@ -61,3 +61,9 @@
 - Format: gzip GeoJSON FeatureCollection with top-level `osm_base`. Feature properties `type` (seamark type without `separation_`), `osm_id`, `scheme`, `name`. Geometry is a LineString, or a Polygon for closed zone, roundabout and lane ways. Coordinates rounded to 1e-6°. Features are sorted by `osm_id`, so output is deterministic.
 - Size: 100,788 bytes. Loaded by `route.LoadTSS`, which builds each scheme's 1 NM area and 20 NM coverage hulls.
 - Regenerate: `go run ./cmd/tss-import -in <overpass.json> -out dataset/tss_osm.geojson.gz`
+
+## depth_gebco.bin.gz — water depth for draught limits
+- Source: GEBCO Bathymetric Compilation Group (2026) GEBCO 2026 Grid (doi:10.5285/4f68d5c7-45eb-f999-e063-7086abc036fa)
+- Licence: GEBCO terms of use (free to use with attribution). The raw GEBCO grid is not committed.
+- Status: placeholder. Tile count, size and load time will be filled in when the dataset is built.
+- Regenerate: `go run ./cmd/depth-import -asc '<gebco tiles glob>' -network dataset/marnet_plus_5km.geojson -date <YYYY-MM-DD> -out dataset/depth_gebco.bin.gz`

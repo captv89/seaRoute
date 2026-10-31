@@ -182,6 +182,9 @@ Response `properties` gains `clearance_nm` (the effective value), `stretches[]` 
 * TSS data is community-maintained (OpenSeaMap / OpenStreetMap) and its coverage is incomplete. Stretches near land outside the covered areas are flagged `tss-unknown`; where TSS rules leave no route, the flagged `tss-unresolved` stretch ignores one scheme.
 * The land data is simplified (50 m) and covers a corridor around the MARNET network. Canals and channels narrower than that read as aground and are flagged as hazards. MARNET itself is not a surveyed track.
 * A licensed ENC (S-57/S-101 from a hydrographic office or chart distributor) is the authoritative source for charted hazards and traffic schemes. seaRoute does not use one.
+* Depths come from GEBCO 2026 and land from OpenStreetMap. Both are approximate and not for navigation; check the official chart.
+* Vessel inputs: `draught_m` (default 10), `speed_kn` (default 14) and `vessel_type` (`tanker`, `bulk`, `general` or `container`; default `bulk`). The route needs water at least as deep as `draught + squat + margin`. Squat follows Barrass, `Cb x V^2 / 100` metres in open water and `Cb x V^2 / 50` in a canal or strait (block coefficient Cb: tanker 0.80, bulk 0.80, general 0.70, container 0.60; V in knots). The margin for depth data error is `max(2 m, 0.10 x draught)`. Passages with a draught limit (Kiel, Suez, Panama and others) close when the vessel needs more. Near each port, the first stretch up to 15 NM is exempt until the track first reaches safe water.
+* The Kiel Canal limit (9.5 m) applies to ships up to about 160 m length. Longer ships face lower limits, which are not modelled here.
 * seaRoute is not for navigation. A passage plan still needs official charts.
 
 ---
@@ -195,6 +198,7 @@ Response `properties` gains `clearance_nm` (the effective value), `stretches[]` 
 * **Land and Traffic Separation Schemes**: © OpenStreetMap contributors, ODbL ([openstreetmap.org/copyright](https://www.openstreetmap.org/copyright)). Land from OSM land polygons, TSS from OpenSeaMap seamark tags. Rebuild with:
   `go run ./cmd/land-import -shp land_polygons.shp -network dataset/marnet_plus_5km.geojson -tolerance 200 -out dataset/land_osm.bin.gz` and
   `go run ./cmd/tss-import -in overpass.json -out dataset/tss_osm.geojson.gz`.
+* **Bathymetry**: GEBCO Bathymetric Compilation Group (2026) GEBCO 2026 Grid (doi:10.5285/4f68d5c7-45eb-f999-e063-7086abc036fa). Rebuild with `go run ./cmd/depth-import` (see `dataset/README.md`).
 * **Emission Control Areas**: International Maritime Organization ([IMO MARPOL Annex VI](https://www.imo.org/)).
 
 ---

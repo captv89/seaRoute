@@ -1,0 +1,182 @@
+[
+ {
+  "from": {
+   "name": "Singapore",
+   "lat": 1.266667,
+   "lon": 103.833333
+  },
+  "to": {
+   "name": "Colombo",
+   "lat": 6.95,
+   "lon": 79.85
+  },
+  "nm": 1581,
+  "page": 104,
+  "note": ""
+ },
+ {
+  "from": {
+   "name": "Singapore",
+   "lat": 1.266667,
+   "lon": 103.833333
+  },
+  "to": {
+   "name": "Ras Tannurah",
+   "lat": 26.65,
+   "lon": 50.166667
+  },
+  "nm": 3701,
+  "page": 104,
+  "note": ""
+ },
+ {
+  "from": {
+   "name": "Singapore",
+   "lat": 1.266667,
+   "lon": 103.833333
+  },
+  "to": {
+   "name": "Durban",
+   "lat": -29.866667,
+   "lon": 31.033333
+  },
+  "nm": 4872,
+  "page": 104,
+  "note": ""
+ },
+ {
+  "from": {
+   "name": "Shanghai",
+   "lat": 31.233333,
+   "lon": 121.491667
+  },
+  "to": {
+   "name": "Singapore",
+   "lat": 1.266667,
+   "lon": 103.833333
+  },
+  "nm": 2207,
+  "page": 102,
+  "note": ""
+ },
+ {
+  "from": {
+   "name": "New York",
+   "lat": 40.7,
+   "lon": -74.016667
+  },
+  "to": {
+   "name": "Cape Town",
+   "lat": -33.9,
+   "lon": 18.433333
+  },
+  "nm": 6786,
+  "page": 69,
+  "note": ""
+ },
+ {
+  "from": {
+   "name": "San Francisco",
+   "lat": 37.808333,
+   "lon": -122.4
+  },
+  "to": {
+   "name": "Honolulu",
+   "lat": 21.308333,
+   "lon": -157.870833
+  },
+  "nm": 2091,
+  "page": 96,
+  "note": ""
+ },
+ {
+  "from": {
+   "name": "San Francisco",
+   "lat": 37.808333,
+   "lon": -122.4
+  },
+  "to": {
+   "name": "Busan",
+   "lat": 35.1,
+   "lon": 129.05
+  },
+  "nm": 4914,
+  "page": 96,
+  "note": "Known gap: our route follows the MARNET transpacific track, about 6.4% longer than Pub. 151."
+ },
+ {
+  "from": {
+   "name": "San Francisco",
+   "lat": 37.808333,
+   "lon": -122.4
+  },
+  "to": {
+   "name": "Panama",
+   "lat": 8.883333,
+   "lon": -79.516667
+  },
+  "nm": 3245,
+  "page": 96,
+  "note": "Pub. 151 predates the Neopanamax locks; the route enters the canal as it did in 2001."
+ },
+ {
+  "from": {
+   "name": "New York",
+   "lat": 40.7,
+   "lon": -74.016667
+  },
+  "to": {
+   "name": "Colombo",
+   "lat": 6.95,
+   "lon": 79.85
+  },
+  "nm": 8604,
+  "page": 69,
+  "note": "Sum of three legs: New York to Strait of Gibraltar 3,180 + Gibraltar to Port Said 1,943 + Port Said to Colombo 3,481 (Pub. 151 preface example)."
+ },
+ {
+  "from": {
+   "name": "King's Lynn",
+   "lat": 52.758333,
+   "lon": 0.391111
+  },
+  "to": {
+   "name": "Amsterdam",
+   "lat": 52.383333,
+   "lon": 4.9
+  },
+  "nm": 203,
+  "page": 51,
+  "note": ""
+ },
+ {
+  "from": {
+   "name": "Rotterdam",
+   "lat": 51.9,
+   "lon": 4.466667
+  },
+  "to": {
+   "name": "Singapore",
+   "lat": 1.266667,
+   "lon": 103.833333
+  },
+  "nm": 8340,
+  "page": 94,
+  "note": "Sum of four legs via Suez: Rotterdam to Ile d'Ouessant 444 + Ouessant to Strait of Gibraltar 918 + Gibraltar to Port Said 1,943 + Port Said to Singapore 5,035."
+ },
+ {
+  "from": {
+   "name": "Gdansk",
+   "lat": 54.366667,
+   "lon": 18.666667
+  },
+  "to": {
+   "name": "Rotterdam",
+   "lat": 51.9,
+   "lon": 4.466667
+  },
+  "nm": 667,
+  "page": 36,
+  "note": "Through the Kiel Canal: Gdansk to Nord-Ostsee-Kanal East Entrance 344 + East Entrance to Rotterdam 323. The default 10 m draught exceeds the 9.5 m canal limit, so the default vessel is routed around via the Sound."
+ }
+]

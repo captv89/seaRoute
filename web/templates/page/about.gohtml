@@ -33,12 +33,19 @@
                 <li>TSS data is community-maintained (OpenSeaMap / OpenStreetMap) and its coverage is incomplete. Stretches near land outside the covered areas are flagged <span class="text-on-surface">tss-unknown</span>; where TSS rules leave no route, the flagged <span class="text-on-surface">tss-unresolved</span> stretch ignores one scheme.</li>
                 <li>The land data is simplified (50 m) and covers a corridor around the MARNET network. Canals and channels narrower than that read as aground and are flagged as hazards. MARNET itself is not a surveyed track.</li>
                 <li>A licensed ENC (S-57/S-101 from a hydrographic office or chart distributor) is the authoritative source for charted hazards and traffic schemes. seaRoute does not use one.</li>
+                <li>Depths come from GEBCO 2026 and land from OpenStreetMap. Both are approximate and not for navigation; check the official chart.</li>
+                <li>Vessel inputs are draught (default 10 m), speed (default 14 kn) and vessel type (tanker, bulk, general or container; default bulk). The route needs water at least as deep as draught + squat + margin. Squat follows Barrass, Cb &times; V&sup2; / 100 metres in open water and Cb &times; V&sup2; / 50 in a canal or strait (Cb: tanker 0.80, bulk 0.80, general 0.70, container 0.60; V in knots). The margin for depth data error is the larger of 2 m and 10% of the draught. Passages with a draught limit close when the vessel needs more. Near each port, the first stretch up to 15 NM is exempt until the track first reaches safe water.</li>
+                <li>The Kiel Canal limit (9.5 m) applies to ships up to about 160 m length. Longer ships face lower limits, which are not modelled here.</li>
                 <li>seaRoute is not for navigation. A passage plan still needs official charts.</li>
             </ul>
         </div>
         <p class="text-[11px] text-on-surface-variant leading-relaxed">
             Land and Traffic Separation Scheme data: &copy; OpenStreetMap contributors, ODbL
             (<a class="text-primary hover:underline" href="https://www.openstreetmap.org/copyright" target="_blank" rel="noreferrer">openstreetmap.org/copyright</a>).
+        </p>
+        <p class="text-[11px] text-on-surface-variant leading-relaxed">
+            Depth data: GEBCO Bathymetric Compilation Group (2026) GEBCO 2026 Grid
+            (<a class="text-primary hover:underline" href="https://doi.org/10.5285/4f68d5c7-45eb-f999-e063-7086abc036fa" target="_blank" rel="noreferrer">doi:10.5285/4f68d5c7-45eb-f999-e063-7086abc036fa</a>).
         </p>
         <div class="pt-2 flex items-center justify-between">
             <a href="/" class="flex items-center gap-1 text-primary hover:underline">
