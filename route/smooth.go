@@ -162,6 +162,11 @@ func (s *smoother) classify(a, b Position, replaced []Position, edges []int32) (
 	if saved <= smoothMinSavedM {
 		return classNever, 0
 	}
+	// Judge only where the coastline data is complete: every point of the
+	// leg, plus the clearance and half a sample step, inside the corridor.
+	if !g.inCorridor(a, b, s.limit+smoothSampleNM/2*MetresPerNM) {
+		return classNever, 0
+	}
 	if g.tss != nil && g.tss.SegmentTouchesArea(a, b) {
 		return classNever, 0
 	}
@@ -181,21 +186,7 @@ func (s *smoother) classify(a, b Position, replaced []Position, edges []int32) (
 // coveredOrOpen reports whether the rhumb leg a-b stays inside OSM TSS coverage
 // or farther than 20 NM from land, sampled every smoothSampleNM.
 func (s *smoother) coveredOrOpen(a, b Position) bool {
-	ma, mb := Mercator(a), Mercator(b)
-	n := max(1, int(math.Ceil(Distance(a, b)/(smoothSampleNM*MetresPerNM))))
-	for k := 0; k <= n; k++ {
-		p := a
-		switch k {
-		case n:
-			p = b
-		case 0:
-		default:
-			t := float64(k) / float64(n)
-			p = Position{
-				(ma[0] + t*(mb[0]-ma[0])) * 180 / math.Pi,
-				invMercatorLat(ma[1] + t*(mb[1]-ma[1])),
-			}
-		}
+	for _, p := range rhumbSamples(a, b, smoothSampleNM) {
 		if s.g.unknownAt(p) {
 			return false
 		}

@@ -151,6 +151,7 @@ type Graph struct {
 	scheme      []int32 // per directed edge: responsible scheme (index into tss.Schemes), -1 for none
 	twin        []int32 // per directed edge: the reverse edge
 	land        *Land
+	corridor    map[int64][]int32 // MARNET vertices by 1-degree cell, for inCorridor
 	tss         *TSS
 	version     string
 	stats       tssStats
@@ -311,6 +312,9 @@ func newGraph(segs []Segment, land *Land, tss *TSS, netHash string) *Graph {
 		edges = append(edges, edge{a, b, w, pid, 0, -1}, edge{b, a, w, pid, 0, -1})
 	}
 	g.marnetNodes = len(g.nodes)
+	if land != nil {
+		g.buildCorridor()
+	}
 	g.stats.marnet = len(edges) / 2
 	if tss != nil {
 		start := time.Now()

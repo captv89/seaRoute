@@ -38,6 +38,10 @@ const (
 type Land struct {
 	Tolerance float64 // Douglas-Peucker tolerance of the dataset in metres
 	Version   string  // "<date>/<tolerance_m>m"
+	// CorridorNM is the radius around MARNET vertices that the dataset covers
+	// (header corridor_nm). Land farther from every vertex may be missing. 0
+	// means full coverage.
+	CorridorNM float64
 
 	// Vertices in 1e-6 degrees. Each ring is stored closed (first vertex
 	// repeated at the end); edge i is vertex i to vertex i+1.
@@ -183,6 +187,7 @@ func readLand(br *bufio.Reader) (*Land, error) {
 	var hdr struct {
 		Date       string  `json:"date"`
 		ToleranceM float64 `json:"tolerance_m"`
+		CorridorNM float64 `json:"corridor_nm"`
 		Rings      int     `json:"rings"`
 	}
 	if err := json.Unmarshal(line, &hdr); err != nil {
@@ -193,6 +198,9 @@ func readLand(br *bufio.Reader) (*Land, error) {
 	}
 	if !(hdr.ToleranceM >= 0) || math.IsInf(hdr.ToleranceM, 0) {
 		return nil, errors.New("bad tolerance")
+	}
+	if !(hdr.CorridorNM >= 0) || math.IsInf(hdr.CorridorNM, 0) {
+		return nil, errors.New("bad corridor")
 	}
 	var b landBuilder
 	var xs, ys []int32
@@ -225,7 +233,9 @@ func readLand(br *bufio.Reader) (*Land, error) {
 		}
 		b.addRing(xs, ys)
 	}
-	return b.build(hdr.ToleranceM, fmt.Sprintf("%s/%gm", hdr.Date, hdr.ToleranceM)), nil
+	l := b.build(hdr.ToleranceM, fmt.Sprintf("%s/%gm", hdr.Date, hdr.ToleranceM))
+	l.CorridorNM = hdr.CorridorNM
+	return l, nil
 }
 
 // PointDistance is the distance in metres from p to the nearest land edge,

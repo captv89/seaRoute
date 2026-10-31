@@ -458,3 +458,27 @@ func TestStretchFlags(t *testing.T) {
 		t.Errorf("no tss-unknown stretch: %v", r.Stretches)
 	}
 }
+
+func zigzag() []Segment {
+	return chainSegs(Position{0, 0}, Position{0.5, 0.1}, Position{1, 0}, Position{1.5, 0.1}, Position{2, 0})
+}
+
+func TestShortcutOutsideCorridorNeverOffered(t *testing.T) {
+	land := landOf(rect(0, 10, 1, 11))
+	land.CorridorNM = 10 // inner radius 10 - 2 - 2.5 = 5.5 NM; the shortcut runs 15 NM from vertices
+	g := NewWith(zigzag(), land, nil)
+	r := routeOn(t, g, Options{Kinks: true}, Position{0, 0}, Position{2, 0})
+	if len(r.Path) != 5 || len(r.Proposals) != 0 {
+		t.Fatalf("path %v proposals %v", r.Path, r.Proposals)
+	}
+}
+
+func TestShortcutInsideCorridorSmoothed(t *testing.T) {
+	land := landOf(rect(0, 10, 1, 11))
+	land.CorridorNM = 30
+	g := NewWith(zigzag(), land, nil)
+	r := routeOn(t, g, Options{Kinks: true}, Position{0, 0}, Position{2, 0})
+	if len(r.Path) != 2 {
+		t.Fatalf("path %v", r.Path)
+	}
+}

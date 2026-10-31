@@ -85,6 +85,9 @@ func TestLoadRealLand(t *testing.T) {
 	var m runtime.MemStats
 	runtime.ReadMemStats(&m)
 	t.Logf("load %v heap %.1f MB version %s tolerance %v", el, float64(m.HeapAlloc)/1e6, l.Version, l.Tolerance)
+	if l.CorridorNM != 30 {
+		t.Errorf("CorridorNM = %v, want 30", l.CorridorNM)
+	}
 	if el > 5*time.Second {
 		t.Errorf("load too slow: %v", el)
 	}
