@@ -76,6 +76,10 @@ func TestLoadRealLand(t *testing.T) {
 	if testing.Short() {
 		t.Skip("short")
 	}
+	// Heap growth caused by the land load itself: other tests may already hold graphs.
+	var before, m runtime.MemStats
+	runtime.GC()
+	runtime.ReadMemStats(&before)
 	start := time.Now()
 	l, err := LoadLand("../dataset/land_osm.bin.gz")
 	if err != nil {
@@ -83,17 +87,17 @@ func TestLoadRealLand(t *testing.T) {
 	}
 	el := time.Since(start)
 	runtime.GC()
-	var m runtime.MemStats
 	runtime.ReadMemStats(&m)
-	t.Logf("load %v heap %.1f MB version %s tolerance %v", el, float64(m.HeapAlloc)/1e6, l.Version, l.Tolerance)
+	grown := int64(m.HeapAlloc) - int64(before.HeapAlloc)
+	t.Logf("load %v heap growth %.1f MB version %s tolerance %v", el, float64(grown)/1e6, l.Version, l.Tolerance)
 	if l.CorridorNM != 30 {
 		t.Errorf("CorridorNM = %v, want 30", l.CorridorNM)
 	}
 	if el > 5*time.Second {
 		t.Errorf("load too slow: %v", el)
 	}
-	if m.HeapAlloc > 300e6 {
-		t.Errorf("heap too large: %d", m.HeapAlloc)
+	if grown > 300e6 {
+		t.Errorf("heap growth too large: %d", grown)
 	}
 	if d := l.PointDistance(Position{1.335, 51.115}, 100000); d >= 1852 {
 		t.Errorf("Dover entrance %v m", d)

@@ -121,7 +121,7 @@ func TestTautNoGrounding(t *testing.T) {
 			cp := coarse.Path
 			free := 0
 			for k := range coarse.segs {
-				if !g.pinnedSeg(&coarse, k) {
+				if !g.pinnedSeg(&coarse, k, nil) {
 					free++
 				}
 			}
@@ -139,11 +139,11 @@ func TestTautNoGrounding(t *testing.T) {
 						if !g.safeLeg(a, b, c) {
 							t.Errorf("taut segment %v -> %v is not safe", a, b)
 						}
-					case code >= 0 && !g.pinnedSeg(&l, k):
+					case code >= 0 && !g.pinnedSeg(&l, k, nil):
 						left++
 					}
 					// Independent of safeLeg: no free segment touches land.
-					if code == segTaut || (code >= 0 && !g.pinnedSeg(&l, k)) {
+					if code == segTaut || (code >= 0 && !g.pinnedSeg(&l, k, nil)) {
 						if d := g.land.SegmentClearance(a, b, tol+1); d <= tol {
 							t.Errorf("free segment %v -> %v touches land", a, b)
 						}
@@ -183,8 +183,12 @@ func TestTautIsTaut(t *testing.T) {
 						continue
 					}
 					p, q := l.Path[k-1], l.Path[k+1]
+					// A rhumb chord can be longer than the bent chain through the
+					// vertex (great-circle chains): then it is kept on purpose.
 					if g.safeLeg(p, q, c) {
-						t.Errorf("vertex %v could be dropped", l.Path[k])
+						if Distance(p, q) <= Distance(p, l.Path[k])+Distance(l.Path[k], q)+1 {
+							t.Errorf("vertex %v could be dropped", l.Path[k])
+						}
 						continue
 					}
 					// Independent reasons the chord is refused: land, TSS, depth or
@@ -244,12 +248,16 @@ func TestTautFewerTurnsThanMARNET(t *testing.T) {
 		t.Errorf("taut path has %d vertices, coarse %d: want at most half", len(r.Path), len(coarse.Path))
 	}
 	l := r.Legs[0]
+	c := legCtxFor(g, ctxFor(g, Options{}, []Position{tautRotterdam, tautSingapore}), l, coarse.Path)
 	for k := 1; k < len(l.segs); k++ {
 		if l.segs[k-1] != segTaut || l.segs[k] != segTaut {
 			continue
 		}
 		turn := math.Abs(math.Remainder(bearingDeg(l.Path[k], l.Path[k+1])-bearingDeg(l.Path[k-1], l.Path[k]), 360))
-		if turn < 0.5 {
+		// A gentle turn is kept when the chord is refused (safeLeg) or longer
+		// (a great-circle chain).
+		p, q := l.Path[k-1], l.Path[k+1]
+		if turn < 0.5 && Distance(p, q) <= Distance(p, l.Path[k])+Distance(l.Path[k], q)+1 && g.safeLeg(p, q, c) {
 			t.Errorf("near-collinear turn of %.2f deg at %v", turn, l.Path[k])
 		}
 	}

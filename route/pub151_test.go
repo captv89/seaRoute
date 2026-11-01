@@ -27,6 +27,8 @@ type pub151Row struct {
 	Page int        `json:"page"`
 	Note string     `json:"note"`
 	Skip string     `json:"skip"`
+	// DraughtM is the vessel draught; 0 is the default vessel. Pub. 151 assumes a Kiel transit for Gdansk.
+	DraughtM float64 `json:"draught_m"`
 }
 
 var (
@@ -71,7 +73,7 @@ func TestPub151Distances(t *testing.T) {
 			if row.Skip != "" {
 				t.Skip(row.Skip)
 			}
-			r, err := g.Route([]Position{{row.From.Lon, row.From.Lat}, {row.To.Lon, row.To.Lat}}, Options{})
+			r, err := g.Route([]Position{{row.From.Lon, row.From.Lat}, {row.To.Lon, row.To.Lat}}, Options{Vessel: Vessel{DraughtM: row.DraughtM}})
 			if err != nil {
 				t.Fatal(err)
 			}

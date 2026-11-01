@@ -85,9 +85,6 @@ func (g *Graph) hazards(legs []Leg, path []Position, opts Options, c *pathCtx) [
 				k++
 				continue
 			}
-			if pass == "" && g.depth != nil {
-				pass = g.approachOf(a, b) // depth not judged here: the passage table governs
-			}
 			if sev != "unchecked" && inApproach[k] {
 				sev = "approach"
 			}

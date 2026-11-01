@@ -5,7 +5,6 @@ import (
 	"maps"
 	"math"
 	"runtime"
-	"slices"
 	"sync"
 )
 
@@ -93,13 +92,19 @@ func (c *pathCtx) onTrack(p Position) bool {
 	return false
 }
 
+// deepTileM is the minimum depth of a 0.5 degree tile that makes it open
+// ocean: no land and no shoal anywhere in the tile at 15 arc-seconds.
+const deepTileM = 200.0
+
 // covered reports whether the land data covers the leg a-b (every sample, as
-// in inCorridor), or the leg stays on the coarse track where it does not.
+// in inCorridor), or the leg stays on the coarse track where it does not, or
+// the sample lies in a fully deep tile (open ocean: the depth grid vouches for
+// it).
 func (g *Graph) covered(a, b Position, c *pathCtx) bool {
 	r := g.land.CorridorNM*MetresPerNM - tautCorridorM
 	for _, pc := range splitAntimeridian(a, b) {
 		for _, p := range rhumbSamples(pc[0], pc[1], corridorSampleNM) {
-			if !c.onTrack(p) && !(r > 0 && g.nearVertex(p, r)) {
+			if !c.onTrack(p) && !(r > 0 && g.nearVertex(p, r)) && !(g.depth != nil && g.depth.TileMinDepth(p) >= deepTileM) {
 				return false
 			}
 		}
@@ -165,6 +170,11 @@ func (g *Graph) safeLeg(a, b Position, c *pathCtx) bool {
 		if c.nearConfined(a, b) {
 			lim = c.limitConfinedM
 		}
+		// A taut leg has no network edge, so no kind: it is free water and is
+		// judged like MARNET (runMarnet). Lane and join edges kept as drawn are
+		// not judged here; the hazards pass judges them with runTSS, which is
+		// the laxer run, so a free leg is never judged less strictly than it
+		// is reported.
 		if d, known := g.segmentDepth(a, b, runMarnet, lim); known && d < lim && g.approachOf(a, b) == "" {
 			return false
 		}
@@ -264,34 +274,102 @@ func (g *Graph) openWater(a, b Position, needM float64) bool {
 }
 
 // pinnedSeg reports whether segment k of a coarse leg is kept as drawn:
-// connectors, TSS lanes and joins, passage edges, and legs over the antimeridian.
-func (g *Graph) pinnedSeg(l *Leg, k int) bool {
+// connectors, TSS lanes, passage edges, legs over the antimeridian and TSS
+// joins, except the joins marked in freeJoin (nil = none). A free join is
+// judged by safeLeg, which enforces the TSS rules.
+func (g *Graph) pinnedSeg(l *Leg, k int, freeJoin []bool) bool {
 	code := l.segs[k]
 	switch {
 	case code < 0:
 		return true
-	case g.flags[code]&(edgeLane|edgeJoin) != 0, g.pass[code] != 0:
+	case g.flags[code]&edgeLane != 0, g.pass[code] != 0, g.flags[code]&edgeJoin != 0 && (freeJoin == nil || !freeJoin[k]):
 		return true
 	}
 	return math.Abs(l.Path[k][0]-l.Path[k+1][0]) > 180
 }
 
 // tautLeg replaces every free run of the coarse leg with a taut safe-water
-// chain (tautRun), keeping the pinned pieces. It rewrites l.Path and l.segs and
-// calls l.measure. A run with no safe path stays as drawn.
+// chain (tautRun), keeping the pinned pieces. It does this twice when the leg
+// has TSS joins, with the joins pinned and with them free, and keeps the
+// shorter result. It rewrites l.Path and l.segs and calls l.measure. A run
+// with no safe path stays as drawn.
 func (g *Graph) tautLeg(l *Leg, c *pathCtx) {
 	if g.land == nil {
 		return // without land data a shortcut cannot be judged: keep the network path
 	}
+	loose := g.looseJoins(l)
+	if loose == nil {
+		g.tautLegJoins(l, c, nil, nil)
+		return
+	}
+	free := *l
+	// A run the two passes share (no loose join in it) is tautened once.
+	memo := map[[2]int]tautResult{}
+	g.tautLegJoins(l, c, nil, memo)
+	g.tautLegJoins(&free, c, loose, memo)
+	if free.DistanceM < l.DistanceM {
+		*l = free
+	}
+}
+
+// A stretch of TSS joins is worth freeing when it is at least this much longer
+// than the rhumb between its ends: on a short leg any join (the free pass is
+// cheap), on a long one only a clear detour, because the free pass re-tautens
+// every run it merges and would double the routing time.
+const (
+	looseJoinExcessNM     = 0.0
+	looseJoinExcessLongNM = 5.0
+	looseJoinShortLegNM   = 600.0
+)
+
+// looseJoins marks the segments of the joins of l that detour: each stretch of
+// consecutive join segments that is long enough a detour (see looseJoinExcessNM). It returns nil when there is none.
+func (g *Graph) looseJoins(l *Leg) []bool {
+	var out []bool
+	need := looseJoinExcessLongNM
+	if l.DistanceM <= looseJoinShortLegNM*MetresPerNM {
+		need = looseJoinExcessNM
+	}
+	for k := 0; k < len(l.segs); {
+		if l.segs[k] < 0 || g.flags[l.segs[k]]&edgeJoin == 0 {
+			k++
+			continue
+		}
+		j, along := k, 0.0
+		for j < len(l.segs) && l.segs[j] >= 0 && g.flags[l.segs[j]]&edgeJoin != 0 {
+			along += Distance(l.Path[j], l.Path[j+1])
+			j++
+		}
+		if along-Distance(l.Path[k], l.Path[j]) >= need*MetresPerNM {
+			if out == nil {
+				out = make([]bool, len(l.segs))
+			}
+			for i := k; i < j; i++ {
+				out[i] = true
+			}
+		}
+		k = j
+	}
+	return out
+}
+
+type tautResult struct {
+	path []Position // run points after the first
+	segs []int32
+}
+
+// tautLegJoins is one pass of tautLeg: the joins marked in freeJoin are free.
+// memo, when not nil, holds the result of every run by its segment range.
+func (g *Graph) tautLegJoins(l *Leg, c *pathCtx, freeJoin []bool, memo map[[2]int]tautResult) {
 	type run struct{ lo, hi int } // segments lo..hi-1, path points lo..hi
 	var runs []run
 	cc := *c
 	cc.lifted = l.lifted
 	cc.confined, cc.joins, cc.track = nil, map[Position]float64{}, newTrack(l.Path)
 	for k := 0; k < len(l.segs); {
-		if !g.pinnedSeg(l, k) {
+		if !g.pinnedSeg(l, k, freeJoin) {
 			j := k
-			for j < len(l.segs) && !g.pinnedSeg(l, j) {
+			for j < len(l.segs) && !g.pinnedSeg(l, j, freeJoin) {
 				j++
 			}
 			runs = append(runs, run{k, j})
@@ -306,14 +384,14 @@ func (g *Graph) tautLeg(l *Leg, c *pathCtx) {
 	if len(runs) == 0 {
 		return
 	}
-	type result struct {
-		path []Position // run points after the first
-		segs []int32
-	}
-	out := make([]result, len(runs))
+	out := make([]tautResult, len(runs))
 	var wg sync.WaitGroup
 	sem := make(chan struct{}, runtime.NumCPU())
 	for i, r := range runs {
+		if res, ok := memo[[2]int{r.lo, r.hi}]; ok {
+			out[i] = res
+			continue
+		}
 		wg.Add(1)
 		sem <- struct{}{}
 		go func() {
@@ -323,6 +401,11 @@ func (g *Graph) tautLeg(l *Leg, c *pathCtx) {
 		}()
 	}
 	wg.Wait()
+	if memo != nil {
+		for i, r := range runs {
+			memo[[2]int{r.lo, r.hi}] = out[i]
+		}
+	}
 
 	path := []Position{l.Path[0]}
 	var segs []int32
@@ -344,59 +427,164 @@ func (g *Graph) tautLeg(l *Leg, c *pathCtx) {
 }
 
 // tautSplit tautens the run of segments lo..hi-1 of l. When the whole run has
-// no safe path it halves the run at a coarse vertex and tries each half, so one
-// tight spot leaves only its own stretch as drawn. It returns the points after
-// the first and the segment codes.
+// no safe path it keeps the longest prefix that has one (binary search over
+// the coarse vertices) and continues from its end, so one tight spot leaves
+// only its own stretch as drawn. It returns the points after the first and the
+// segment codes.
 func (g *Graph) tautSplit(l *Leg, lo, hi int, c *pathCtx) ([]Position, []int32) {
 	cc := *c
 	cc.joins = maps.Clone(c.joins)
-	if g.land != nil {
-		need := c.clearM + g.land.Tolerance
-		for _, p := range [2]Position{l.Path[lo], l.Path[hi]} {
-			if _, ok := cc.joins[p]; !ok {
-				cc.joins[p] = g.land.PointDistance(p, need)
+	var outP []Position
+	var outS []int32
+	// try tautens the coarse vertices lo..m.
+	try := func(lo, m int) ([]Position, bool) {
+		if g.land != nil {
+			need := c.clearM + g.land.Tolerance
+			for _, p := range [2]Position{l.Path[lo], l.Path[m]} {
+				if _, ok := cc.joins[p]; !ok {
+					cc.joins[p] = g.land.PointDistance(p, need)
+				}
 			}
 		}
+		return g.tautRun(l.Path[lo:m+1], &cc)
 	}
-	if pts, ok := g.tautRun(l.Path[lo:hi+1], &cc); ok {
-		segs := make([]int32, len(pts)-1)
-		for i := range segs {
-			segs[i] = segTaut
+	for lo < hi {
+		if pts, ok := try(lo, hi); ok {
+			outP = append(outP, pts[1:]...)
+			outS = appendTaut(outS, len(pts)-1)
+			break
 		}
-		return pts[1:], segs
+		// Longest prefix lo..good that succeeds; bad is the shortest known failure.
+		good, bad := lo, hi
+		var goodPts []Position
+		if pts, ok := try(lo, lo+1); ok {
+			good, goodPts = lo+1, pts
+			for bad-good > 1 {
+				mid := (good + bad) / 2
+				if pts, ok := try(lo, mid); ok {
+					good, goodPts = mid, pts
+				} else {
+					bad = mid
+				}
+			}
+		}
+		if good == lo {
+			// Not even one segment is safe: keep it as drawn.
+			outP = append(outP, l.Path[lo+1])
+			outS = append(outS, l.segs[lo])
+			lo++
+			continue
+		}
+		outP = append(outP, goodPts[1:]...)
+		outS = appendTaut(outS, len(goodPts)-1)
+		lo = good
 	}
-	if hi-lo == 1 {
-		return slices.Clone(l.Path[hi : hi+1]), slices.Clone(l.segs[lo:hi])
+	return outP, outS
+}
+
+func appendTaut(s []int32, n int) []int32 {
+	for range n {
+		s = append(s, segTaut)
 	}
-	mid := (lo + hi) / 2
-	p1, s1 := g.tautSplit(l, lo, mid, &cc)
-	p2, s2 := g.tautSplit(l, mid, hi, &cc)
-	return append(p1, p2...), append(s1, s2...)
+	return s
 }
 
 // tautRun returns a taut chain from pts[0] to pts[len-1] (both fixed) that
 // stays within about 16 NM of the run and passes safeLeg, or false and pts when
-// no safe path exists.
+// no safe path exists. Where the ends are far apart it also tries a chain of
+// rhumb legs along the great circle, which only passes where every sample is
+// covered (fully deep tiles), and keeps the shorter.
 func (g *Graph) tautRun(pts []Position, c *pathCtx) ([]Position, bool) {
 	if len(pts) < 2 {
 		return pts, true
 	}
+	var best []Position
 	for _, scale := range [...]float64{1, 1.5} {
 		if out, ok := g.thetaRun(pts, c, scale); ok {
-			return g.tighten(out, c), true
+			best = g.tighten(out, c)
+			break
 		}
 	}
-	return pts, false
+	if gc, ok := g.greatCircleRun(pts[0], pts[len(pts)-1], c); ok {
+		for _, cand := range [][]Position{gc, g.tightenBy(gc, c, true), g.tightenBy(gc, c, false)} {
+			if best == nil || chainLength(cand) < chainLength(best) {
+				best = cand
+			}
+		}
+	}
+	if best == nil {
+		return pts, false
+	}
+	return best, true
+}
+
+// chainLength is the length of the rhumb chain p in metres.
+func chainLength(p []Position) float64 {
+	d := 0.0
+	for i := 1; i < len(p); i++ {
+		d += Distance(p[i-1], p[i])
+	}
+	return d
+}
+
+// gcLegNM is the longest rhumb leg of a great-circle chain.
+const gcLegNM = 100.0
+
+// greatCircleRun is a chain of rhumb legs of at most gcLegNM along the great
+// circle from a to b, or false when the ends are within a single leg of each
+// other or any leg fails safeLeg.
+func (g *Graph) greatCircleRun(a, b Position, c *pathCtx) ([]Position, bool) {
+	d := Distance(a, b)
+	if d <= gcLegNM*MetresPerNM {
+		return nil, false
+	}
+	n := int(math.Ceil(d / (gcLegNM * MetresPerNM)))
+	rad := math.Pi / 180
+	toVec := func(p Position) [3]float64 {
+		la, lo := p[1]*rad, p[0]*rad
+		return [3]float64{math.Cos(la) * math.Cos(lo), math.Cos(la) * math.Sin(lo), math.Sin(la)}
+	}
+	va, vb := toVec(a), toVec(b)
+	dot := math.Max(-1, math.Min(1, va[0]*vb[0]+va[1]*vb[1]+va[2]*vb[2]))
+	omega := math.Acos(dot)
+	so := math.Sin(omega)
+	if so < 1e-9 {
+		return nil, false // coincident or antipodal ends
+	}
+	out := []Position{a}
+	for i := 1; i < n; i++ {
+		f := float64(i) / float64(n)
+		wa, wb := math.Sin((1-f)*omega)/so, math.Sin(f*omega)/so
+		x, y, z := wa*va[0]+wb*vb[0], wa*va[1]+wb*vb[1], wa*va[2]+wb*vb[2]
+		p := Position{math.Atan2(y, x) / rad, math.Atan2(z, math.Hypot(x, y)) / rad}
+		if !g.safeLeg(out[len(out)-1], p, c) {
+			return nil, false
+		}
+		out = append(out, p)
+	}
+	if !g.safeLeg(out[len(out)-1], b, c) {
+		return nil, false
+	}
+	return append(out, b), true
 }
 
 // tighten drops every inner vertex whose neighbours see each other, until
 // nothing changes.
 func (g *Graph) tighten(p []Position, c *pathCtx) []Position {
+	return g.tightenBy(p, c, false)
+}
+
+// tightenBy is tighten; with shorterOnly it drops a vertex only when the
+// direct rhumb leg is not longer than the two legs through it. Over long
+// distances a rhumb leg can be longer than a bent chain along the great
+// circle, so the great-circle chain is tightened both ways and the shorter kept.
+func (g *Graph) tightenBy(p []Position, c *pathCtx, shorterOnly bool) []Position {
 	for changed := true; changed; {
 		changed = false
 		out := []Position{p[0]}
 		for i := 1; i+1 < len(p); i++ {
-			if g.safeLeg(out[len(out)-1], p[i+1], c) {
+			last := out[len(out)-1]
+			if (!shorterOnly || Distance(last, p[i+1]) <= Distance(last, p[i])+Distance(p[i], p[i+1])+1) && g.safeLeg(last, p[i+1], c) {
 				changed = true
 				continue
 			}

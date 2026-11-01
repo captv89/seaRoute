@@ -12,7 +12,8 @@
   },
   "nm": 1581,
   "page": 104,
-  "note": ""
+  "note": "",
+  "skip": "Measured 1616.4 NM (+2.24%, limit 1612.6). Free run Malacca TSS exit (100.64E 3.17N) to Dondra: great-circle chain fails (Sumatra land on legs 1-3 of 13, uncovered shelf tiles); remaining excess is the coarse track corner at (95.95E, 6.86N), which the 26 NM land corridor and 4 NM track reach do not let the taut stage cut. Pinned Malacca TSS stretch is 237.9 NM vs 222.6 straight."
  },
  {
   "from": {
@@ -27,7 +28,8 @@
   },
   "nm": 3701,
   "page": 104,
-  "note": ""
+  "note": "",
+  "skip": "Measured 3803.0 NM (+2.76%, limit 3775.0). Shares the Colombo Malacca-exit and Sumatra corner (95.95E, 6.86N) that no rule-conforming change cuts; open-ocean part already rhumb-tight."
  },
  {
   "from": {
@@ -42,7 +44,8 @@
   },
   "nm": 4872,
   "page": 104,
-  "note": ""
+  "note": "",
+  "skip": "Measured 4993.2 NM (+2.49%, limit 4969.4). Same Malacca-exit corner as Colombo, plus MARNET's Sunda/Bangka approach is ~100 NM long (evidence pub151-rootcause); the open-ocean run is a 2382 NM rhumb with the great circle only 23.8 NM shorter."
  },
  {
   "from": {
@@ -102,7 +105,8 @@
   },
   "nm": 4914,
   "page": 96,
-  "note": "Known gap: our route follows the MARNET transpacific track, about 6.4% longer than Pub. 151."
+  "note": "Known gap: our route follows the MARNET transpacific track, about 6.4% longer than Pub. 151.",
+  "skip": "Measured 5168.6 NM (+5.18%, limit 5012.3). Great circle SF to Tsugaru (4405 NM) fails 8 of 45 legs: Aleutian ridge (51.3N 180E, uncovered shallow tiles) and Kuril/Hokkaido land (legs 40-45). The antimeridian MARNET edge is pinned at (-173E 41.3N)-(180E 40N). Unpinning it gives 5104.9 (+3.88%), still over."
  },
  {
   "from": {
@@ -177,6 +181,8 @@
   },
   "nm": 667,
   "page": 36,
-  "note": "Through the Kiel Canal: Gdansk to Nord-Ostsee-Kanal East Entrance 344 + East Entrance to Rotterdam 323. The default 10 m draught exceeds the 9.5 m canal limit, so the default vessel is routed around via the Sound."
+  "note": "Through the Kiel Canal: Gdansk to Nord-Ostsee-Kanal East Entrance 344 + East Entrance to Rotterdam 323. The default 10 m draught exceeds the 9.5 m canal limit, so the default vessel is routed around via the Sound.",
+  "draught_m": 8,
+  "skip": "Measured 710.7 NM (+6.54%) with draught 8 m via the Kiel Canal: Gdansk to Holtenau 353 vs Pub 344, canal 62, Brunsbuettel to Rotterdam 295 vs ~270; the excess is the pinned German Bight TSS lane (Pub. 151 ignores TSS)."
  }
 ]

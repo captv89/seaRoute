@@ -10,6 +10,7 @@ import (
 	"io"
 	"math"
 	"os"
+	"slices"
 )
 
 const (
@@ -82,11 +83,35 @@ func (d *Depth) TileMinDepth(p Position) float64 {
 }
 
 // DeepTiles reports whether every 0.5 degree tile the rhumb leg a-b passes
-// through has a minimum depth of at least minM. The leg is walked at most 0.25
-// degrees (15 NM) apart and split at the antimeridian.
+// through has a minimum depth of at least minM. The tiles are found exactly: the
+// leg is cut where it crosses a tile edge (a straight line in Mercator
+// coordinates) and one point inside every piece is tested, so a tile whose
+// corner the leg only clips is never missed. The leg is split at the
+// antimeridian.
 func (d *Depth) DeepTiles(a, b Position, minM float64) bool {
 	for _, pc := range splitAntimeridian(a, b) {
-		for _, p := range rhumbSamples(pc[0], pc[1], 15) {
+		ma, mb := Mercator(pc[0]), Mercator(pc[1])
+		ts := []float64{0, 1}
+		cut := func(lo, hi float64, at func(k float64) float64, from, to float64) {
+			if lo > hi {
+				lo, hi = hi, lo
+			}
+			for k := math.Ceil(lo / depthTileDeg); k*depthTileDeg <= hi; k++ {
+				if t := (at(k*depthTileDeg) - from) / (to - from); t > 0 && t < 1 {
+					ts = append(ts, t)
+				}
+			}
+		}
+		if mb[0] != ma[0] {
+			cut(pc[0][0], pc[1][0], func(deg float64) float64 { return deg * math.Pi / 180 }, ma[0], mb[0])
+		}
+		if mb[1] != ma[1] {
+			cut(pc[0][1], pc[1][1], func(deg float64) float64 { return Mercator(Position{0, deg})[1] }, ma[1], mb[1])
+		}
+		slices.Sort(ts)
+		for i := 0; i+1 < len(ts); i++ {
+			t := (ts[i] + ts[i+1]) / 2
+			p := Position{(ma[0] + t*(mb[0]-ma[0])) * 180 / math.Pi, invMercatorLat(ma[1] + t*(mb[1]-ma[1]))}
 			if d.TileMinDepth(p) < minM {
 				return false
 			}
