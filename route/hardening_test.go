@@ -159,3 +159,26 @@ func TestTrackStaysNearMarnetOrDeep(t *testing.T) {
 		})
 	}
 }
+
+func TestCoveredRejectsClippedShallowTileCorner(t *testing.T) {
+	// Tile (cx=4, cy=0) spans lon 2..2.5, lat 0..0.5 and is shallow; every
+	// other tile is deep and there is no network, so only the depth grid covers.
+	g := &Graph{
+		land:  &Land{CorridorNM: 30},
+		depth: NewDepthMask(nil, maskWith(map[[2]int]uint8{{4, 0}: 30}), "x/gebco2026"),
+	}
+	c := &pathCtx{}
+	// About 10 NM long, inside the shallow tile for under 1 NM, with no 5 NM
+	// sample in it.
+	a, b := Position{1.99, 0.44}, Position{2.03, 0.60}
+	if g.covered(a, b, c) {
+		t.Error("leg clipping a shallow tile corner between samples counted as covered")
+	}
+	if !g.covered(Position{1.9, 0.56}, Position{2.1, 0.64}, c) {
+		t.Error("leg through deep tiles only should be covered")
+	}
+	g.depth = NewDepthMask(nil, nil, "x/gebco2026") // no mask: nothing is vouched for
+	if g.covered(Position{1.9, 0.56}, Position{2.1, 0.64}, c) {
+		t.Error("without a deep-ocean mask nothing is covered")
+	}
+}

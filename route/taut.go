@@ -103,10 +103,26 @@ const deepTileM = 200.0
 func (g *Graph) covered(a, b Position, c *pathCtx) bool {
 	r := g.land.CorridorNM*MetresPerNM - tautCorridorM
 	for _, pc := range splitAntimeridian(a, b) {
-		for _, p := range rhumbSamples(pc[0], pc[1], corridorSampleNM) {
-			if !c.onTrack(p) && !(r > 0 && g.nearVertex(p, r)) && !(g.depth != nil && g.depth.TileMinDepth(p) >= deepTileM) {
-				return false
+		ps := rhumbSamples(pc[0], pc[1], corridorSampleNM)
+		lo, hi := -1, -1 // first and last sample the land data and track do not cover
+		for i, p := range ps {
+			if c.onTrack(p) || (r > 0 && g.nearVertex(p, r)) {
+				continue
 			}
+			if lo < 0 {
+				lo = i
+			}
+			hi = i
+		}
+		if lo < 0 {
+			continue
+		}
+		// Open ocean is vouched for by the depth grid, and only exactly: a
+		// corner of a shallow, land or unstored tile can lie between two
+		// samples, so the whole stretch from the sample before the first
+		// uncovered one to the sample after the last is walked tile by tile.
+		if g.depth == nil || !g.depth.DeepTiles(ps[max(lo-1, 0)], ps[min(hi+1, len(ps)-1)], deepTileM) {
+			return false
 		}
 	}
 	return true
@@ -433,6 +449,8 @@ func (g *Graph) tautLegJoins(l *Leg, c *pathCtx, freeJoin []bool, memo map[[2]in
 // segment codes.
 func (g *Graph) tautSplit(l *Leg, lo, hi int, c *pathCtx) ([]Position, []int32) {
 	cc := *c
+	// Joins entries for probe vertices that end up inside a chain are harmless:
+	// they only matter for a segment that starts or ends exactly there.
 	cc.joins = maps.Clone(c.joins)
 	var outP []Position
 	var outS []int32

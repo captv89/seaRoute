@@ -27,6 +27,9 @@ type pub151Row struct {
 	Page int        `json:"page"`
 	Note string     `json:"note"`
 	Skip string     `json:"skip"`
+	// MaxNM bounds a skipped row: it is still routed and fails above this, so
+	// a regression in a known gap is caught.
+	MaxNM float64 `json:"max_nm"`
 	// DraughtM is the vessel draught; 0 is the default vessel. Pub. 151 assumes a Kiel transit for Gdansk.
 	DraughtM float64 `json:"draught_m"`
 }
@@ -70,9 +73,6 @@ func TestPub151Distances(t *testing.T) {
 	for _, row := range rows {
 		name := row.From.Name + " - " + row.To.Name
 		t.Run(name, func(t *testing.T) {
-			if row.Skip != "" {
-				t.Skip(row.Skip)
-			}
 			r, err := g.Route([]Position{{row.From.Lon, row.From.Lat}, {row.To.Lon, row.To.Lat}}, Options{Vessel: Vessel{DraughtM: row.DraughtM}})
 			if err != nil {
 				t.Fatal(err)
@@ -80,6 +80,15 @@ func TestPub151Distances(t *testing.T) {
 			got := r.DistanceNM()
 			dev := (got - row.NM) / row.NM
 			table = append(table, fmt.Sprintf("%-28s pub151 %6.0f  ours %7.1f  %+6.2f%%  passages %v", name, row.NM, got, dev*100, r.Passages))
+			if row.Skip != "" {
+				t.Logf("known gap (%+.2f%%): %s", dev*100, row.Skip)
+				if row.MaxNM <= 0 {
+					t.Errorf("%s: skipped rows need max_nm", name)
+				} else if got > row.MaxNM {
+					t.Errorf("%s: got %.1f NM, above the recorded bound %.1f NM", name, got, row.MaxNM)
+				}
+				return
+			}
 			if math.Abs(dev) > pub151Tolerance {
 				t.Errorf("%s: got %.1f NM, want %.0f NM (%+.2f%%, tolerance %.0f%%); %s", name, got, row.NM, dev*100, pub151Tolerance*100, row.Note)
 			}
