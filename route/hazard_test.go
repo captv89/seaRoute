@@ -1,6 +1,7 @@
 package route
 
 import (
+	"encoding/json"
 	"os"
 	"reflect"
 	"testing"
@@ -324,5 +325,24 @@ func TestHazardsQuietOnOpenRoute(t *testing.T) {
 		if h.Severity != "approach" && h.Severity != "unchecked" {
 			t.Errorf("hazard %+v", h)
 		}
+	}
+}
+
+// TestShallowHazardWithoutLandMarshals: with depth but no land data a shallow
+// hazard has a finite clearance, so the route encodes as JSON.
+func TestShallowHazardWithoutLandMarshals(t *testing.T) {
+	a, b := rowLeg()
+	d := NewDepth([]DepthTile{rowTile(7, 10, 14)}, "t")
+	g := newGraph([]Segment{{A: a, B: b}}, nil, nil, d, "t")
+	r := routeOn(t, g, Options{Vessel: Vessel{DraughtM: 5}}, a, b)
+	shallow := false
+	for _, h := range r.Hazards {
+		shallow = shallow || h.Severity == "shallow"
+	}
+	if !shallow {
+		t.Fatalf("no shallow hazard: %v", r.Hazards)
+	}
+	if _, err := json.Marshal(r); err != nil {
+		t.Fatalf("marshal: %v", err)
 	}
 }

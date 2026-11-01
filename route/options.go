@@ -17,8 +17,8 @@ func CheckClearance(clearanceNM float64) error {
 	return nil
 }
 
-// CheckVessel validates a vessel's draught, speed and type. Call it after
-// WithDefaults.
+// CheckVessel validates a vessel's draught, speed and type. It does not apply
+// defaults; NewVessel does that and then calls it.
 func CheckVessel(v Vessel) error {
 	if v.DraughtM < 1 || v.DraughtM > 25 {
 		return errors.New("draught_m must be between 1 and 25")

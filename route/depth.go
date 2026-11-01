@@ -162,7 +162,8 @@ func (d *Depth) At(p Position) (m float64, known bool) {
 	return t.at(i, j), true
 }
 
-// SegmentMin is the minimum stored depth along the rhumb leg a-b, sampled every
+// SegmentMin is kept as the reference oracle for tests (segmentDepth is what the
+// router uses). It is the minimum stored depth along the rhumb leg a-b, sampled every
 // 200 m with both ends included. known is false if any sample lies outside the
 // stored tiles; the minimum over the known samples is still returned (0 when
 // none is known, the conservative value).

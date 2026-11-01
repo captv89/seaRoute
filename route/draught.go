@@ -79,6 +79,10 @@ func (g *Graph) buildMinDepth() {
 						}
 						m := inf
 						if !tabled[g.pass[e]] && !nearTabled[v] && !nearTabled[g.to[e]] {
+							// Only fully stored edges close the network: closing edges that leave
+							// the stored tiles too cuts the real Lombok and Torres alternatives
+							// (TestDraughtReroutesAroundSingapore, TestRealTorresStraitClosesAt12m).
+							// The taut and hazard passes judge the cells that were read.
 							if d, known := g.segmentDepth(g.nodes[v], g.nodes[g.to[e]], g.depthRun(e), 255); known {
 								m = float32(d)
 							}

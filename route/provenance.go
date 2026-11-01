@@ -19,14 +19,6 @@ type Stretch struct {
 	Scheme   string `json:"scheme,omitempty"`
 }
 
-func pathLength(p []Position) float64 {
-	var d float64
-	for i := 0; i+1 < len(p); i++ {
-		d += Distance(p[i], p[i+1])
-	}
-	return d
-}
-
 // unknownAt reports whether p is within 20 NM of land and outside every OSM
 // TSS coverage area: a place where the TSS rules are not known.
 func (g *Graph) unknownAt(p Position) bool {

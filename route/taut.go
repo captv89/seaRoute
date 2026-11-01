@@ -191,7 +191,7 @@ func (g *Graph) safeLeg(a, b Position, c *pathCtx) bool {
 		// not judged here; the hazards pass judges them with runTSS, which is
 		// the laxer run, so a free leg is never judged less strictly than it
 		// is reported.
-		if d, known := g.segmentDepth(a, b, runMarnet, lim); known && d < lim && g.approachOf(a, b) == "" {
+		if d, _ := g.segmentDepth(a, b, runMarnet, lim); d < lim && g.approachOf(a, b) == "" {
 			return false
 		}
 	}

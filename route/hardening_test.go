@@ -84,6 +84,31 @@ func TestRouterSafeLegTooShallowAgree(t *testing.T) {
 	}
 }
 
+// TestPartlyUnstoredLegJudgedByReadCells: a leg that leaves the stored tiles is
+// still shallow to safeLeg (taut) and tooShallow (hazards) when the cells it did
+// read form a shallow run (the network keeps such edges open, see buildMinDepth); with no shallow reading it passes.
+func TestPartlyUnstoredLegJudgedByReadCells(t *testing.T) {
+	a := cellCentre(0, 0, 2, 20)
+	b := Position{a[0] + 1.5, a[1]} // well past the stored tile
+	for _, tc := range []struct {
+		cells int
+		want  bool
+	}{{2, false}, {3, true}, {5, true}} {
+		d := NewDepth([]DepthTile{rowTile(7, 10, 9+tc.cells)}, "t")
+		if _, known := (&Graph{depth: d}).segmentDepth(a, b, runMarnet, 30); known {
+			t.Fatal("leg should leave the stored tiles")
+		}
+		g := newGraph([]Segment{{A: a, B: b}}, nil, nil, d, "t")
+		c := &pathCtx{limitM: 12, limitConfinedM: 12}
+		if got := !g.safeLeg(a, b, c); got != tc.want {
+			t.Errorf("%d cells: safeLeg unsafe=%v, want %v", tc.cells, got, tc.want)
+		}
+		if got := g.tooShallow(a, b, segTaut, "", c); got != tc.want {
+			t.Errorf("%d cells: tooShallow=%v, want %v", tc.cells, got, tc.want)
+		}
+	}
+}
+
 // TestSegmentDepthRunAcrossAntimeridian: shallow cells on both sides of the
 // antimeridian make one run.
 func TestSegmentDepthRunAcrossAntimeridian(t *testing.T) {

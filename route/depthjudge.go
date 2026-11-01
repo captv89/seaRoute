@@ -32,7 +32,9 @@ func (g *Graph) depthRun(code int32) int {
 // some run of `run` consecutive cells is all at most v (a leg of fewer cells
 // uses all of them), so the leg is shallow for a limit lim exactly when the
 // result is below lim. It is exact below capM and at least capM otherwise.
-// known is false if any sample lies outside the stored tiles.
+// known is false if any sample lies outside the stored tiles; such a gap
+// breaks a run, m is then the result over the cells that were read (255 when
+// none was), and a result below the limit still means shallow.
 func (g *Graph) segmentDepth(a, b Position, run int, capM float64) (m float64, known bool) {
 	if g.depth.DeepTiles(a, b, capM) {
 		return 255, true
@@ -46,7 +48,13 @@ func (g *Graph) segmentDepth(a, b Position, run int, capM float64) (m float64, k
 		for _, p := range rhumbSamples(pc[0], pc[1], depthSampleM/MetresPerNM) {
 			t, i, j := g.depth.tileAt(p)
 			if t == nil {
+				// An unstored tile is mostly deep ocean (the mask holds it): it
+				// breaks a run rather than letting cells on either side join.
 				known = false
+				if last != nil || li != -2 {
+					cells = append(cells, 255)
+				}
+				last, li, lj = nil, -2, -2
 				continue
 			}
 			any = true
@@ -69,7 +77,7 @@ func (g *Graph) segmentDepth(a, b Position, run int, capM float64) (m float64, k
 		}
 	}
 	if !any {
-		return 0, false
+		return 255, false // nothing read: no shallow reading, so it passes
 	}
 	n := min(run, len(cells))
 	m = 255

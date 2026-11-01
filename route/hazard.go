@@ -71,6 +71,9 @@ func (g *Graph) hazards(legs []Leg, path []Position, opts Options, c *pathCtx) [
 			}
 			var sev string
 			clear := d - tol
+			if math.IsInf(clear, 0) {
+				clear = 0 // land unknown: no finite clearance to report
+			}
 			switch {
 			case d <= tol:
 				sev, clear = "aground", 0
@@ -153,8 +156,8 @@ func (g *Graph) tooShallow(a, b Position, code int32, pass string, c *pathCtx) b
 		return false
 	}
 	lim := c.depthLimit(a, b)
-	d, known := g.segmentDepth(a, b, g.depthRun(code), lim)
-	return known && d < lim && g.approachOf(a, b) == ""
+	d, _ := g.segmentDepth(a, b, g.depthRun(code), lim)
+	return d < lim && g.approachOf(a, b) == ""
 }
 
 // approachSegs marks the path segments inside a port approach: from each
