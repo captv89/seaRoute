@@ -3236,7 +3236,7 @@
             const per = wxNum(w.wave_period_s, 0);
             const vb = wxBearing(w.wave_from_deg);
             wxText('sim-wx-wave', wave ? `${wave} m` : WX_DASH);
-            wxText('sim-wx-wave-sub', `${vb ? 'from ' + vb : 'from ' + WX_DASH} · ${per ? per + ' s' : WX_DASH}`);
+            wxText('sim-wx-wave-sub', `from ${vb || WX_DASH} · ${per ? per + ' s' : WX_DASH} period`);
             wxArrow('sim-wx-wave-arrow', typeof w.wave_from_deg === 'number' ? w.wave_from_deg + 180 : null);
 
             const p = wxNum(w.pressure_hpa, 0);
