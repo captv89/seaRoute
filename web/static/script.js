@@ -3203,8 +3203,7 @@
         const end = parseTime(voyage.forecast_end);
         if (isFinite(t) && isFinite(start) && t < start) return `Forecast starts ${formatUTC(new Date(start))}`;
         if (isFinite(t) && isFinite(end) && t > end) return `No forecast beyond ${formatUTC(new Date(end))}`;
-        return voyage.run_time && voyage.forecast_end
-            ? `No forecast beyond ${formatUTC(new Date(end))}` : 'No forecast loaded';
+        return 'No forecast data here';
     }
     // Update the weather panel for the vessel's sample and leg. Cheap: text and
     // arrow transforms only, so it runs on every playback tick.
@@ -3214,7 +3213,8 @@
         const msg = wxEl('sim-wx-msg');
         const grid = wxEl('sim-wx-grid');
         if (!w) {
-            if (msg) { msg.textContent = wxNoWeatherMessage(sample); msg.classList.remove('hidden'); }
+            wxText('sim-wx-msg', wxNoWeatherMessage(sample));
+            if (msg) msg.classList.remove('hidden');
             if (grid) grid.classList.add('hidden');
         } else {
             if (msg) msg.classList.add('hidden');
@@ -3256,7 +3256,7 @@
             if (cover) {
                 const frac = leg.forecast_frac;
                 if (typeof frac === 'number' && frac < 1) {
-                    cover.textContent = `Forecast covers ${Math.round(Math.max(0, frac) * 100)}% of this leg`;
+                    wxText('sim-leg-cover', `Forecast covers ${Math.round(Math.max(0, frac) * 100)}% of this leg`);
                     cover.classList.remove('hidden');
                 } else cover.classList.add('hidden');
             }
@@ -3266,7 +3266,7 @@
             wxText('sim-leg-max', '');
             if (cover) cover.classList.add('hidden');
         }
-        wxText('sim-wx-source', voyage && voyage.run_time ? `ECMWF IFS · run ${formatUTC(new Date(parseTime(voyage.run_time)))}` : '');
+        wxText('sim-wx-source', voyage && voyage.run ? `ECMWF IFS · run ${formatUTC(new Date(parseTime(voyage.run_time)))}` : '');
     }
     // Sample and leg summary at the current playback time, then render.
     function refreshWeatherWindow(date) {
