@@ -27,6 +27,12 @@
 
     // Simulation state
     let simActive = false;
+    // ECMWF map layer during playback (section 11). Declared early: the scale dock reads it.
+    let simWxField = 'wind';
+    let simWxShown = null;      // loaded, visible tile layer
+    let simWxPending = null;    // replacement still loading
+    let simWxKey = '';          // run|field|hour of the layer wanted, or 'none:...'
+    let simWxSavedOwm = null;   // OWM state to restore on stop
     let simPlaying = false;
     let simProgress = 0; // 0 to 100, derived from simHours
     let simHours = 0; // playback position: hours since departure
@@ -795,6 +801,12 @@
     function updateWeatherScaleDock() {
         const dock = document.getElementById('weather-scale-dock');
         if (!dock) return;
+
+        // During playback the dock shows the ECMWF legend (or nothing outside the forecast).
+        if (simActive) {
+            renderSimWxLegend(dock);
+            return;
+        }
 
         const masterEnabled = Boolean(toggleOwm && toggleOwm.checked && OWM_API_KEY);
         if (!masterEnabled || activeWeatherLayers.size === 0) {
@@ -3533,12 +3545,211 @@
         simVesselMarker = L.marker(initialLatLng, { icon: vesselIcon, zIndexOffset: 1000 }).addTo(map);
     }
 
+    // --- ECMWF map layer during playback -------------------------------------
+    const SIM_WX_ATTRIBUTION = 'Forecast data: ECMWF IFS open data, CC BY 4.0';
+    const SIM_WX_META = {
+        wind: { title: 'ECMWF Wind', unit: 'KN' },
+        waves: { title: 'ECMWF Wave Height', unit: 'M' },
+        current: { title: 'ECMWF Current', unit: 'KN' }
+    };
+
+    // Nearest forecast hour on the server grid: every 3 h to 144, then every 6 h to 360.
+    function forecastStepHour(hours) {
+        const h = hours <= 144
+            ? Math.round(hours / 3) * 3
+            : 144 + Math.round((hours - 144) / 6) * 6;
+        return Math.max(0, Math.min(360, h));
+    }
+
+    function simWxTileUrl(run, field, hour) {
+        return `/weather/tile/${encodeURIComponent(run)}/${field}/${hour}/{z}/{x}/{y}.png`;
+    }
+
+    function dropSimWxLayer(layer) {
+        if (!layer) return;
+        layer._simTimer && clearTimeout(layer._simTimer);
+        layer.off();
+        if (map.hasLayer(layer)) map.removeLayer(layer);
+    }
+
+    // Remove every ECMWF layer and forget the wanted key.
+    function clearSimWxLayers() {
+        dropSimWxLayer(simWxPending);
+        dropSimWxLayer(simWxShown);
+        simWxPending = null;
+        simWxShown = null;
+        simWxKey = '';
+    }
+
+    // Add a layer for (run, field, hour); the old one leaves only after the new one has loaded.
+    function showSimWxLayer(run, field, hour) {
+        dropSimWxLayer(simWxPending); // never more than two on the map
+        const maxZ = map.getMaxZoom();
+        const layer = L.tileLayer(simWxTileUrl(run, field, hour), {
+            opacity: 1,
+            maxNativeZoom: 8,
+            maxZoom: Number.isFinite(maxZ) ? maxZ : 19,
+            zIndex: 4,
+            attribution: SIM_WX_ATTRIBUTION
+        });
+        const promote = () => {
+            if (simWxPending !== layer) return;
+            clearTimeout(layer._simTimer);
+            layer.off('load', promote);
+            const old = simWxShown;
+            simWxShown = layer;
+            simWxPending = null;
+            dropSimWxLayer(old);
+        };
+        layer.on('load', promote);
+        layer._simTimer = setTimeout(promote, 8000); // tiles that never settle must not pin the old layer
+        simWxPending = layer;
+        layer.addTo(map);
+    }
+
+    function updateSimWxControls(note, enabled) {
+        document.querySelectorAll('.sim-ecmwf-pill').forEach(btn => {
+            btn.setAttribute('aria-pressed', btn.getAttribute('data-sim-field') === simWxField ? 'true' : 'false');
+            btn.disabled = !enabled;
+        });
+        const noteEl = document.getElementById('sim-ecmwf-note');
+        if (noteEl) noteEl.textContent = note || '';
+    }
+
+    function setSimWeatherLayer(field) {
+        if (!SIM_WX_META[field]) return;
+        simWxField = field;
+        if (simActive) updateSimWeatherStep(vesselStateAt(simHours).date);
+        else updateSimWxControls('', Boolean(voyage && voyage.run));
+    }
+
+    // Pick the layer for the playback time; swaps only when (run, field, hour) changes.
+    function updateSimWeatherStep(date) {
+        if (!simActive) return;
+        const run = voyage && voyage.run ? voyage.run : null;
+        let key;
+        let note = '';
+        let hour = 0;
+        if (!run) {
+            key = 'none:norun';
+            note = 'No forecast loaded';
+        } else {
+            const t = date.getTime();
+            const start = parseTime(voyage.run_time);
+            const end = parseTime(voyage.forecast_end);
+            if (t < start) {
+                key = 'none:before';
+                note = `Forecast starts ${formatUTC(new Date(start))}`;
+            } else if (t > end) {
+                key = 'none:after';
+                note = `Forecast ends ${formatUTC(new Date(end))}`;
+            } else {
+                hour = forecastStepHour((t - start) / 3600e3);
+                key = `${run}|${simWxField}|${hour}`;
+                note = `+${hour} h`;
+            }
+        }
+        if (key === simWxKey) return;
+        simWxKey = key;
+        if (key.startsWith('none:')) {
+            dropSimWxLayer(simWxPending);
+            dropSimWxLayer(simWxShown);
+            simWxPending = null;
+            simWxShown = null;
+        } else {
+            showSimWxLayer(run, simWxField, hour);
+        }
+        updateSimWxControls(note, Boolean(run));
+        updateWeatherScaleDock();
+    }
+
+    function fmtScaleTick(v) {
+        return String(Math.round(v * 10) / 10);
+    }
+
+    // Legend for the ECMWF layer in the existing scale dock; hidden when no layer is shown.
+    function renderSimWxLegend(dock) {
+        const stops = voyage && voyage.scales ? voyage.scales[simWxField] : null;
+        const active = (simWxShown || simWxPending) && Array.isArray(stops) && stops.length > 1;
+        const max = active ? stops[stops.length - 1].value : 0;
+        if (!active || !(max > 0)) {
+            dock.classList.add('hidden');
+            dock.classList.remove('flex');
+            return;
+        }
+        dock.classList.remove('hidden');
+        dock.classList.add('flex');
+        const meta = SIM_WX_META[simWxField];
+        const tabsEl = document.getElementById('weather-scale-tabs');
+        if (tabsEl) {
+            tabsEl.classList.add('hidden');
+            tabsEl.classList.remove('flex');
+            tabsEl.innerHTML = '';
+        }
+        const titleEl = document.getElementById('weather-scale-title');
+        const unitEl = document.getElementById('weather-scale-unit');
+        const gradientEl = document.getElementById('weather-scale-gradient');
+        const ticksEl = document.getElementById('weather-scale-ticks');
+        if (titleEl) titleEl.textContent = meta.title;
+        if (unitEl) unitEl.textContent = meta.unit;
+        if (gradientEl) {
+            gradientEl.style.background = 'linear-gradient(to right, ' +
+                stops.map(s => `${s.color} ${(s.value / max * 100).toFixed(1)}%`).join(', ') + ')';
+        }
+        if (ticksEl) {
+            const n = 4;
+            let html = '';
+            for (let i = 0; i <= n; i++) html += `<span>${fmtScaleTick(max * i / n)}</span>`;
+            ticksEl.innerHTML = html;
+        }
+    }
+
+    // Playback takes over the weather overlay: park the OWM layers, restore them on stop.
+    function beginSimWeather() {
+        simWxSavedOwm = {
+            master: Boolean(toggleOwm && toggleOwm.checked),
+            layers: new Set(activeWeatherLayers)
+        };
+        if (toggleOwm) toggleOwm.checked = false;
+        updateWeatherLayersOnMap();
+        updateActiveLayerBadge();
+        clearSimWxLayers();
+        updateSimWxControls('', Boolean(voyage && voyage.run));
+    }
+
+    function endSimWeather() {
+        clearSimWxLayers();
+        updateSimWxControls('', Boolean(voyage && voyage.run));
+        if (simWxSavedOwm) {
+            activeWeatherLayers.clear();
+            simWxSavedOwm.layers.forEach(k => activeWeatherLayers.add(k));
+            if (toggleOwm) toggleOwm.checked = simWxSavedOwm.master;
+            simWxSavedOwm = null;
+        }
+        updateWeatherButtonsUI();
+        updateWeatherLayersOnMap();
+        updateActiveLayerBadge();
+        updateWeatherScaleDock();
+    }
+
+    document.querySelectorAll('.sim-ecmwf-pill').forEach(btn => {
+        btn.addEventListener('click', () => setSimWeatherLayer(btn.getAttribute('data-sim-field')));
+    });
+    // New or cleared voyage: the run may have changed, so rebuild the layer and legend.
+    onVoyageUpdated(() => {
+        if (!simActive) return;
+        simWxKey = '';
+        updateSimWeatherStep(vesselStateAt(simHours).date);
+        updateWeatherScaleDock();
+    });
+
     function openSimulation() {
         if (!hasRoute()) {
             showToast('Compute a route first', 'warning');
             return;
         }
         simActive = true;
+        beginSimWeather();
         simHours = 0;
         lastTotalHours = voyageHours();
         if (simPlayerDock) simPlayerDock.classList.remove('hidden');
@@ -3551,6 +3762,7 @@
 
     function stopSimulation() {
         simActive = false;
+        endSimWeather();
         pauseSimulation();
         simHours = 0;
         simProgress = 0;
@@ -3617,6 +3829,7 @@
 
         updateVesselPosition(st);
         refreshWeatherWindow(st.date);
+        updateSimWeatherStep(st.date);
     }
 
     function updateVesselPosition(st) {

@@ -656,6 +656,16 @@
                         <span id="sim-forecast-note">Forecast not loaded</span>
                     </p>
                 </div>
+                <!-- ECMWF map layer selector -->
+                <div class="flex flex-wrap items-center gap-x-1.5 gap-y-1 font-mono" id="sim-ecmwf-row">
+                    <span class="text-[9px] uppercase tracking-widest text-on-surface-variant mr-0.5" id="sim-ecmwf-label">Map layer</span>
+                    <div class="flex items-center gap-1" role="group" aria-labelledby="sim-ecmwf-label" id="sim-ecmwf-pills">
+                        <button class="sim-ecmwf-pill px-2.5 py-1 min-h-[28px] rounded-sm border border-surface-container-high text-[10px] text-on-surface-variant hover:text-on-surface hover:bg-surface-container-high/50 aria-pressed:bg-primary-container aria-pressed:text-on-primary-container aria-pressed:border-primary/50 aria-pressed:font-semibold disabled:opacity-40 disabled:pointer-events-none transition-colors cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary" data-sim-field="wind" aria-pressed="true" type="button">Wind</button>
+                        <button class="sim-ecmwf-pill px-2.5 py-1 min-h-[28px] rounded-sm border border-surface-container-high text-[10px] text-on-surface-variant hover:text-on-surface hover:bg-surface-container-high/50 aria-pressed:bg-primary-container aria-pressed:text-on-primary-container aria-pressed:border-primary/50 aria-pressed:font-semibold disabled:opacity-40 disabled:pointer-events-none transition-colors cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary" data-sim-field="waves" aria-pressed="false" type="button">Waves</button>
+                        <button class="sim-ecmwf-pill px-2.5 py-1 min-h-[28px] rounded-sm border border-surface-container-high text-[10px] text-on-surface-variant hover:text-on-surface hover:bg-surface-container-high/50 aria-pressed:bg-primary-container aria-pressed:text-on-primary-container aria-pressed:border-primary/50 aria-pressed:font-semibold disabled:opacity-40 disabled:pointer-events-none transition-colors cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary" data-sim-field="current" aria-pressed="false" type="button">Current</button>
+                    </div>
+                    <span class="text-[9px] text-on-surface-variant tabular-nums" id="sim-ecmwf-note" role="status"></span>
+                </div>
                 <!-- Weather at the vessel and current leg summary -->
                 <details class="group border-t border-surface-container-high pt-2" id="sim-weather" open>
                     <summary class="flex items-center justify-between gap-2 cursor-pointer select-none list-none font-mono text-[10px] uppercase tracking-widest text-on-surface-variant hover:text-on-surface focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary rounded-sm [&::-webkit-details-marker]:hidden">
