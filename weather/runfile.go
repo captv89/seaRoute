@@ -37,6 +37,42 @@ type runHeader struct {
 	Credit string    `json:"credit"`
 }
 
+// maxStepHours bounds the last forecast step so hour arithmetic cannot overflow.
+const maxStepHours = 10000
+
+// checkGrid validates a grid's size, origin and spacing.
+func checkGrid(g Grid) error {
+	if g.NX <= 0 || g.NY <= 0 || g.NX > maxGridDim || g.NY > maxGridDim {
+		return fmt.Errorf("bad grid size %dx%d", g.NX, g.NY)
+	}
+	for _, v := range []float64{g.Lat0, g.Lon0, g.DLat, g.DLon} {
+		if math.IsNaN(v) || math.IsInf(v, 0) {
+			return errors.New("grid has non-finite values")
+		}
+	}
+	if g.DLat >= 0 || g.DLon <= 0 {
+		return fmt.Errorf("bad grid spacing %v, %v", g.DLat, g.DLon)
+	}
+	return nil
+}
+
+// checkSteps validates forecast hours: non-empty, at most maxRunSteps,
+// starting at 0 or later, strictly increasing, ending by maxStepHours.
+func checkSteps(steps []int) error {
+	if len(steps) == 0 || len(steps) > maxRunSteps {
+		return fmt.Errorf("%d steps, want 1..%d", len(steps), maxRunSteps)
+	}
+	if steps[0] < 0 || steps[len(steps)-1] > maxStepHours {
+		return errors.New("step hours out of range")
+	}
+	for i := 1; i < len(steps); i++ {
+		if steps[i] <= steps[i-1] {
+			return errors.New("steps not strictly increasing")
+		}
+	}
+	return nil
+}
+
 // slotValues is the number of int16 values in one (field, step) slot.
 func slotValues(g Grid) int64 { return int64(g.NX) * int64(g.NY) }
 
@@ -64,16 +100,17 @@ type RunWriter struct {
 	dataStart int64
 	written   []bool
 	buf       []byte
+	closed    bool
 }
 
 // CreateRun creates (or replaces) the run file at path, sized for every field
 // and step. The caller must finish with Close or Abort.
 func CreateRun(path string, ref time.Time, g Grid, steps []int) (*RunWriter, error) {
-	if g.NX <= 0 || g.NY <= 0 || g.NX > maxGridDim || g.NY > maxGridDim {
-		return nil, fmt.Errorf("weather: bad grid size %dx%d", g.NX, g.NY)
+	if err := checkGrid(g); err != nil {
+		return nil, fmt.Errorf("weather: %w", err)
 	}
-	if len(steps) == 0 || len(steps) > maxRunSteps {
-		return nil, fmt.Errorf("weather: %d steps, want 1..%d", len(steps), maxRunSteps)
+	if err := checkSteps(steps); err != nil {
+		return nil, fmt.Errorf("weather: %w", err)
 	}
 	params, scale, offset := fieldParams()
 	hdr, err := json.Marshal(runHeader{
@@ -151,11 +188,16 @@ func (w *RunWriter) Close() error {
 		w.f.Close()
 		return err
 	}
+	w.closed = true
 	return w.f.Close()
 }
 
-// Abort closes and deletes the partly written file.
+// Abort closes and deletes the partly written file. It does nothing once
+// Close has succeeded, so `defer w.Abort()` is safe.
 func (w *RunWriter) Abort() {
+	if w.closed {
+		return
+	}
 	w.f.Close()
 	os.Remove(w.path)
 }
@@ -218,11 +260,11 @@ func parseRun(f *os.File) (*Run, error) {
 		return nil, fmt.Errorf("header: %w", err)
 	}
 	g := h.Grid
-	if g.NX <= 0 || g.NY <= 0 || g.NX > maxGridDim || g.NY > maxGridDim {
-		return nil, fmt.Errorf("bad grid size %dx%d", g.NX, g.NY)
+	if err := checkGrid(g); err != nil {
+		return nil, err
 	}
-	if len(h.Steps) == 0 || len(h.Steps) > maxRunSteps {
-		return nil, fmt.Errorf("%d steps", len(h.Steps))
+	if err := checkSteps(h.Steps); err != nil {
+		return nil, err
 	}
 	params, _, _ := fieldParams()
 	if len(h.Fields) != len(params) || len(h.Scale) != len(params) || len(h.Offset) != len(params) {

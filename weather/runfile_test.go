@@ -1,6 +1,7 @@
 package weather
 
 import (
+	"bytes"
 	"math"
 	"os"
 	"path/filepath"
@@ -173,5 +174,87 @@ func TestDefaultSteps(t *testing.T) {
 func TestRunID(t *testing.T) {
 	if got := RunID(testRef); got != "2026110212" {
 		t.Fatalf("RunID = %q", got)
+	}
+}
+
+// rewriteHeader replaces old with new in the file's JSON header line,
+// keeping its length so the file size stays valid.
+func rewriteHeader(t *testing.T, path, old, repl string) {
+	t.Helper()
+	if len(old) != len(repl) {
+		t.Fatal("replacement must keep length")
+	}
+	b, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	i := bytes.Index(b, []byte(old))
+	if i < 0 {
+		t.Fatalf("%q not in header", old)
+	}
+	copy(b[i:], repl)
+	if err := os.WriteFile(path, b, 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestOpenRunRejectsBadSteps(t *testing.T) {
+	for _, repl := range []string{`"steps":[3,0]`, `"steps":[0,0]`} {
+		path := makeRun(t, func(w *RunWriter) {})
+		rewriteHeader(t, path, `"steps":[0,3]`, repl)
+		if _, err := OpenRun(path); err == nil {
+			t.Errorf("%s: want error", repl)
+		}
+	}
+}
+
+func TestOpenRunRejectsNegativeStep(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "run.srwx")
+	w, err := CreateRun(path, testRef, testGrid, []int{10, 13})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := w.Close(); err != nil {
+		t.Fatal(err)
+	}
+	rewriteHeader(t, path, `"steps":[10,13]`, `"steps":[-9,13]`)
+	if _, err := OpenRun(path); err == nil {
+		t.Fatal("want error for negative step")
+	}
+}
+
+func TestCreateRunRejectsBadSteps(t *testing.T) {
+	for _, steps := range [][]int{{3, 0}, {-3, 0}, {0, 0}, {0, 10001}, nil} {
+		if _, err := CreateRun(filepath.Join(t.TempDir(), "x"), testRef, testGrid, steps); err == nil {
+			t.Errorf("steps %v: want error", steps)
+		}
+	}
+}
+
+func TestOpenRunRejectsBadSpacing(t *testing.T) {
+	path := makeRun(t, func(w *RunWriter) {})
+	rewriteHeader(t, path, `"DLon":1`, `"DLon":0`)
+	if _, err := OpenRun(path); err == nil {
+		t.Fatal("want error for DLon = 0")
+	}
+}
+
+func TestAbortAfterCloseKeepsFile(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "run.srwx")
+	w, err := CreateRun(path, testRef, testGrid, []int{0, 3})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := w.Close(); err != nil {
+		t.Fatal(err)
+	}
+	w.Abort()
+	if _, err := os.Stat(path); err != nil {
+		t.Fatalf("file gone after Abort: %v", err)
+	}
+	w2, _ := CreateRun(path+"2", testRef, testGrid, []int{0})
+	w2.Abort()
+	if _, err := os.Stat(path + "2"); err == nil {
+		t.Fatal("Abort before Close should delete")
 	}
 }
