@@ -167,16 +167,21 @@ func (c *rowCache) get(f FieldID, stepIdx, row int) ([]int16, bool) {
 }
 
 // sample calls use with each valid value of field f at step stepIdx among the
-// stencil corners cs, with its weight. Missing values and unreadable rows are
-// skipped. It returns the total weight of the valid points (0 when none).
+// stencil corners cs, with its weight. Missing values are skipped, but if any
+// needed row cannot be read nothing is used. It returns the total weight of
+// the valid points (0 when none).
 func (r *Run) sample(src rowSource, cs []corner, f FieldID, stepIdx int, use func(v, w float64)) float64 {
-	total := 0.0
-	for _, c := range cs {
+	rows := make([][]int16, len(cs))
+	for i, c := range cs {
 		row, ok := src(f, stepIdx, c.row)
 		if !ok {
-			continue
+			return 0 // a read failure is not land: give no value at all
 		}
-		v := r.decode(f, row[c.col])
+		rows[i] = row
+	}
+	total := 0.0
+	for i, c := range cs {
+		v := r.decode(f, rows[i][c.col])
 		if math.IsNaN(float64(v)) {
 			continue
 		}

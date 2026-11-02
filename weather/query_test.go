@@ -205,3 +205,22 @@ func TestSpatialSharedCache(t *testing.T) {
 	near(t, "spatial", r.spatial(src, U10, 0, 9.5, 20.5), 1.5, 0.01)
 	near(t, "spatial again", r.spatial(src, U10, 0, 9.5, 20.5), 1.5, 0.01)
 }
+
+func TestSpatialReadFailureIsNaN(t *testing.T) {
+	r := newTestRun(t, testGrid, map[FieldID]fill{
+		U10: cornerFill([2][2]float32{{0, 1}, {2, 3}}),
+		MWD: cornerFill([2][2]float32{{10, 10}, {10, 10}}),
+	})
+	good := r.newRowCache().get
+	failRow1 := func(f FieldID, step, row int) ([]int16, bool) {
+		if row == 1 {
+			return nil, false
+		}
+		return good(f, step, row)
+	}
+	for _, f := range []FieldID{U10, MWD} {
+		if v := r.spatial(failRow1, f, 0, 9.5, 20.5); !isNaN(v) {
+			t.Errorf("field %d with failed row = %v, want NaN", f, v)
+		}
+	}
+}
