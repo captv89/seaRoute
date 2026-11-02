@@ -33,6 +33,9 @@
     let simWxPending = null;    // replacement still loading
     let simWxKey = '';          // run|field|hour of the layer wanted, or 'none:...'
     let simWxSavedOwm = null;   // OWM state to restore on stop
+    let simWxNoteStale = false; // note shows 'Loading forecast' and needs a refresh
+    let simWxRun = null;        // run id of the layers on the map
+    let simWxLastScales = null; // last legend scales, kept while a refetch is pending
     let simPlaying = false;
     let simProgress = 0; // 0 to 100, derived from simHours
     let simHours = 0; // playback position: hours since departure
@@ -3579,6 +3582,7 @@
         simWxPending = null;
         simWxShown = null;
         simWxKey = '';
+        simWxRun = null;
     }
 
     // Add a layer for (run, field, hour); the old one leaves only after the new one has loaded.
@@ -3604,6 +3608,7 @@
         layer.on('load', promote);
         layer._simTimer = setTimeout(promote, 8000); // tiles that never settle must not pin the old layer
         simWxPending = layer;
+        simWxRun = run;
         layer.addTo(map);
     }
 
@@ -3626,6 +3631,13 @@
     // Pick the layer for the playback time; swaps only when (run, field, hour) changes.
     function updateSimWeatherStep(date) {
         if (!simActive) return;
+        if (!voyage && voyageLoading) {
+            // Refetch pending: keep the current layer and legend, avoid a blink.
+            const el = document.getElementById('sim-ecmwf-note');
+            if (el && el.textContent !== 'Loading forecast\u2026') el.textContent = 'Loading forecast\u2026';
+            simWxNoteStale = true;
+            return;
+        }
         const run = voyage && voyage.run ? voyage.run : null;
         let key;
         let note = '';
@@ -3649,9 +3661,13 @@
                 note = `+${hour} h`;
             }
         }
-        if (key === simWxKey) return;
+        if (key === simWxKey && !simWxNoteStale) return;
+        const sameLayer = key === simWxKey; // only the note/legend need refreshing
         simWxKey = key;
-        if (key.startsWith('none:')) {
+        simWxNoteStale = false;
+        if (sameLayer) {
+            // keep tiles as they are
+        } else if (key.startsWith('none:')) {
             dropSimWxLayer(simWxPending);
             dropSimWxLayer(simWxShown);
             simWxPending = null;
@@ -3669,7 +3685,9 @@
 
     // Legend for the ECMWF layer in the existing scale dock; hidden when no layer is shown.
     function renderSimWxLegend(dock) {
-        const stops = voyage && voyage.scales ? voyage.scales[simWxField] : null;
+        if (voyage && voyage.scales) simWxLastScales = voyage.scales;
+        const scales = voyage ? voyage.scales : (voyageLoading ? simWxLastScales : null);
+        const stops = scales ? scales[simWxField] : null;
         const active = (simWxShown || simWxPending) && Array.isArray(stops) && stops.length > 1;
         const max = active ? stops[stops.length - 1].value : 0;
         if (!active || !(max > 0)) {
@@ -3705,12 +3723,31 @@
     }
 
     // Playback takes over the weather overlay: park the OWM layers, restore them on stop.
+    function setOwmControlsLocked(locked) {
+        const hint = 'Live weather is off during voyage playback';
+        const els = [toggleOwm, ...document.querySelectorAll('.weather-btn')].filter(Boolean);
+        els.forEach(el => {
+            el.disabled = locked;
+            if (locked) {
+                el.dataset.prevTitle = el.getAttribute('title') || '';
+                el.setAttribute('title', hint);
+                el.setAttribute('aria-label', el.getAttribute('aria-label') || el.textContent.trim() || 'Live weather');
+            } else if ('prevTitle' in el.dataset) {
+                if (el.dataset.prevTitle) el.setAttribute('title', el.dataset.prevTitle);
+                else el.removeAttribute('title');
+                delete el.dataset.prevTitle;
+            }
+        });
+    }
+
     function beginSimWeather() {
+        if (simWxSavedOwm) return;
         simWxSavedOwm = {
             master: Boolean(toggleOwm && toggleOwm.checked),
             layers: new Set(activeWeatherLayers)
         };
         if (toggleOwm) toggleOwm.checked = false;
+        setOwmControlsLocked(true);
         updateWeatherLayersOnMap();
         updateActiveLayerBadge();
         clearSimWxLayers();
@@ -3719,6 +3756,7 @@
 
     function endSimWeather() {
         clearSimWxLayers();
+        setOwmControlsLocked(false);
         updateSimWxControls('', Boolean(voyage && voyage.run));
         if (simWxSavedOwm) {
             activeWeatherLayers.clear();
@@ -3738,12 +3776,14 @@
     // New or cleared voyage: the run may have changed, so rebuild the layer and legend.
     onVoyageUpdated(() => {
         if (!simActive) return;
-        simWxKey = '';
+        const run = voyage && voyage.run ? voyage.run : null;
+        if (run !== simWxRun) simWxKey = ''; // unchanged run: keep tiles, no reload
         updateSimWeatherStep(vesselStateAt(simHours).date);
         updateWeatherScaleDock();
     });
 
     function openSimulation() {
+        if (simActive) return;
         if (!hasRoute()) {
             showToast('Compute a route first', 'warning');
             return;
