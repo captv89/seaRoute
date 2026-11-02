@@ -28,7 +28,8 @@
     // Simulation state
     let simActive = false;
     let simPlaying = false;
-    let simProgress = 0; // 0 to 100
+    let simProgress = 0; // 0 to 100, derived from simHours
+    let simHours = 0; // playback position: hours since departure
     let simSpeedMultiplier = 1;
     let simInterval = null;
     let simVesselMarker = null;
@@ -2319,6 +2320,8 @@
         routeRequestSeq++; // drop any response still in flight
         setComputeLoading(false);
         if (simActive) stopSimulation();
+        cancelVoyageFetch();
+        setVoyage(null);
         routeLayerGroup.clearLayers();
         resetReview();
         currentRouteData = null;
@@ -2341,6 +2344,8 @@
         setText('collapsed-pts-val', '--');
         setText('header-dist-badge', '-- NM');
         setText('header-duration-badge', '--');
+        setText('stat-eta', '--');
+        updateTransitDuration();
         setText('depth-readout', 'Depth limit is worked out with the route (squat uses this speed).');
         renderRouteNotices({});
         renderManifestTable([]);
@@ -2549,7 +2554,9 @@
         }
 
         // Transit duration update based on current speed slider
+        if (!opts.keepView) setVoyage(null); // new route: old samples no longer apply
         updateTransitDuration();
+        fetchVoyageWeather();
 
         // 4. Update Waypoint Manifest Table
         renderManifestTable(waypoints);
@@ -2922,44 +2929,322 @@
     }
 
     // =========================================================================
-    // 10. Transit Speed Slider & Voyage Duration
+    // 10. Transit Speed Slider, Departure & Voyage Clock
     // =========================================================================
     const speedSlider = document.getElementById('speed-slider');
     const speedLabel = document.getElementById('speed-label');
     const statTime = document.getElementById('stat-time');
+    const statEta = document.getElementById('stat-eta');
     const headerDurationBadge = document.getElementById('header-duration-badge');
+    const departureInput = document.getElementById('departure-input');
+    const btnDepartureNow = document.getElementById('btn-departure-now');
 
+    const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+    const pad2 = n => String(n).padStart(2, '0');
+    const NM_PER_KM = 1 / 1.852;
+
+    // "DD Mon HH:MM UTC"
+    function formatUTC(d) {
+        return `${pad2(d.getUTCDate())} ${MONTHS[d.getUTCMonth()]} ${pad2(d.getUTCHours())}:${pad2(d.getUTCMinutes())} UTC`;
+    }
+    // The server sends RFC 3339 with nanoseconds; JS engines only guarantee milliseconds.
+    function parseTime(str) {
+        return Date.parse(String(str).replace(/(\.\d{3})\d+/, '$1'));
+    }
+    function nowUTCInputValue() {
+        return new Date().toISOString().slice(0, 16); // current UTC minute, YYYY-MM-DDTHH:MM
+    }
+    if (departureInput && !departureInput.value) departureInput.value = nowUTCInputValue();
+
+    // Departure as a Date. The datetime-local value has no zone; it is UTC by contract.
+    function departureDate() {
+        const v = departureInput ? departureInput.value : '';
+        const t = v ? Date.parse(v.length === 16 ? `${v}:00Z` : `${v}Z`) : NaN;
+        return new Date(isNaN(t) ? Date.parse(`${nowUTCInputValue()}:00Z`) : t);
+    }
+    function hasRoute() {
+        return currentLatLngs.length > 1 && currentTotalDistNM > 0;
+    }
+    // Voyage length in hours. Same formula as the server: distance / speed.
+    function voyageHours() {
+        return hasRoute() ? currentTotalDistNM / currentSpeedKn() : 0;
+    }
+    // Clock time at a fraction (0..1) of the voyage.
+    function voyageTimeAt(progress) {
+        const f = Math.min(1, Math.max(0, progress));
+        return new Date(departureDate().getTime() + f * voyageHours() * 3600e3);
+    }
+
+    // --- Last /voyage/weather response (null until one arrives) -------------
+    let voyage = null;
+    let voyageLoading = false;
+    let voyageFailed = false;
+    let voyageTimer = null;
+    let voyageReqSeq = 0;
+    const voyageListeners = [];
+
+    // Register fn(voyage) to run whenever the voyage response is replaced or cleared.
+    function onVoyageUpdated(fn) {
+        if (typeof fn === 'function') voyageListeners.push(fn);
+    }
+    function setVoyage(data) {
+        if (data && Array.isArray(data.samples)) {
+            data.samples.forEach(s => { s.t = parseTime(s.time); });
+        }
+        voyage = data || null;
+        updateForecastBand();
+        if (simActive) updateSimulationUI();
+        voyageListeners.forEach(fn => {
+            try { fn(voyage); } catch (e) { console.error('onVoyageUpdated listener failed:', e); }
+        });
+    }
+    function cancelVoyageFetch() {
+        clearTimeout(voyageTimer);
+        voyageReqSeq++;
+        voyageLoading = false;
+    }
+
+    // Debounced (300 ms) POST of the current track; only the latest response is used.
+    function fetchVoyageWeather() {
+        clearTimeout(voyageTimer);
+        if (!hasRoute()) return;
+        voyageTimer = setTimeout(requestVoyageWeather, 300);
+    }
+    function requestVoyageWeather() {
+        if (!hasRoute()) return;
+        const reqId = ++voyageReqSeq;
+        voyageLoading = true;
+        voyageFailed = false;
+        updateForecastBand();
+        const body = {
+            track: currentLatLngs.map(p => [p[1], p[0]]), // Leaflet [lat, lon] -> API [lon, lat]
+            departure: departureDate().toISOString(),
+            speed_kn: currentSpeedKn()
+        };
+        fetch('/voyage/weather', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(body)
+        })
+            .then(res => {
+                if (!res.ok) {
+                    return res.json().catch(() => ({})).then(err => {
+                        throw new Error(err.error || `HTTP ${res.status}`);
+                    });
+                }
+                return res.json();
+            })
+            .then(data => {
+                if (reqId !== voyageReqSeq) return; // superseded
+                voyageLoading = false;
+                setVoyage(data);
+            })
+            .catch(err => {
+                if (reqId !== voyageReqSeq) return;
+                voyageLoading = false;
+                voyageFailed = true;
+                console.error('Voyage weather error:', err);
+                updateForecastBand();
+            });
+    }
+
+    // Bracketing samples at a clock time. Position is interpolated between them;
+    // weather and everything else come from the nearer sample. `leg` and
+    // `course_deg` come from the earlier one: a sample on a waypoint already
+    // carries the next leg, but the span after `prev` still belongs to prev's leg.
+    // Returns null before the first response.
+    function sampleAt(date) {
+        const ss = voyage && voyage.samples;
+        if (!ss || ss.length === 0) return null;
+        const t = date.getTime();
+        let lo = 0;
+        let hi = ss.length - 1;
+        if (t <= ss[0].t) hi = 0;
+        else if (t >= ss[hi].t) lo = hi;
+        else {
+            while (hi - lo > 1) {
+                const mid = (lo + hi) >> 1;
+                if (ss[mid].t <= t) lo = mid; else hi = mid;
+            }
+        }
+        const prev = ss[lo];
+        const next = ss[Math.min(lo + 1, ss.length - 1)];
+        const span = next.t - prev.t;
+        const frac = span > 0 ? Math.min(1, Math.max(0, (t - prev.t) / span)) : 0;
+        const nearer = frac < 0.5 ? prev : next;
+        let dLon = next.lon - prev.lon;
+        if (dLon > 180) dLon -= 360;
+        else if (dLon < -180) dLon += 360;
+        let lon = prev.lon + dLon * frac;
+        // Put the longitude on the same world copy as the drawn (unwrapped) route.
+        const ref = currentLatLngs[Math.min(prev.leg, currentLatLngs.length - 1)];
+        if (ref) lon += 360 * Math.round((ref[1] - lon) / 360);
+        const sample = Object.assign({}, nearer, {
+            time: date.toISOString(),
+            lon,
+            lat: prev.lat + (next.lat - prev.lat) * frac,
+            dist_nm: prev.dist_nm + (next.dist_nm - prev.dist_nm) * frac,
+            leg: prev.leg,
+            course_deg: prev.course_deg
+        });
+        return { sample, prev, next, frac };
+    }
+
+    // Distance-based fallback (constant speed along the drawn route) for use
+    // before the first API response arrives.
+    let alongCache = { src: null, cum: [] };
+    function cumulativeNM() {
+        if (alongCache.src === currentLatLngs) return alongCache.cum;
+        const R = 3440.065;
+        const rad = d => d * Math.PI / 180;
+        const cum = [0];
+        for (let i = 1; i < currentLatLngs.length; i++) {
+            const [la0, lo0] = currentLatLngs[i - 1];
+            const [la1, lo1] = currentLatLngs[i];
+            const a = Math.sin(rad(la1 - la0) / 2) ** 2 +
+                Math.cos(rad(la0)) * Math.cos(rad(la1)) * Math.sin(rad(lo1 - lo0) / 2) ** 2;
+            cum.push(cum[i - 1] + 2 * R * Math.asin(Math.min(1, Math.sqrt(a))));
+        }
+        const last = cum[cum.length - 1];
+        const k = last > 0 ? currentTotalDistNM / last : 1; // scale to the reported distance
+        alongCache = { src: currentLatLngs, cum: cum.map(v => v * k) };
+        return alongCache.cum;
+    }
+    function fallbackStateAt(distNM) {
+        const cum = cumulativeNM();
+        const n = currentLatLngs.length - 1;
+        let seg = 0;
+        while (seg < n - 1 && cum[seg + 1] < distNM) seg++;
+        const span = cum[seg + 1] - cum[seg];
+        const t = span > 0 ? Math.min(1, Math.max(0, (distNM - cum[seg]) / span)) : 0;
+        const p0 = currentLatLngs[seg];
+        const p1 = currentLatLngs[seg + 1];
+        return {
+            lat: p0[0] + (p1[0] - p0[0]) * t,
+            lon: p0[1] + (p1[1] - p0[1]) * t,
+            leg: seg,
+            heading: computeHeading(p0[0], p0[1], p1[0], p1[1]),
+            distNM,
+            weather: null
+        };
+    }
+    // Where the vessel is after `hours` of voyage: API samples when present, else fallback.
+    function vesselStateAt(hours) {
+        const total = voyageHours();
+        const h = Math.min(total, Math.max(0, hours));
+        const date = new Date(departureDate().getTime() + h * 3600e3);
+        const hit = sampleAt(date);
+        if (hit) {
+            const s = hit.sample;
+            return { lat: s.lat, lon: s.lon, leg: s.leg, heading: s.course_deg, distNM: s.dist_nm, weather: s.weather, date };
+        }
+        const st = fallbackStateAt(Math.min(currentTotalDistNM, h * currentSpeedKn()));
+        st.date = date;
+        return st;
+    }
+    // Index of the route leg the vessel is on at the current playback time.
+    function currentLegIndex() {
+        if (!hasRoute()) return 0;
+        const leg = vesselStateAt(simHours).leg;
+        return Math.min(Math.max(0, leg), currentLatLngs.length - 2);
+    }
+
+    // Scrubber background: forecast span over the voyage versus the rest.
+    function updateForecastBand() {
+        const track = document.getElementById('sim-track');
+        const note = document.getElementById('sim-forecast-note');
+        if (!track && !note) return;
+        let a = 0;
+        let b = 0;
+        let text;
+        if (!hasRoute()) {
+            text = 'No route';
+        } else if (voyageLoading && !voyage) {
+            text = 'Loading forecast…';
+        } else if (!voyage) {
+            text = voyageFailed ? 'Forecast unavailable' : 'Forecast not loaded';
+        } else if (!voyage.run) {
+            text = 'No forecast for this period';
+        } else {
+            const dep = departureDate().getTime();
+            const end = dep + voyageHours() * 3600e3;
+            const rs = parseTime(voyage.run_time);
+            const fe = parseTime(voyage.forecast_end);
+            const span = end - dep;
+            if (span > 0) {
+                a = Math.min(1, Math.max(0, (Math.max(rs, dep) - dep) / span));
+                b = Math.min(1, Math.max(0, (Math.min(fe, end) - dep) / span));
+                if (b < a) b = a;
+            }
+            const early = dep < rs;
+            const late = end > fe;
+            if (b <= a) text = early ? `Forecast starts ${formatUTC(new Date(rs))}` : `No forecast beyond ${formatUTC(new Date(fe))}`;
+            else if (early && late) text = `Forecast ${formatUTC(new Date(rs))} to ${formatUTC(new Date(fe))}`;
+            else if (early) text = `Forecast starts ${formatUTC(new Date(rs))}`;
+            else if (late) text = `No forecast beyond ${formatUTC(new Date(fe))}`;
+            else text = 'Forecast covers the whole voyage';
+        }
+        if (track) {
+            track.style.setProperty('--band-a', `${(a * 100).toFixed(2)}%`);
+            track.style.setProperty('--band-b', `${(b * 100).toFixed(2)}%`);
+            track.title = text;
+        }
+        if (note) note.textContent = text;
+    }
+
+    // Playback needs a route; keep both entry points honest about it.
+    function syncSimAvailability() {
+        const on = hasRoute();
+        const startBtn = document.getElementById('btn-start-simulation');
+        if (startBtn) startBtn.disabled = !on;
+        const hint = document.getElementById('sim-hint');
+        if (hint) hint.classList.toggle('hidden', on);
+        const quick = document.getElementById('btn-quick-sim-trigger');
+        if (quick) {
+            quick.setAttribute('aria-disabled', on ? 'false' : 'true');
+            quick.classList.toggle('opacity-40', !on);
+        }
+    }
+
+    let lastTotalHours = 0;
     function updateTransitDuration() {
         if (!speedSlider) return;
         const speed = parseFloat(speedSlider.value) || 18.0;
         if (speedLabel) speedLabel.textContent = `${speed.toFixed(1)} kts`;
+        syncSimAvailability();
 
-        const dist = currentTotalDistNM || 8420;
-        const totalHours = dist / speed;
-        const days = Math.floor(totalHours / 24);
-        const hours = Math.floor(totalHours % 24);
-        const mins = Math.round((totalHours - Math.floor(totalHours)) * 60);
-        const durationStr = `${days}d ${hours}h ${mins}m`;
-
-        if (statTime) statTime.textContent = durationStr;
-        if (headerDurationBadge) headerDurationBadge.textContent = `${days}d ${hours}h @ ${speed.toFixed(1)} kts`;
-
-        const simTelemetry = document.getElementById('sim-vessel-telemetry');
-        if (simTelemetry) {
-            if (simActive && simProgress > 0) {
-                const remDist = Math.max(0, dist * (1 - simProgress / 100));
-                const remHours = remDist / speed;
-                const remDays = Math.floor(remHours / 24);
-                const remHrs = Math.floor(remHours % 24);
-                simTelemetry.textContent = `ETA: ${remDays}d ${remHrs}h • ${speed.toFixed(1)} kts`;
-            } else {
-                simTelemetry.textContent = `ETA: ${days}d ${hours}h • ${speed.toFixed(1)} kts`;
-            }
+        const totalHours = voyageHours();
+        // Keep the vessel at the same fraction of the passage when speed changes mid-playback.
+        if (simActive && lastTotalHours > 0 && totalHours > 0) {
+            simHours = simHours / lastTotalHours * totalHours;
         }
+        lastTotalHours = totalHours;
 
-        if (simActive) {
-            updateSimulationUI();
+        if (!hasRoute()) {
+            if (statTime) statTime.textContent = '--';
+            if (statEta) statEta.textContent = '--';
+            if (headerDurationBadge) headerDurationBadge.textContent = '--';
+            return;
         }
+        const totalMin = Math.round(totalHours * 60);
+        const days = Math.floor(totalMin / 1440);
+        const hours = Math.floor((totalMin % 1440) / 60);
+        const mins = totalMin % 60;
+        const arrival = formatUTC(voyageTimeAt(1));
+
+        if (statTime) statTime.textContent = `${days}d ${hours}h ${mins}m`;
+        if (statEta) statEta.textContent = arrival;
+        if (headerDurationBadge) headerDurationBadge.textContent = `${days}d ${hours}h • ${arrival}`;
+
+        updateForecastBand();
+        if (simActive) updateSimulationUI();
+        else updateSimTelemetry();
+    }
+    function updateSimTelemetry() {
+        const el = document.getElementById('sim-vessel-telemetry');
+        if (!el) return;
+        const speed = currentSpeedKn();
+        el.textContent = hasRoute() ? `ETA: ${formatUTC(voyageTimeAt(1))} • ${speed.toFixed(1)} kts` : `ETA: -- • ${speed.toFixed(1)} kts`;
     }
 
     if (speedSlider) {
@@ -2967,10 +3252,28 @@
             readSpeed.set(parseFloat(speedSlider.value) || 18);
             updateTransitDuration();
         });
+        // 'change' fires on release, so dragging does not flood the server
+        speedSlider.addEventListener('change', fetchVoyageWeather);
+    }
+    if (departureInput) {
+        const onDepartureChange = () => {
+            updateTransitDuration();
+            fetchVoyageWeather();
+        };
+        departureInput.addEventListener('input', updateTransitDuration);
+        departureInput.addEventListener('change', onDepartureChange);
+    }
+    if (btnDepartureNow && departureInput) {
+        btnDepartureNow.addEventListener('click', () => {
+            departureInput.value = nowUTCInputValue();
+            updateTransitDuration();
+            fetchVoyageWeather();
+        });
     }
 
     // =========================================================================
     // 11. Route Simulation / Playback Engine
+    // Playback state is voyage time: simHours of 0 .. voyageHours().
     // =========================================================================
     const btnStartSim = document.getElementById('btn-start-simulation');
     const btnQuickSimTrigger = document.getElementById('btn-quick-sim-trigger');
@@ -2980,29 +3283,18 @@
     const simPlayIcon = document.getElementById('sim-play-icon');
     const btnRestartSim = document.getElementById('btn-restart-sim');
     const simScrubber = document.getElementById('sim-scrubber');
+    const simShipTime = document.getElementById('sim-ship-time');
     const simProgressDist = document.getElementById('sim-progress-dist');
     const simProgressPct = document.getElementById('sim-progress-pct');
     const simElapsed = document.getElementById('sim-elapsed');
     const simLegName = document.getElementById('sim-leg-name');
     const simCurrentPos = document.getElementById('sim-current-pos');
     const simSpeedBtns = document.querySelectorAll('.sim-speed-btn');
-
-    // Default Rotterdam -> Singapore route waypoints when simulation is invoked before calculation
-    const FALLBACK_SIM_WAYPOINTS = [
-        { name: "Rotterdam (Departure)", lat: 51.95, lon: 4.05 },
-        { name: "English Channel TSS", lat: 50.12, lon: -0.45 },
-        { name: "Strait of Gibraltar", lat: 35.95, lon: -5.60 },
-        { name: "Suez Canal Approach", lat: 31.26, lon: 32.31 },
-        { name: "Bab-el-Mandeb Strait", lat: 12.58, lon: 43.33 },
-        { name: "Malacca Strait TSS", lat: 2.82, lon: 101.21 },
-        { name: "Singapore Roads", lat: 1.26, lon: 103.82 }
-    ];
+    const SCRUBBER_STEPS = 1000;
+    let simLastTick = 0;
 
     function getSimulationCoordinates() {
-        if (currentLatLngs && currentLatLngs.length > 1) {
-            return currentLatLngs; // [lat, lon], unwrapped
-        }
-        return FALLBACK_SIM_WAYPOINTS.map(wp => [wp.lat, wp.lon]);
+        return currentLatLngs; // [lat, lon], unwrapped; playback needs a route
     }
 
     /**
@@ -3065,9 +3357,6 @@
             }
             return `Waypoint ${index + 1}`;
         }
-        if (FALLBACK_SIM_WAYPOINTS[index]) {
-            return FALLBACK_SIM_WAYPOINTS[index].name;
-        }
         return `Waypoint ${index + 1}`;
     }
 
@@ -3102,18 +3391,25 @@
     }
 
     function openSimulation() {
+        if (!hasRoute()) {
+            showToast('Compute a route first', 'warning');
+            return;
+        }
         simActive = true;
+        simHours = 0;
+        lastTotalHours = voyageHours();
         if (simPlayerDock) simPlayerDock.classList.remove('hidden');
         const coords = getSimulationCoordinates();
         createVesselMarker(coords[0]);
         updateSimulationUI();
         playSimulation();
-        showToast('Route Simulation Mode Activated', 'play_circle');
+        showToast('Voyage playback started', 'play_circle');
     }
 
     function stopSimulation() {
         simActive = false;
         pauseSimulation();
+        simHours = 0;
         simProgress = 0;
         if (simScrubber) simScrubber.value = 0;
         if (simPlayerDock) simPlayerDock.classList.add('hidden');
@@ -3125,21 +3421,25 @@
             simLegName.textContent = '• Inactive';
         }
         updateTransitDuration();
-        showToast('Simulation Stopped', 'stop');
+        showToast('Playback stopped', 'stop');
     }
 
     function playSimulation() {
         simPlaying = true;
         if (simPlayIcon) simPlayIcon.textContent = 'pause';
         clearInterval(simInterval);
+        simLastTick = performance.now();
         simInterval = setInterval(() => {
-            simProgress += 0.25 * simSpeedMultiplier;
-            if (simProgress >= 100) {
-                simProgress = 100;
+            const now = performance.now();
+            const dt = Math.min(now - simLastTick, 250) / 1000; // cap so a background tab does not jump
+            simLastTick = now;
+            const total = voyageHours();
+            simHours += simSpeedMultiplier * dt; // multiplier = hours of voyage per second
+            if (simHours >= total) {
+                simHours = total;
                 pauseSimulation();
-                showToast('Destination Reached: Voyage Complete', 'task_alt');
+                showToast('Destination reached: voyage complete', 'task_alt');
             }
-            if (simScrubber) simScrubber.value = simProgress;
             updateSimulationUI();
         }, 50);
     }
@@ -3151,67 +3451,52 @@
     }
 
     function updateSimulationUI() {
-        const totalDist = currentTotalDistNM || 8420;
-        const currentDist = Math.round((simProgress / 100) * totalDist);
-        const speed = (speedSlider ? parseFloat(speedSlider.value) : 18.0) || 18.0;
-        const totalDays = totalDist / (speed * 24);
-        const currentDays = ((simProgress / 100) * totalDays).toFixed(1);
+        const total = voyageHours();
+        if (!hasRoute() || total <= 0) return;
+        simHours = Math.min(total, Math.max(0, simHours));
+        simProgress = simHours / total * 100;
+        const st = vesselStateAt(simHours);
+        const speed = currentSpeedKn();
+        const toGo = Math.max(0, currentTotalDistNM - st.distNM);
 
-        if (simProgressDist) simProgressDist.textContent = `${currentDist.toLocaleString()} NM / ${Math.round(totalDist).toLocaleString()} NM`;
-        if (simProgressPct) simProgressPct.textContent = `${Math.round(simProgress)}% Complete`;
-        if (simElapsed) simElapsed.textContent = `Day ${currentDays}`;
+        if (simScrubber) simScrubber.value = Math.round(simHours / total * SCRUBBER_STEPS);
+        if (simShipTime) simShipTime.textContent = formatUTC(st.date);
+        if (simElapsed) simElapsed.textContent = `Day ${(simHours / 24).toFixed(1)}`;
+        if (simProgressDist) simProgressDist.textContent = `${Math.round(st.distNM).toLocaleString()} NM run`;
+        if (simProgressPct) simProgressPct.textContent = `${Math.round(toGo).toLocaleString()} NM to go`;
 
-        // Live ETA and speed telemetry
         const simTelemetry = document.getElementById('sim-vessel-telemetry');
         if (simTelemetry) {
-            const remainingDist = Math.max(0, totalDist * (1 - simProgress / 100));
-            const remainingHours = remainingDist / speed;
-            if (simProgress >= 100) {
-                simTelemetry.textContent = `Arrived • ${speed.toFixed(1)} kts`;
-            } else {
-                const remDays = Math.floor(remainingHours / 24);
-                const remHrs = Math.floor(remainingHours % 24);
-                simTelemetry.textContent = `ETA: ${remDays}d ${remHrs}h • ${speed.toFixed(1)} kts`;
-            }
+            simTelemetry.textContent = simHours >= total
+                ? `Arrived • ${speed.toFixed(1)} kts`
+                : `ETA: ${formatUTC(voyageTimeAt(1))} • ${speed.toFixed(1)} kts`;
         }
 
-        updateVesselPosition(simProgress / 100);
+        updateVesselPosition(st);
     }
 
-    function updateVesselPosition(ratio) {
+    function updateVesselPosition(st) {
         const coords = getSimulationCoordinates();
         if (coords.length < 2) return;
-
         const numSegments = coords.length - 1;
-        const exactIndex = ratio * numSegments;
-        const segmentIndex = Math.min(Math.floor(exactIndex), numSegments - 1);
-        const t = exactIndex - segmentIndex;
-
-        const p0 = coords[segmentIndex];
-        const p1 = coords[segmentIndex + 1];
-
-        const lat = p0[0] + (p1[0] - p0[0]) * t;
-        const lon = p0[1] + (p1[1] - p0[1]) * t;
-
-        const heading = computeHeading(p0[0], p0[1], p1[0], p1[1]);
-        const speed = (speedSlider ? parseFloat(speedSlider.value) : 18.0) || 18.0;
+        const segmentIndex = Math.min(Math.max(0, st.leg), numSegments - 1);
+        const speed = currentSpeedKn();
 
         if (simVesselMarker) {
-            simVesselMarker.setLatLng([lat, lon]);
+            simVesselMarker.setLatLng([st.lat, st.lon]);
             const markerEl = simVesselMarker.getElement();
             if (markerEl) {
                 const navIcon = markerEl.querySelector('#sim-vessel-nav-icon') || markerEl.querySelector('.sim-nav-icon');
                 if (navIcon) {
-                    navIcon.style.transform = `rotate(${Math.round(heading)}deg)`;
+                    navIcon.style.transform = `rotate(${Math.round(st.heading)}deg)`;
                 }
                 const markerSpeed = markerEl.querySelector('#sim-marker-speed') || markerEl.querySelector('.sim-marker-speed');
                 if (markerSpeed) {
-                    markerSpeed.textContent = `${speed.toFixed(1)} kts • HDG ${Math.round(heading).toString().padStart(3, '0')}°`;
+                    markerSpeed.textContent = `${speed.toFixed(1)} kts • HDG ${Math.round(st.heading).toString().padStart(3, '0')}°`;
                 }
             }
         }
 
-        // Leg Description
         if (simLegName) {
             const fromName = getWaypointName(segmentIndex, coords.length);
             const toName = getWaypointName(segmentIndex + 1, coords.length);
@@ -3223,7 +3508,7 @@
         }
 
         if (simCurrentPos) {
-            simCurrentPos.textContent = `Position: ${lat.toFixed(2)}°, ${lon.toFixed(2)}°`;
+            simCurrentPos.textContent = `Position: ${st.lat.toFixed(2)}°, ${st.lon.toFixed(2)}°`;
         }
     }
 
@@ -3235,7 +3520,7 @@
         btnPlayPauseSim.addEventListener('click', () => {
             if (simPlaying) pauseSimulation();
             else {
-                if (simProgress >= 100) simProgress = 0;
+                if (simHours >= voyageHours()) simHours = 0;
                 playSimulation();
             }
         });
@@ -3243,8 +3528,7 @@
 
     if (btnRestartSim) {
         btnRestartSim.addEventListener('click', () => {
-            simProgress = 0;
-            if (simScrubber) simScrubber.value = 0;
+            simHours = 0;
             updateSimulationUI();
             if (!simPlaying) playSimulation();
         });
@@ -3252,7 +3536,7 @@
 
     if (simScrubber) {
         simScrubber.addEventListener('input', (e) => {
-            simProgress = parseFloat(e.target.value);
+            simHours = (parseFloat(e.target.value) / SCRUBBER_STEPS) * voyageHours();
             updateSimulationUI();
         });
     }
@@ -3260,12 +3544,14 @@
     simSpeedBtns.forEach(btn => {
         btn.addEventListener('click', () => {
             simSpeedBtns.forEach(b => {
-                b.className = 'sim-speed-btn px-2 py-0.5 rounded-sm text-on-surface-variant hover:text-on-surface cursor-pointer';
+                b.className = 'sim-speed-btn px-2 py-1 rounded-sm text-on-surface-variant hover:text-on-surface cursor-pointer';
             });
-            btn.className = 'sim-speed-btn active px-2 py-0.5 rounded-sm bg-primary-container text-on-primary-container font-semibold cursor-pointer';
-            simSpeedMultiplier = parseFloat(btn.dataset.speed) || 1;
+            btn.className = 'sim-speed-btn active px-2 py-1 rounded-sm bg-primary-container text-on-primary-container font-semibold cursor-pointer';
+            simSpeedMultiplier = parseFloat(btn.dataset.speed) || 1; // hours of voyage per second
         });
     });
+
+    syncSimAvailability();
 
     // =========================================================================
     // 12. Exports & Sharing (CSV, GeoJSON, Permalinks)

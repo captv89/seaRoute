@@ -532,3 +532,33 @@ html:not(.dark) .tactical-feature-popup .leaflet-popup-tip {
 @media (prefers-reduced-motion: reduce) {
     .review-item, .review-btn, .review-toggle__chevron { transition: none; }
 }
+
+/* Voyage playback: scrubber with forecast band */
+.departure-input { color-scheme: light; }
+.dark .departure-input { color-scheme: dark; }
+.sim-track { position: relative; height: 22px; --band-a: 0%; --band-b: 0%; }
+.sim-track__band {
+    position: absolute; left: 0; right: 0; top: 50%; height: 6px; transform: translateY(-50%);
+    border-radius: 1px;
+    background: linear-gradient(to right,
+        rgb(var(--color-surface-container-highest)) 0 var(--band-a),
+        rgb(var(--color-secondary) / 0.65) var(--band-a) var(--band-b),
+        rgb(var(--color-surface-container-highest)) var(--band-b) 100%);
+}
+.sim-forecast-key { width: 14px; height: 4px; border-radius: 1px; background: rgb(var(--color-secondary) / 0.65); flex: none; }
+.sim-scrubber {
+    position: absolute; inset: 0; width: 100%; height: 100%; margin: 0;
+    -webkit-appearance: none; appearance: none; background: transparent; cursor: pointer;
+}
+.sim-scrubber::-webkit-slider-runnable-track { background: transparent; height: 22px; }
+.sim-scrubber::-moz-range-track { background: transparent; height: 22px; }
+.sim-scrubber::-webkit-slider-thumb {
+    -webkit-appearance: none; appearance: none; width: 6px; height: 20px; margin-top: 1px; border-radius: 1px;
+    background: rgb(var(--color-primary)); border: 1px solid rgb(var(--color-surface-container-lowest));
+    box-shadow: 0 0 0 1px rgb(var(--color-primary) / 0.5);
+}
+.sim-scrubber::-moz-range-thumb {
+    width: 6px; height: 20px; border-radius: 1px; box-sizing: border-box;
+    background: rgb(var(--color-primary)); border: 1px solid rgb(var(--color-surface-container-lowest));
+}
+.sim-scrubber:focus-visible { outline: 2px solid rgb(var(--color-primary)); outline-offset: 1px; }
