@@ -656,6 +656,62 @@
                         <span id="sim-forecast-note">Forecast not loaded</span>
                     </p>
                 </div>
+                <!-- Weather at the vessel and current leg summary -->
+                <details class="group border-t border-surface-container-high pt-2" id="sim-weather" open>
+                    <summary class="flex items-center justify-between gap-2 cursor-pointer select-none list-none font-mono text-[10px] uppercase tracking-widest text-on-surface-variant hover:text-on-surface focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary rounded-sm [&::-webkit-details-marker]:hidden">
+                        <span class="flex items-center gap-1.5">
+                            <span class="material-symbols-outlined text-[14px] text-secondary" aria-hidden="true">air</span>
+                            <span>Weather at vessel</span>
+                        </span>
+                        <span class="material-symbols-outlined text-[16px] transition-transform duration-200 group-open:rotate-180" aria-hidden="true">expand_more</span>
+                    </summary>
+                    <div class="flex flex-col gap-2 pt-2">
+                        <p class="hidden m-0 font-mono text-[11px] text-on-surface-variant bg-surface-container-low border border-dashed border-surface-container-high rounded-sm px-2 py-2" id="sim-wx-msg" role="status"></p>
+                        <dl class="m-0 grid grid-cols-2 sm:grid-cols-4 gap-1.5" id="sim-wx-grid">
+                            <div class="bg-surface-container-low border border-surface-container-high rounded-sm px-2 py-1.5 min-w-0">
+                                <dt class="font-mono text-[9px] uppercase tracking-widest text-on-surface-variant">Wind</dt>
+                                <dd class="m-0 mt-0.5 flex items-center gap-1.5 min-w-0">
+                                    <span class="material-symbols-outlined sim-wx-arrow text-[18px] text-primary shrink-0 opacity-30" id="sim-wx-wind-arrow" aria-hidden="true">navigation</span>
+                                    <span class="font-mono text-[13px] font-bold text-on-surface tabular-nums truncate" id="sim-wx-wind">&mdash;</span>
+                                </dd>
+                                <dd class="m-0 font-mono text-[10px] text-on-surface-variant tabular-nums truncate" id="sim-wx-wind-sub">Gust &mdash;</dd>
+                            </div>
+                            <div class="bg-surface-container-low border border-surface-container-high rounded-sm px-2 py-1.5 min-w-0">
+                                <dt class="font-mono text-[9px] uppercase tracking-widest text-on-surface-variant">Current</dt>
+                                <dd class="m-0 mt-0.5 flex items-center gap-1.5 min-w-0">
+                                    <span class="material-symbols-outlined sim-wx-arrow text-[18px] text-primary shrink-0 opacity-30" id="sim-wx-current-arrow" aria-hidden="true">navigation</span>
+                                    <span class="font-mono text-[13px] font-bold text-on-surface tabular-nums truncate" id="sim-wx-current">&mdash;</span>
+                                </dd>
+                                <dd class="m-0 font-mono text-[10px] text-on-surface-variant tabular-nums truncate" id="sim-wx-current-sub">&nbsp;</dd>
+                            </div>
+                            <div class="bg-surface-container-low border border-surface-container-high rounded-sm px-2 py-1.5 min-w-0">
+                                <dt class="font-mono text-[9px] uppercase tracking-widest text-on-surface-variant">Waves</dt>
+                                <dd class="m-0 mt-0.5 flex items-center gap-1.5 min-w-0">
+                                    <span class="material-symbols-outlined sim-wx-arrow text-[18px] text-primary shrink-0 opacity-30" id="sim-wx-wave-arrow" aria-hidden="true">navigation</span>
+                                    <span class="font-mono text-[13px] font-bold text-on-surface tabular-nums truncate" id="sim-wx-wave">&mdash;</span>
+                                </dd>
+                                <dd class="m-0 font-mono text-[10px] text-on-surface-variant tabular-nums truncate" id="sim-wx-wave-sub">Period &mdash;</dd>
+                            </div>
+                            <div class="bg-surface-container-low border border-surface-container-high rounded-sm px-2 py-1.5 min-w-0">
+                                <dt class="font-mono text-[9px] uppercase tracking-widest text-on-surface-variant">Pressure</dt>
+                                <dd class="m-0 mt-0.5 flex items-center gap-1.5 min-w-0">
+                                    <span class="material-symbols-outlined sim-wx-arrow text-[18px] text-primary shrink-0 opacity-30" id="sim-wx-pressure-arrow" aria-hidden="true">navigation</span>
+                                    <span class="font-mono text-[13px] font-bold text-on-surface tabular-nums truncate" id="sim-wx-pressure">&mdash;</span>
+                                </dd>
+                                <dd class="m-0 font-mono text-[10px] text-on-surface-variant tabular-nums truncate" id="sim-wx-pressure-sub">&nbsp;</dd>
+                            </div>
+                        </dl>
+                        <div class="font-mono text-[10px] text-on-surface-variant border-l-2 border-primary/50 pl-2 flex flex-col gap-0.5" id="sim-leg-summary">
+                            <div class="flex flex-wrap items-baseline gap-x-2">
+                                <span class="text-on-surface font-semibold" id="sim-leg-title">Leg &mdash;</span>
+                                <span class="tabular-nums" id="sim-leg-span"></span>
+                            </div>
+                            <div class="tabular-nums" id="sim-leg-max"></div>
+                            <div class="text-tertiary hidden" id="sim-leg-cover"></div>
+                        </div>
+                        <p class="m-0 font-mono text-[9px] text-on-surface-variant/80 tabular-nums" id="sim-wx-source"></p>
+                    </div>
+                </details>
                 <!-- Player controls row -->
                 <div class="flex flex-wrap items-center justify-between gap-y-2 pt-1">
                     <div class="flex items-center gap-1.5">

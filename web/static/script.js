@@ -3159,6 +3159,129 @@
         return Math.min(Math.max(0, leg), currentLatLngs.length - 2);
     }
 
+    // --- Weather window and leg summary ------------------------------------
+    const WX_DASH = '—';
+    const WX_COMPASS = ['N', 'NNE', 'NE', 'ENE', 'E', 'ESE', 'SE', 'SSE', 'S', 'SSW', 'SW', 'WSW', 'W', 'WNW', 'NW', 'NNW'];
+    const wxEls = {};
+    function wxEl(id) {
+        if (!(id in wxEls)) wxEls[id] = document.getElementById(id);
+        return wxEls[id];
+    }
+    function wxText(id, text) {
+        const el = wxEl(id);
+        if (el && el.textContent !== text) el.textContent = text;
+    }
+    function wxNum(v, digits) {
+        return (typeof v === 'number' && isFinite(v)) ? v.toFixed(digits) : null;
+    }
+    // "NE 045°" for a bearing, or null when missing.
+    function wxBearing(deg) {
+        if (typeof deg !== 'number' || !isFinite(deg)) return null;
+        const d = ((deg % 360) + 360) % 360;
+        const pt = WX_COMPASS[Math.round(d / 22.5) % 16];
+        return `${pt} ${String(Math.round(d) % 360).padStart(3, '0')}°`;
+    }
+    // Rotate a `navigation` glyph (points north); dim it when the value is missing.
+    function wxArrow(id, deg) {
+        const el = wxEl(id);
+        if (!el) return;
+        const ok = typeof deg === 'number' && isFinite(deg);
+        el.style.transform = ok ? `rotate(${Math.round(deg)}deg)` : '';
+        el.classList.toggle('opacity-30', !ok);
+    }
+    // Why there is no weather for this sample, or null when it has some.
+    function wxNoWeatherMessage(sample) {
+        if (!voyage) return voyageLoading ? 'Loading forecast…' : 'No forecast loaded';
+        if (!voyage.run) return 'No forecast loaded';
+        const t = sample ? parseTime(sample.time) : NaN;
+        const start = parseTime(voyage.run_time);
+        const end = parseTime(voyage.forecast_end);
+        if (isFinite(t) && isFinite(start) && t < start) return `Forecast starts ${formatUTC(new Date(start))}`;
+        if (isFinite(t) && isFinite(end) && t > end) return `No forecast beyond ${formatUTC(new Date(end))}`;
+        return voyage.run_time && voyage.forecast_end
+            ? `No forecast beyond ${formatUTC(new Date(end))}` : 'No forecast loaded';
+    }
+    // Update the weather panel for the vessel's sample and leg. Cheap: text and
+    // arrow transforms only, so it runs on every playback tick.
+    function renderWeatherWindow(sample, leg) {
+        if (!wxEl('sim-weather')) return;
+        const w = sample && sample.weather;
+        const msg = wxEl('sim-wx-msg');
+        const grid = wxEl('sim-wx-grid');
+        if (!w) {
+            if (msg) { msg.textContent = wxNoWeatherMessage(sample); msg.classList.remove('hidden'); }
+            if (grid) grid.classList.add('hidden');
+        } else {
+            if (msg) msg.classList.add('hidden');
+            if (grid) grid.classList.remove('hidden');
+            const wind = wxNum(w.wind_kn, 1);
+            const gust = wxNum(w.gust_kn, 1);
+            const wb = wxBearing(w.wind_from_deg);
+            wxText('sim-wx-wind', wind ? `${wind} kn` : WX_DASH);
+            wxText('sim-wx-wind-sub', `${wb ? 'from ' + wb : 'from ' + WX_DASH} · gust ${gust ? gust + ' kn' : WX_DASH}`);
+            wxArrow('sim-wx-wind-arrow', typeof w.wind_from_deg === 'number' ? w.wind_from_deg + 180 : null);
+
+            const cur = wxNum(w.current_kn, 1);
+            const cb = wxBearing(w.current_to_deg);
+            wxText('sim-wx-current', cur ? `${cur} kn` : WX_DASH);
+            wxText('sim-wx-current-sub', `to ${cb || WX_DASH}`);
+            wxArrow('sim-wx-current-arrow', w.current_to_deg);
+
+            const wave = wxNum(w.wave_m, 1);
+            const per = wxNum(w.wave_period_s, 0);
+            const vb = wxBearing(w.wave_from_deg);
+            wxText('sim-wx-wave', wave ? `${wave} m` : WX_DASH);
+            wxText('sim-wx-wave-sub', `${vb ? 'from ' + vb : 'from ' + WX_DASH} · ${per ? per + ' s' : WX_DASH}`);
+            wxArrow('sim-wx-wave-arrow', typeof w.wave_from_deg === 'number' ? w.wave_from_deg + 180 : null);
+
+            const p = wxNum(w.pressure_hpa, 0);
+            wxText('sim-wx-pressure', p ? `${p} hPa` : WX_DASH);
+        }
+
+        const legs = voyage && voyage.legs;
+        const cover = wxEl('sim-leg-cover');
+        if (leg && legs && legs.length) {
+            const n = Math.max(0, legs.indexOf(leg)) + 1;
+            const s = parseTime(leg.start);
+            const e = parseTime(leg.end);
+            wxText('sim-leg-title', `Leg ${n} of ${legs.length}`);
+            wxText('sim-leg-span', isFinite(s) && isFinite(e) ? `${formatUTC(new Date(s))} → ${formatUTC(new Date(e))}` : '');
+            const f = (v, d, u) => { const x = wxNum(v, d); return x ? `${x} ${u}` : WX_DASH; };
+            wxText('sim-leg-max', `Max wind ${f(leg.max_wind_kn, 1, 'kn')} · gust ${f(leg.max_gust_kn, 1, 'kn')} · waves ${f(leg.max_wave_m, 1, 'm')} · current ${f(leg.max_current_kn, 1, 'kn')}`);
+            if (cover) {
+                const frac = leg.forecast_frac;
+                if (typeof frac === 'number' && frac < 1) {
+                    cover.textContent = `Forecast covers ${Math.round(Math.max(0, frac) * 100)}% of this leg`;
+                    cover.classList.remove('hidden');
+                } else cover.classList.add('hidden');
+            }
+        } else {
+            wxText('sim-leg-title', 'Leg ' + WX_DASH);
+            wxText('sim-leg-span', '');
+            wxText('sim-leg-max', '');
+            if (cover) cover.classList.add('hidden');
+        }
+        wxText('sim-wx-source', voyage && voyage.run_time ? `ECMWF IFS · run ${formatUTC(new Date(parseTime(voyage.run_time)))}` : '');
+    }
+    // Sample and leg summary at the current playback time, then render.
+    function refreshWeatherWindow(date) {
+        const hit = sampleAt(date);
+        const sample = hit ? hit.sample : null;
+        let leg = null;
+        if (voyage && voyage.legs && sample) {
+            leg = voyage.legs.find(l => l.leg === sample.leg) || voyage.legs[Math.min(sample.leg, voyage.legs.length - 1)] || null;
+        }
+        renderWeatherWindow(sample, leg);
+    }
+    onVoyageUpdated(() => {
+        if (simActive) refreshWeatherWindow(vesselStateAt(simHours).date);
+    });
+    // Phones: start collapsed so the panel does not cover the map.
+    (function () {
+        const d = document.getElementById('sim-weather');
+        if (d && window.matchMedia && window.matchMedia('(max-width: 639px)').matches) d.removeAttribute('open');
+    })();
+
     // Scrubber background: forecast span over the voyage versus the rest.
     function updateForecastBand() {
         const track = document.getElementById('sim-track');
@@ -3488,6 +3611,7 @@
         }
 
         updateVesselPosition(st);
+        refreshWeatherWindow(st.date);
     }
 
     function updateVesselPosition(st) {
