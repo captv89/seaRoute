@@ -1,10 +1,11 @@
 module github.com/captv89/seaRoute
 
-go 1.26.0
+go 1.26.2
 
 require (
 	github.com/gin-gonic/gin v1.12.0
 	github.com/modelcontextprotocol/go-sdk v1.8.0
+	github.com/pspoerri/go-tiled-eccodes v0.3.1
 	modernc.org/sqlite v1.61.1
 )
 
