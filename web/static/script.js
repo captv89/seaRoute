@@ -2246,6 +2246,7 @@
      * opts.keepView: do not re-fit the map to the route
      */
     function computeRoute(opts = {}) {
+        cancelVoyageFetch(); // any reroute makes in-flight voyage weather stale
         const fromLat = parseCoordinate(originLatInput ? originLatInput.value : '', true);
         const fromLon = parseCoordinate(originLonInput ? originLonInput.value : '', false);
         const toLat = parseCoordinate(destLatInput ? destLatInput.value : '', true);
@@ -3006,7 +3007,10 @@
     function cancelVoyageFetch() {
         clearTimeout(voyageTimer);
         voyageReqSeq++;
-        voyageLoading = false;
+        if (voyageLoading) {
+            voyageLoading = false;
+            updateForecastBand();
+        }
     }
 
     // Debounced (300 ms) POST of the current track; only the latest response is used.
@@ -3018,6 +3022,7 @@
             return;
         }
         voyageLoading = true;
+        updateForecastBand();
         voyageTimer = setTimeout(requestVoyageWeather, 300);
     }
     function requestVoyageWeather() {
