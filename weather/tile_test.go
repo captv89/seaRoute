@@ -2,9 +2,11 @@ package weather
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"image/png"
 	"testing"
+	"time"
 )
 
 var tileGrid = Grid{NX: 36, NY: 19, Lat0: 90, Lon0: -180, DLat: -10, DLon: 10}
@@ -29,7 +31,7 @@ func tileRun(t *testing.T) *Run {
 
 func TestTileRenders(t *testing.T) {
 	r := tileRun(t)
-	b, err := NewTiles(1<<20, 2).Get(r, "wind", 3, 0, 0, 0)
+	b, err := NewTiles(1<<20, 2).Get(context.Background(), r, "wind", 3, 0, 0, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -53,11 +55,11 @@ func TestTileRenders(t *testing.T) {
 func TestTileWrapsX(t *testing.T) {
 	r := tileRun(t)
 	ts := NewTiles(1<<22, 2)
-	a, err := ts.Get(r, "wind", 3, 2, 5, 1)
+	a, err := ts.Get(context.Background(), r, "wind", 3, 2, 5, 1)
 	if err != nil {
 		t.Fatal(err)
 	}
-	b, err := ts.Get(r, "wind", 3, 2, 1, 1)
+	b, err := ts.Get(context.Background(), r, "wind", 3, 2, 1, 1)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -80,7 +82,7 @@ func TestTileRejects(t *testing.T) {
 		"y":     {"wind", 3, 2, 4},
 		"negy":  {"wind", 3, 2, -1},
 	} {
-		if _, err := ts.Get(r, c.field, c.hour, c.z, 0, c.y); !errors.Is(err, ErrNotFound) {
+		if _, err := ts.Get(context.Background(), r, c.field, c.hour, c.z, 0, c.y); !errors.Is(err, ErrNotFound) {
 			t.Errorf("%s: err = %v, want ErrNotFound", name, err)
 		}
 	}
@@ -89,8 +91,8 @@ func TestTileRejects(t *testing.T) {
 func TestTileCacheHit(t *testing.T) {
 	r := tileRun(t)
 	ts := NewTiles(1<<20, 1)
-	a, _ := ts.Get(r, "wind", 3, 1, 0, 0)
-	b, _ := ts.Get(r, "wind", 3, 1, 0, 0)
+	a, _ := ts.Get(context.Background(), r, "wind", 3, 1, 0, 0)
+	b, _ := ts.Get(context.Background(), r, "wind", 3, 1, 0, 0)
 	if n := ts.renders.Load(); n != 1 {
 		t.Errorf("renders = %d, want 1", n)
 	}
@@ -101,11 +103,11 @@ func TestTileCacheHit(t *testing.T) {
 
 func TestTileCacheEvicts(t *testing.T) {
 	r := tileRun(t)
-	probe, _ := NewTiles(1<<20, 1).Get(r, "wind", 3, 1, 0, 0)
+	probe, _ := NewTiles(1<<20, 1).Get(context.Background(), r, "wind", 3, 1, 0, 0)
 	ts := NewTiles(int64(len(probe))*3/2, 1) // room for one tile, not two
-	ts.Get(r, "wind", 3, 1, 0, 0)
-	ts.Get(r, "wind", 3, 1, 1, 0)
-	ts.Get(r, "wind", 3, 1, 0, 0)
+	ts.Get(context.Background(), r, "wind", 3, 1, 0, 0)
+	ts.Get(context.Background(), r, "wind", 3, 1, 1, 0)
+	ts.Get(context.Background(), r, "wind", 3, 1, 0, 0)
 	if n := ts.renders.Load(); n != 3 {
 		t.Errorf("renders = %d, want 3 (first tile evicted)", n)
 	}
@@ -125,7 +127,7 @@ func BenchmarkTileRender(b *testing.B) {
 	ts := NewTiles(1, 1) // too small to keep anything: every Get renders
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		if _, err := ts.Get(r, "wind", 3, 3, 4, 3); err != nil {
+		if _, err := ts.Get(context.Background(), r, "wind", 3, 3, 4, 3); err != nil {
 			b.Fatal(err)
 		}
 	}
@@ -163,7 +165,7 @@ func TestTileReadFailureNotCached(t *testing.T) {
 	r := tileRun(t)
 	r.Close()
 	ts := NewTiles(1<<20, 1)
-	if _, err := ts.Get(r, "wind", 3, 0, 0, 0); err == nil {
+	if _, err := ts.Get(context.Background(), r, "wind", 3, 0, 0, 0); err == nil {
 		t.Fatal("Get on a closed run succeeded")
 	}
 	if len(ts.byKey) != 0 || ts.renders.Load() != 0 {
@@ -173,17 +175,41 @@ func TestTileReadFailureNotCached(t *testing.T) {
 
 func TestTileNegativeValue(t *testing.T) {
 	r := newTestRun(t, tileGrid, map[FieldID]fill{SWH: func(_, _, _ int) float32 { return -5 }})
-	if _, err := NewTiles(1<<20, 1).Get(r, "waves", 3, 0, 0, 0); err != nil {
+	if _, err := NewTiles(1<<20, 1).Get(context.Background(), r, "waves", 3, 0, 0, 0); err != nil {
 		t.Fatal(err)
 	}
 }
 
 func TestTileCachedExactSize(t *testing.T) {
-	b, err := NewTiles(1<<20, 1).Get(tileRun(t), "wind", 3, 0, 0, 0)
+	b, err := NewTiles(1<<20, 1).Get(context.Background(), tileRun(t), "wind", 3, 0, 0, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if cap(b) != len(b) {
 		t.Errorf("cap %d != len %d", cap(b), len(b))
+	}
+}
+
+func TestTileGetHonoursContext(t *testing.T) {
+	r := tileRun(t)
+	ts := NewTiles(1<<20, 1)
+	ts.sem <- struct{}{} // the only slot is taken
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	done := make(chan error, 1)
+	go func() {
+		_, err := ts.Get(ctx, r, "wind", 3, 1, 0, 0)
+		done <- err
+	}()
+	select {
+	case err := <-done:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("err = %v, want context.Canceled", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("Get did not return after cancel")
+	}
+	if n := ts.renders.Load(); n != 0 {
+		t.Fatalf("renders = %d, want 0", n)
 	}
 }

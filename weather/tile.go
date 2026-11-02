@@ -3,6 +3,7 @@ package weather
 import (
 	"bytes"
 	"container/list"
+	"context"
 	"errors"
 	"fmt"
 	"image"
@@ -136,8 +137,9 @@ func NewTiles(maxBytes int64, workers int) *Tiles {
 // Get returns the PNG for tile (z, x, y) of field ("wind", "waves" or
 // "current") at forecast hour stepHour of run r. Tiles are 256x256 and use the
 // Web Mercator layout; x is taken modulo 2^z. The returned slice is shared and
-// must not be modified.
-func (t *Tiles) Get(r *Run, field string, stepHour, z, x, y int) ([]byte, error) {
+// must not be modified. A request waiting for a render slot gives up when ctx
+// is done; cache hits ignore ctx.
+func (t *Tiles) Get(ctx context.Context, r *Run, field string, stepHour, z, x, y int) ([]byte, error) {
 	tf := tileFields[field]
 	step := -1
 	for i, h := range r.Steps {
@@ -160,7 +162,15 @@ func (t *Tiles) Get(r *Run, field string, stepHour, z, x, y int) ([]byte, error)
 	}
 	t.mu.Unlock()
 
-	t.sem <- struct{}{}
+	select {
+	case t.sem <- struct{}{}:
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+	if err := ctx.Err(); err != nil {
+		<-t.sem
+		return nil, err
+	}
 	b, err := render(r, tf, step, z, x, y)
 	<-t.sem
 	if err != nil {

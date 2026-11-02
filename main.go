@@ -409,33 +409,20 @@ func setupRoutes(router *gin.Engine, app *App) {
 			c.Status(http.StatusNotFound)
 			return
 		}
-		type result struct {
-			png []byte
-			err error
-		}
 		ctx, cancel := context.WithTimeout(c.Request.Context(), tileTimeout)
 		defer cancel()
-		field := c.Param("field")    // read now: the gin context is reused once the handler returns
-		done := make(chan result, 1) // buffered: the goroutine never blocks if we gave up
-		go func() {
-			b, err := app.Tiles.Get(run, field, step, z, x, y)
-			done <- result{b, err}
-		}()
-		select {
-		case <-ctx.Done():
+		png, err := app.Tiles.Get(ctx, run, c.Param("field"), step, z, x, y)
+		switch {
+		case errors.Is(err, weather.ErrNotFound):
+			c.Status(http.StatusNotFound)
+		case errors.Is(err, context.DeadlineExceeded), errors.Is(err, context.Canceled):
 			c.Status(http.StatusServiceUnavailable)
-		case r := <-done:
-			if errors.Is(r.err, weather.ErrNotFound) {
-				c.Status(http.StatusNotFound)
-				return
-			}
-			if r.err != nil {
-				log.Printf("weather tile: %v", r.err)
-				c.Status(http.StatusInternalServerError)
-				return
-			}
+		case err != nil:
+			log.Printf("weather tile: %v", err)
+			c.Status(http.StatusInternalServerError)
+		default:
 			c.Header("Cache-Control", "public, max-age=86400, immutable")
-			c.Data(http.StatusOK, "image/png", r.png)
+			c.Data(http.StatusOK, "image/png", png)
 		}
 	})
 
