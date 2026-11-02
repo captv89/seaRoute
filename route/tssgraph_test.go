@@ -242,8 +242,8 @@ func TestAccessJoin(t *testing.T) {
 func TestLoadAll(t *testing.T) {
 	g := testTSSGraph(t)
 	s := g.stats
-	t.Logf("LoadAll %v (TSS build %v); nodes %d (MARNET %d); edges: MARNET %d, lane %d, join %d (far %d, chain %d, access nodes %d); blocked: zone/line %d, against-lane %d, own lane edges %d; version %s",
-		tssGraphTook, s.tssBuild, len(g.nodes), g.marnetNodes, s.marnet, s.lane, s.join, s.joinFar, s.chain, s.access, s.blockedCross, s.blockedLane, s.blockedOwn, g.Version())
+	t.Logf("LoadAll %v (TSS build %v, min-depth build %v); nodes %d (MARNET %d); edges: MARNET %d, lane %d, join %d (far %d, chain %d, access nodes %d); blocked: zone/line %d, against-lane %d, own lane edges %d; version %s",
+		tssGraphTook, s.tssBuild, s.depthBuild, len(g.nodes), g.marnetNodes, s.marnet, s.lane, s.join, s.joinFar, s.chain, s.access, s.blockedCross, s.blockedLane, s.blockedOwn, g.Version())
 	if s.tssBuild > 10*time.Second {
 		t.Errorf("TSS build took %v, want < 10 s", s.tssBuild)
 	}
@@ -260,7 +260,16 @@ func TestLoadAll(t *testing.T) {
 func TestNoTSSMatchesMarnet(t *testing.T) {
 	g := testTSSGraph(t)
 	want := mustRoute(t, Options{}, rotterdam, singapore)
-	got := routeOn(t, g, Options{NoTSS: true}, rotterdam, singapore)
+	// Compare the network searches: Route also straightens the TSS graph's
+	// path (taut stage), which the plain MARNET graph, with no land, cannot.
+	blocked, _ := g.blockedPasses(nil, nil)
+	sc := searchCtx{blocked: blocked, noTSS: true}
+	s, _ := g.nearest(rotterdam, sc)
+	e, _ := g.nearest(singapore, sc)
+	got, err := g.leg(rotterdam, singapore, s, e, sc, AStar)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if math.Abs(got.DistanceM-want.DistanceM) > 1e-6 {
 		t.Errorf("NoTSS %.3f m, MARNET %.3f m", got.DistanceM, want.DistanceM)
 	}
@@ -403,47 +412,6 @@ func TestPortInsideScheme(t *testing.T) {
 	r := routeOn(t, g, Options{}, Position{1.45, 51.0}, rotterdam)
 	if len(r.Warnings) != 0 {
 		t.Errorf("warnings = %+v, want none", r.Warnings)
-	}
-}
-
-func TestShortcutInsideSchemeObeysRules(t *testing.T) {
-	// Zigzag inside a scheme area (the hull of its features; a boundary
-	// sets the extent) with no zone or line in the way: smoothed.
-	bound := TSSFeature{Type: "boundary", Scheme: "tss-a", OSMID: 1, Coords: rect(-0.1, -0.2, 2.1, 0.3)}
-	g := NewWith(zigzag(), landOf(rect(0, 10, 1, 11)), NewTSS([]TSSFeature{bound}, "v"))
-	if r := routeOn(t, g, Options{Kinks: true}, Position{0, 0}, Position{2, 0}); len(r.Path) != 2 {
-		t.Errorf("free shortcut in scheme area not taken: %v", r.Path)
-	}
-	// A small zone on the chord at lon 0.5, clear of the zigzag (lat 0.08+
-	// there): no shortcut may pass it.
-	zone := TSSFeature{Type: "zone", Scheme: "tss-a", OSMID: 2, Coords: rect(0.4, -0.01, 0.6, 0.01)}
-	g = NewWith(zigzag(), landOf(rect(0, 10, 1, 11)), NewTSS([]TSSFeature{bound, zone}, "v"))
-	r := routeOn(t, g, Options{Kinks: true}, Position{0, 0}, Position{2, 0})
-	if len(r.Path) == 2 {
-		t.Errorf("shortcut through the zone taken: %v", r.Path)
-	}
-	if v := g.tss.violations(r.Path, nil); len(v) > 0 {
-		t.Errorf("shortcut breaks TSS: %v", v)
-	}
-}
-
-func TestDoverStraightenedBothWays(t *testing.T) {
-	if testing.Short() {
-		t.Skip("short")
-	}
-	g := testTSSGraph(t)
-	box := [4]float64{0.9, 50.6, 2.3, 51.4}
-	for _, dir := range [][2]Position{{rotterdam, bilbao}, {bilbao, rotterdam}, {rotterdam, singapore}} {
-		plain := routeOn(t, g, Options{}, dir[0], dir[1])
-		r := routeOn(t, g, Options{Kinks: true}, dir[0], dir[1])
-		before, after := kinksIn(g, plain, box), kinksIn(g, r, box)
-		t.Logf("%v->%v Dover free kinks %d -> %d", dir[0], dir[1], before, after)
-		if after*2 > before {
-			t.Errorf("%v->%v: Dover free kinks %d, TSS-only %d", dir[0], dir[1], after, before)
-		}
-		if v := g.tss.violations(r.Path, nil); len(v) > 0 {
-			t.Errorf("%v->%v: violations %v", dir[0], dir[1], v)
-		}
 	}
 }
 

@@ -33,14 +33,17 @@ type FeatureProperties struct {
 	Passages    []string       `json:"passages"`
 	Waypoints   []WaypointItem `json:"waypoints"`
 
-	// Kinks and ClearanceNM echo the effective settings of the request.
-	Kinks         bool             `json:"kinks"`
-	ClearanceNM   float64          `json:"clearance_nm"`
-	Proposals     []route.Proposal `json:"proposals"`
-	Stretches     []route.Stretch  `json:"stretches"`
-	Warnings      []route.Warning  `json:"warnings"`
-	IgnoredAccept []string         `json:"ignored_accept"`
-	Hazards       []route.Hazard   `json:"hazards"`
+	// ClearanceNM echoes the effective setting of the request.
+	ClearanceNM float64         `json:"clearance_nm"`
+	Stretches   []route.Stretch `json:"stretches"`
+	Warnings    []route.Warning `json:"warnings"`
+	Hazards     []route.Hazard  `json:"hazards"`
+
+	// Depth is the depth the vessel needs; ConfinedDepthM the same in a canal
+	// or strait. Notices say where the draught changed the route.
+	Depth          route.DepthLimit `json:"depth"`
+	ConfinedDepthM float64          `json:"confined_depth_limit_m"`
+	Notices        []route.Notice   `json:"notices"`
 }
 
 type Feature struct {
@@ -59,7 +62,7 @@ type Output struct {
 	Features []Feature `json:"features"`
 }
 
-func generateOutput(r route.Route, kinks bool, clearanceNM float64, oCoords route.Position, dCoords route.Position, totalDistance float64, oToWpDist float64, wpToDDist float64, Wp2WpDist float64, routeName string, passages []string) Output {
+func generateOutput(r route.Route, clearanceNM float64, oCoords route.Position, dCoords route.Position, totalDistance float64, oToWpDist float64, wpToDDist float64, Wp2WpDist float64, routeName, originName, destName string, passages []string) Output {
 	totalDistNM := totalDistance / 1.852
 	totalDistMI := totalDistance * 0.621371
 
@@ -78,8 +81,14 @@ func generateOutput(r route.Route, kinks bool, clearanceNM float64, oCoords rout
 		name := fmt.Sprintf("Waypoint %d", i+1)
 		if i == 0 {
 			name = "Origin"
+			if originName != "" {
+				name = originName
+			}
 		} else if i == len(r.Path)-1 {
 			name = "Destination"
+			if destName != "" {
+				name = destName
+			}
 		}
 
 		var passage string
@@ -144,13 +153,14 @@ func generateOutput(r route.Route, kinks bool, clearanceNM float64, oCoords rout
 			Passages:    passages,
 			Waypoints:   waypoints,
 
-			Kinks:         kinks,
-			ClearanceNM:   clearanceNM,
-			Proposals:     nonNil(r.Proposals),
-			Stretches:     nonNil(r.Stretches),
-			Warnings:      nonNil(r.Warnings),
-			IgnoredAccept: nonNil(r.IgnoredAccept),
-			Hazards:       nonNil(r.Hazards),
+			ClearanceNM: clearanceNM,
+			Stretches:   nonNil(r.Stretches),
+			Warnings:    nonNil(r.Warnings),
+			Hazards:     nonNil(r.Hazards),
+
+			Depth:          r.Depth,
+			ConfinedDepthM: r.ConfinedDepthM,
+			Notices:        nonNil(r.Notices),
 		},
 		ID: "1",
 	}

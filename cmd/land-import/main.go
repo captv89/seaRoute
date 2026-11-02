@@ -21,17 +21,17 @@ import (
 	"encoding/binary"
 	"encoding/json"
 	"flag"
-	"fmt"
 	"io"
 	"log"
 	"math"
 	"os"
+
+	"github.com/captv89/seaRoute/internal/corridor"
 )
 
 const (
 	earthR   = 6371008.8
 	cellSize = 0.5 // degrees
-	nmPerDeg = 60.0
 	source   = "osm-land-polygons-split-4326"
 )
 
@@ -47,7 +47,7 @@ func main() {
 	shp := flag.String("shp", "", "land_polygons.shp (polygon shapefile, EPSG:4326)")
 	network := flag.String("network", "", "network GeoJSON (MARNET) defining the corridor")
 	tol := flag.Float64("tolerance", 200, "Douglas-Peucker tolerance in metres")
-	corridor := flag.Float64("corridor", 30, "corridor radius around network vertices in NM")
+	corridorNM := flag.Float64("corridor", 30, "corridor radius around network vertices in NM")
 	date := flag.String("date", "", "source data date YYYY-MM-DD for the header")
 	out := flag.String("out", "", "output .bin.gz")
 	flag.Parse()
@@ -55,7 +55,7 @@ func main() {
 		flag.Usage()
 		os.Exit(2)
 	}
-	cells, err := corridorCells(*network, *corridor)
+	cells, err := corridor.Cells(*network, *corridorNM, cellSize)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -83,7 +83,7 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	hdr := header{Source: source, Date: *date, ToleranceM: *tol, CorridorNM: *corridor, Rings: len(rings)}
+	hdr := header{Source: source, Date: *date, ToleranceM: *tol, CorridorNM: *corridorNM, Rings: len(rings)}
 	if err := encode(f, hdr, rings); err != nil {
 		log.Fatal(err)
 	}
@@ -108,73 +108,6 @@ func wrapCX(cx int32) int32 {
 		cx += n
 	}
 	return cx - n/2
-}
-
-// corridorCells marks 0.5-degree cells within radiusNM of any vertex of the
-// network's LineString / MultiLineString features.
-func corridorCells(networkPath string, radiusNM float64) (map[[2]int32]bool, error) {
-	f, err := os.Open(networkPath)
-	if err != nil {
-		return nil, err
-	}
-	defer f.Close()
-	var fc struct {
-		Features []struct {
-			Geometry struct {
-				Type        string          `json:"type"`
-				Coordinates json.RawMessage `json:"coordinates"`
-			} `json:"geometry"`
-		} `json:"features"`
-	}
-	if err := json.NewDecoder(bufio.NewReaderSize(f, 1<<20)).Decode(&fc); err != nil {
-		return nil, fmt.Errorf("network: %w", err)
-	}
-	cells := map[[2]int32]bool{}
-	mark := func(lon, lat float64) {
-		dLat := radiusNM / nmPerDeg
-		cl := math.Cos(math.Min(math.Abs(lat)+dLat, 89) * math.Pi / 180)
-		dLon := dLat / cl
-		if dLon > 180 {
-			dLon = 180
-		}
-		y0, y1 := int32(math.Floor((lat-dLat)/cellSize)), int32(math.Floor((lat+dLat)/cellSize))
-		x0, x1 := int32(math.Floor((lon-dLon)/cellSize)), int32(math.Floor((lon+dLon)/cellSize))
-		for y := y0; y <= y1; y++ {
-			for x := x0; x <= x1; x++ {
-				cells[[2]int32{wrapCX(x), y}] = true
-			}
-		}
-	}
-	for _, ft := range fc.Features {
-		switch ft.Geometry.Type {
-		case "LineString":
-			var c [][]float64
-			if json.Unmarshal(ft.Geometry.Coordinates, &c) != nil {
-				continue
-			}
-			for _, p := range c {
-				if len(p) >= 2 {
-					mark(p[0], p[1])
-				}
-			}
-		case "MultiLineString":
-			var c [][][]float64
-			if json.Unmarshal(ft.Geometry.Coordinates, &c) != nil {
-				continue
-			}
-			for _, l := range c {
-				for _, p := range l {
-					if len(p) >= 2 {
-						mark(p[0], p[1])
-					}
-				}
-			}
-		}
-	}
-	if len(cells) == 0 {
-		return nil, fmt.Errorf("network %s has no line vertices", networkPath)
-	}
-	return cells, nil
 }
 
 // touchesCorridor reports whether the ring's bounding box overlaps a marked cell.

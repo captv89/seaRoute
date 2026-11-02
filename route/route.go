@@ -52,14 +52,10 @@ type Options struct {
 	// edges are skipped and TSS blocks are ignored. Internal; not exposed in
 	// the UI or APIs.
 	NoTSS bool
-	// Kinks removes route kinks per leg (see smooth.go): shortcuts that keep
-	// ClearanceNM from land are applied, nearer ones are offered as Proposals.
-	// Needs a loaded land dataset.
-	Kinks bool
-	// ClearanceNM is the land clearance a shortcut must keep; 0 means 2.
+	// ClearanceNM is the land clearance hazards are measured against; 0 means 2.
 	ClearanceNM float64
-	// Accept lists Proposal IDs to apply. Unknown IDs go to Route.IgnoredAccept.
-	Accept []string
+	// Vessel is the ship the route is planned for; zero fields mean the defaults.
+	Vessel Vessel
 }
 
 // ClosedByDefault are passages a route avoids unless Options.Allow opens
@@ -100,8 +96,10 @@ type Leg struct {
 	// they were lifted.
 	lifted    []bool
 	liftOrder []int32
+	// nodes and edges are the network search result behind the path.
+	nodes, edges []int32
 	// segs describes each path segment: the network edge index it follows, or
-	// segConnector, segSmoothed, segAccepted (see smooth.go).
+	// segConnector (see provenance.go).
 	segs []int32
 }
 
@@ -121,15 +119,17 @@ type Route struct {
 	Passages  []string   `json:"passages"`
 	// Warnings has one entry per scheme whose rules were lifted on any leg.
 	Warnings []Warning `json:"warnings"`
-	// Proposals are kink shortcuts the caller may accept, by ID, in Options.Accept.
-	Proposals []Proposal `json:"proposals"`
 	// Stretches label runs of Path by provenance; From and To index Path.
 	Stretches []Stretch `json:"stretches"`
-	// IgnoredAccept lists Options.Accept IDs that matched nothing on this route.
-	IgnoredAccept []string `json:"ignored_accept"`
 	// Hazards are runs of Path that touch land or pass closer than the
 	// clearance. Empty without land data.
 	Hazards []Hazard `json:"hazards"`
+	// Depth is the depth the vessel needs in open water; ConfinedDepthM the
+	// same in confined passages.
+	Depth          DepthLimit `json:"depth"`
+	ConfinedDepthM float64    `json:"confined_depth_limit_m"`
+	// Notices report where the draught changed the route.
+	Notices []Notice `json:"notices"`
 }
 
 // DistanceNM returns the total distance in nautical miles.
@@ -154,8 +154,11 @@ type Graph struct {
 	scheme      []int32 // per directed edge: responsible scheme (index into tss.Schemes), -1 for none
 	twin        []int32 // per directed edge: the reverse edge
 	land        *Land
-	corridor    map[int64][]int32 // MARNET vertices by 1-degree cell, for inCorridor
+	approach    map[int64][]approachNode // nodes of fixed-limit passages (depth), by 0.5 degree cell
+	corridor    map[int64][]Position     // densified MARNET edges by 1-degree cell, for inCorridor
 	tss         *TSS
+	depth       *Depth
+	minDepth    []float32 // per directed edge: shallowest depth along it, +Inf when unknown or exempt
 	version     string
 	stats       tssStats
 }
@@ -203,7 +206,7 @@ type Segment struct {
 // Datasets names the files LoadAll reads. An empty Land or TSS path turns
 // that feature off.
 type Datasets struct {
-	Network, Land, TSS string
+	Network, Land, TSS, Depth string
 }
 
 // Load reads a GeoJSON network of LineStrings. A "pass" property tags
@@ -236,8 +239,14 @@ func LoadAll(d Datasets) (*Graph, error) {
 			return nil, err
 		}
 	}
+	var depth *Depth
+	if d.Depth != "" {
+		if depth, err = LoadDepth(d.Depth); err != nil {
+			return nil, err
+		}
+	}
 	sum := sha256.Sum256(data)
-	return newGraph(segs, land, tss, hex.EncodeToString(sum[:])[:8]), nil
+	return newGraph(segs, land, tss, depth, hex.EncodeToString(sum[:])[:8]), nil
 }
 
 func parseNetwork(data []byte) ([]Segment, error) {
@@ -278,11 +287,11 @@ func New(segs []Segment) *Graph { return NewWith(segs, nil, nil) }
 // edges that cross a separation zone or line, or run against a lane, are
 // blocked (see applyTSS). Land is used only to drop joins that touch land.
 func NewWith(segs []Segment, land *Land, tss *TSS) *Graph {
-	return newGraph(segs, land, tss, segmentsHash(segs))
+	return newGraph(segs, land, tss, nil, segmentsHash(segs))
 }
 
-func newGraph(segs []Segment, land *Land, tss *TSS, netHash string) *Graph {
-	g := &Graph{passes: []string{""}, land: land, tss: tss}
+func newGraph(segs []Segment, land *Land, tss *TSS, depth *Depth, netHash string) *Graph {
+	g := &Graph{passes: []string{""}, land: land, tss: tss, depth: depth}
 	ids := map[[2]int64]int32{}
 	node := func(p Position) int32 {
 		k := nodeKey(p)
@@ -316,7 +325,7 @@ func newGraph(segs []Segment, land *Land, tss *TSS, netHash string) *Graph {
 	}
 	g.marnetNodes = len(g.nodes)
 	if land != nil {
-		g.buildCorridor()
+		g.buildCorridor(edges)
 	}
 	g.stats.marnet = len(edges) / 2
 	if tss != nil {
@@ -350,7 +359,8 @@ func newGraph(segs []Segment, land *Land, tss *TSS, netHash string) *Graph {
 	for k := range edges {
 		g.twin[pos[k]] = pos[k^1]
 	}
-	g.version = netHash + "/" + landVersion(land) + "/" + tssVersion(tss)
+	g.version = netHash + "/" + landVersion(land) + "/" + tssVersion(tss) + "/" + depthVersion(depth)
+	g.buildMinDepth()
 	g.markLargestComponent()
 	g.unit = make([]vec3, len(g.nodes))
 	for i, p := range g.nodes {
@@ -451,22 +461,35 @@ func (g *Graph) Route(points []Position, opts Options) (Route, error) {
 	if err != nil {
 		return Route{}, err
 	}
-	var lifted []bool // snapping never lifts schemes; each leg lifts its own
+	vessel := opts.Vessel.WithDefaults()
+	rr := reroute{vessel: vessel, lim: vessel.DepthLimit(false), limConfine: vessel.DepthLimit(true).LimitM}
+	// Constrained requests also close passages the draught exceeds and edges
+	// too shallow; the unconstrained ones keep every other option.
+	plain := searchCtx{blocked: blocked, noTSS: opts.NoTSS} // snapping never lifts schemes; each leg lifts its own
+	constrained := searchCtx{noTSS: opts.NoTSS}
+	constrained.blocked, rr.closed = g.draughtBlocked(blocked, vessel.DraughtM)
+	rr.shallow = g.shallowEdges(rr.lim.LimitM, rr.limConfine, points)
+	constrained.shallow = rr.shallow
+	limited := rr.shallow != nil || len(rr.closed) > 0
 
 	snapped := make([]int32, len(points))
 	for i, p := range points {
-		v, ok := g.nearest(p, blocked, lifted, opts.NoTSS)
+		v, ok := g.nearest(p, constrained)
+		if !ok {
+			v, ok = g.nearest(p, plain)
+		}
 		if !ok {
 			return Route{}, errors.New("network has no usable nodes")
 		}
 		snapped[i] = v
 	}
 
-	r := Route{Warnings: []Warning{}, Proposals: []Proposal{}, Stretches: []Stretch{}, IgnoredAccept: []string{}}
-	var sm *smoother
-	if g.land != nil && opts.Kinks {
-		sm = g.newSmoother(opts)
+	pc := pathCtx{clearM: DefaultClearanceNM * MetresPerNM, limitM: rr.lim.LimitM, limitConfinedM: rr.limConfine, ends: points, noTSS: opts.NoTSS}
+	if opts.ClearanceNM > 0 {
+		pc.clearM = opts.ClearanceNM * MetresPerNM
 	}
+	r := Route{Warnings: []Warning{}, Stretches: []Stretch{}, Notices: []Notice{}, Depth: rr.lim, ConfinedDepthM: rr.limConfine}
+	noRoute := false
 	warned := map[int32]bool{}
 	for i := 0; i+1 < len(points); i++ {
 		from, to := points[i], points[i+1]
@@ -476,17 +499,31 @@ func (g *Graph) Route(points []Position, opts Options) (Route, error) {
 		if i+2 < len(points) {
 			to = g.nodes[snapped[i+1]]
 		}
-		leg, err := g.leg(from, to, snapped[i], snapped[i+1], blocked, opts.NoTSS, opts.Algorithm)
+		leg, err := g.leg(from, to, snapped[i], snapped[i+1], constrained, opts.Algorithm)
+		noRouteLeg := false
+		if err != nil && limited {
+			// No path deep enough: show the shortest one, and say so once.
+			if leg, err = g.leg(from, to, snapped[i], snapped[i+1], plain, opts.Algorithm); err == nil {
+				noRouteLeg = true
+			}
+			if noRouteLeg && !noRoute {
+				noRoute = true
+				r.Notices = append(r.Notices, noRouteNotice(vessel, rr.lim))
+			}
+		} else if err == nil && limited {
+			if free, ferr := g.leg(from, to, snapped[i], snapped[i+1], plain, opts.Algorithm); ferr == nil {
+				c, u := pathSeq{leg.nodes, leg.edges}, pathSeq{free.nodes, free.edges}
+				r.Notices = append(r.Notices, g.notices(g.divergences(c, u), rr)...)
+			}
+		}
 		if err != nil {
 			return Route{}, fmt.Errorf("leg %d: %w", i+1, err)
 		}
-		if sm != nil {
-			base := max(0, len(r.Path)-1) // index of the leg start in r.Path
-			for _, p := range sm.smoothLeg(&leg) {
-				p.from, p.to = p.from+base, p.to+base
-				r.Proposals = append(r.Proposals, p)
-			}
+		lc := pc
+		if noRouteLeg {
+			lc.limitM = 0 // no path is deep enough: shape the shortest one by land only
 		}
+		g.tautLeg(&leg, &lc)
 		r.Legs = append(r.Legs, leg)
 		for _, k := range leg.liftOrder {
 			if !warned[k] {
@@ -517,8 +554,7 @@ func (g *Graph) Route(points []Position, opts Options) (Route, error) {
 	}
 	flags, schemes := g.segFlags(r.Legs)
 	r.Stretches = stretches(flags, schemes)
-	r.IgnoredAccept = ignoredAccept(opts.Accept, sm)
-	r.Hazards = g.hazards(r.Legs, r.Path, r.Proposals, opts)
+	r.Hazards = g.hazards(r.Legs, r.Path, opts, &pc)
 	return r, nil
 }
 
@@ -555,13 +591,13 @@ func (g *Graph) blockedPasses(avoid, allow []string) ([]bool, error) {
 
 // nearest returns the closest usable MARNET node that has at least one open
 // edge. Lane nodes are never snapped to.
-func (g *Graph) nearest(p Position, blocked, lifted []bool, noTSS bool) (int32, bool) {
+func (g *Graph) nearest(p Position, sc searchCtx) (int32, bool) {
 	// Chord length on the unit sphere rises with great-circle distance,
 	// so the nearest by chord is the nearest by distance.
 	q := toUnit(p)
 	best, bestC := int32(-1), math.Inf(1)
 	for v := range g.marnetNodes {
-		if !g.usable[v] || !g.hasOpenEdge(int32(v), blocked, lifted, noTSS) {
+		if !g.usable[v] || !g.hasOpenEdge(int32(v), sc) {
 			continue
 		}
 		if c := q.chord2(g.unit[v]); c < bestC {
@@ -571,9 +607,9 @@ func (g *Graph) nearest(p Position, blocked, lifted []bool, noTSS bool) (int32, 
 	return best, best >= 0
 }
 
-func (g *Graph) hasOpenEdge(v int32, blocked, lifted []bool, noTSS bool) bool {
+func (g *Graph) hasOpenEdge(v int32, sc searchCtx) bool {
 	for e := g.first[v]; e < g.first[v+1]; e++ {
-		if g.open(e, blocked, lifted, noTSS) {
+		if g.open(e, sc) {
 			return true
 		}
 	}
@@ -582,12 +618,12 @@ func (g *Graph) hasOpenEdge(v int32, blocked, lifted []bool, noTSS bool) bool {
 
 // leg routes s -> t. When TSS leaves no path it lifts one scheme at a time
 // (see liftFor) and searches again, until a path exists or nothing is left to lift.
-func (g *Graph) leg(from, to Position, s, t int32, blocked []bool, noTSS bool, alg Algorithm) (Leg, error) {
+func (g *Graph) leg(from, to Position, s, t int32, sc searchCtx, alg Algorithm) (Leg, error) {
 	var lifted []bool
 	var order []int32
-	nodes, edges, networkM, ok := g.search(s, t, blocked, lifted, noTSS, alg)
-	for !ok && !noTSS && g.tss != nil {
-		k, found := g.liftFor(s, t, blocked, lifted)
+	nodes, edges, networkM, ok := g.search(s, t, sc, alg)
+	for !ok && !sc.noTSS && g.tss != nil {
+		k, found := g.liftFor(s, t, sc)
 		if !found {
 			break
 		}
@@ -595,13 +631,14 @@ func (g *Graph) leg(from, to Position, s, t int32, blocked []bool, noTSS bool, a
 			lifted = make([]bool, len(g.tss.Schemes))
 		}
 		lifted[k] = true
+		sc.lifted = lifted
 		order = append(order, k)
-		nodes, edges, networkM, ok = g.search(s, t, blocked, lifted, noTSS, alg)
+		nodes, edges, networkM, ok = g.search(s, t, sc, alg)
 	}
 	if !ok {
 		return Leg{}, errors.New("no path on the network with these passages avoided")
 	}
-	leg := Leg{From: from, To: to, NetworkM: networkM, Passages: []string{}, lifted: lifted, liftOrder: order}
+	leg := Leg{From: from, To: to, NetworkM: networkM, Passages: []string{}, lifted: lifted, liftOrder: order, nodes: nodes, edges: edges}
 	leg.Path = []Position{from}
 	for k, v := range nodes {
 		if p := g.nodes[v]; p != leg.Path[len(leg.Path)-1] {

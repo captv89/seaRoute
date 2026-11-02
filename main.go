@@ -29,6 +29,16 @@ import (
 type App struct {
 	PortData   []Port
 	RouteGraph *route.Graph
+	// Datasets lists the data the router runs on, for the system info card.
+	Datasets []DatasetInfo
+}
+
+// DatasetInfo describes one dataset and whether it loaded.
+type DatasetInfo struct {
+	Name   string `json:"name"`
+	Source string `json:"source"`
+	Use    string `json:"use"`
+	Loaded bool   `json:"loaded"`
 }
 
 // WaypointPoint represents an origin or destination specified by name or coordinate
@@ -36,6 +46,9 @@ type WaypointPoint struct {
 	Port string   `json:"port,omitempty"`
 	Lat  *float64 `json:"lat,omitempty"`
 	Lon  *float64 `json:"lon,omitempty"`
+	// Name labels a coordinate point (the port the client picked). Optional;
+	// without it a point on a known port takes that port's name.
+	Name string `json:"name,omitempty"`
 }
 
 // WaypointRequest represents a validated waypoint calculation request
@@ -49,12 +62,20 @@ type WaypointRequest struct {
 	Avoid []string `json:"avoid,omitempty"`
 	// Allow opens passages closed by default (the Arctic routes). Optional.
 	Allow []string `json:"allow,omitempty"`
-	// Kinks switches smoothing and proposals on or off. Default true.
-	Kinks *bool `json:"kinks,omitempty"`
 	// ClearanceNM is the land clearance in nautical miles, 0.5-10. Default 2.
 	ClearanceNM *float64 `json:"clearance_nm,omitempty"`
-	// Accept lists proposal IDs to apply. At most 200, each at most 32 chars.
-	Accept []string `json:"accept,omitempty"`
+	// DraughtM is the vessel draught in metres, 1-25. Default 10.
+	DraughtM *float64 `json:"draught_m,omitempty"`
+	// SpeedKn is the speed in knots used for squat, 1-30. Default 14.
+	SpeedKn *float64 `json:"speed_kn,omitempty"`
+	// VesselType is tanker, bulk, general or container. Default bulk.
+	VesselType string `json:"vessel_type,omitempty"`
+}
+
+// vessel applies the defaults for absent fields and validates the result.
+// An explicit zero is out of range, not a request for the default.
+func (r WaypointRequest) vessel() (route.Vessel, error) {
+	return route.NewVessel(r.DraughtM, r.SpeedKn, r.VesselType)
 }
 
 // maxWaypointsBody caps the /waypoints body; 200 IDs of 32 chars is under 10 KB.
@@ -108,16 +129,25 @@ func main() {
 	log.Printf("Loaded %d ports", len(app.PortData))
 
 	// Pre-load and cache the route graph at startup
-	// Land and TSS data are optional: without a file that feature is off.
+	// Land, TSS and depth data are optional: without a file that feature is off.
 	datasets := route.Datasets{Network: "dataset/marnet_plus_5km.geojson"}
+	app.Datasets = []DatasetInfo{
+		{Name: "Sea lane network", Source: "Eurostat MARNET 5 km", Use: "routing graph", Loaded: true},
+		{Name: "Ports", Source: "NGA World Port Index", Use: "port search and names", Loaded: len(ports) > 0},
+	}
 	for _, opt := range []struct {
 		name, path string
 		dst        *string
+		info       DatasetInfo
 	}{
-		{"land", "dataset/land_osm.bin.gz", &datasets.Land},
-		{"TSS", "dataset/tss_osm.geojson.gz", &datasets.TSS},
+		{"land", "dataset/land_osm.bin.gz", &datasets.Land, DatasetInfo{Name: "Coastline", Source: "OpenStreetMap land polygons", Use: "land clearance"}},
+		{"TSS", "dataset/tss_osm.geojson.gz", &datasets.TSS, DatasetInfo{Name: "Traffic separation", Source: "OpenStreetMap seamarks", Use: "TSS lanes and rules"}},
+		{"depth", "dataset/depth_gebco.bin.gz", &datasets.Depth, DatasetInfo{Name: "Water depth", Source: "GEBCO 2026 grid, 15 arc-sec", Use: "draught and squat limits"}},
 	} {
-		if _, statErr := os.Stat(opt.path); statErr != nil {
+		_, statErr := os.Stat(opt.path)
+		opt.info.Loaded = statErr == nil
+		app.Datasets = append(app.Datasets, opt.info)
+		if statErr != nil {
 			log.Printf("Warning: %s dataset %s not found, %s handling is off", opt.name, opt.path, opt.name)
 			continue
 		}
@@ -193,34 +223,46 @@ func main() {
 }
 
 // resolvePoint extracts a position and display name from a WaypointPoint or fallback port name
-func resolvePoint(p *WaypointPoint, fallbackPort string, app *App) (route.Position, string, error) {
+// resolvePoint returns the point, its label and whether the label names a
+// place (a port) rather than repeating the coordinates.
+func resolvePoint(p *WaypointPoint, fallbackPort string, app *App) (route.Position, string, bool, error) {
 	if p != nil && p.Lat != nil && p.Lon != nil {
 		if math.IsNaN(*p.Lat) || math.IsNaN(*p.Lon) || math.IsInf(*p.Lat, 0) || math.IsInf(*p.Lon, 0) || math.Abs(*p.Lat) > 90 || math.Abs(*p.Lon) > 180 {
-			return route.Position{}, "", errors.New("latitude or longitude out of range")
+			return route.Position{}, "", false, errors.New("latitude or longitude out of range")
 		}
-		return route.Position{*p.Lon, *p.Lat}, fmt.Sprintf("%.2f, %.2f", *p.Lat, *p.Lon), nil
+		pos := route.Position{*p.Lon, *p.Lat}
+		if name := strings.TrimSpace(p.Name); name != "" {
+			if len(name) > maxPointNameLen {
+				return route.Position{}, "", false, errors.New("point name too long")
+			}
+			return pos, name, true, nil
+		}
+		if port, ok := app.portAt(pos); ok {
+			return pos, port.Port, true, nil
+		}
+		return pos, fmt.Sprintf("%.2f, %.2f", *p.Lat, *p.Lon), false, nil
 	}
 	if p != nil && p.Port != "" {
 		if len(p.Port) > 200 {
-			return route.Position{}, "", errors.New("port name too long")
+			return route.Position{}, "", false, errors.New("port name too long")
 		}
 		lon, lat, err := app.getPortCoordinates(p.Port)
 		if err != nil {
-			return route.Position{}, "", err
+			return route.Position{}, "", false, err
 		}
-		return route.Position{lon, lat}, p.Port, nil
+		return route.Position{lon, lat}, p.Port, true, nil
 	}
 	if fallbackPort != "" {
 		if len(fallbackPort) > 200 {
-			return route.Position{}, "", errors.New("port name too long")
+			return route.Position{}, "", false, errors.New("port name too long")
 		}
 		lon, lat, err := app.getPortCoordinates(fallbackPort)
 		if err != nil {
-			return route.Position{}, "", err
+			return route.Position{}, "", false, err
 		}
-		return route.Position{lon, lat}, fallbackPort, nil
+		return route.Position{lon, lat}, fallbackPort, true, nil
 	}
-	return route.Position{}, "", errors.New("point must specify a port or latitude and longitude")
+	return route.Position{}, "", false, errors.New("point must specify a port or latitude and longitude")
 }
 
 // setupRoutes registers all application HTTP routes on the given gin engine
@@ -274,6 +316,7 @@ func setupRoutes(router *gin.Engine, app *App) {
 			"nodes":             app.RouteGraph.Nodes(),
 			"edges":             app.RouteGraph.Edges(),
 			"ports_count":       len(app.PortData),
+			"datasets":          app.Datasets,
 		})
 	})
 
@@ -411,23 +454,28 @@ func setupRoutes(router *gin.Engine, app *App) {
 			return
 		}
 
-		kinks := req.Kinks == nil || *req.Kinks
 		clearance := route.DefaultClearanceNM
 		if req.ClearanceNM != nil {
 			clearance = *req.ClearanceNM
 		}
-		if err := route.CheckKinkOptions(clearance, req.Accept); err != nil {
+		if err := route.CheckClearance(clearance); err != nil {
 			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 			return
 		}
 
-		originCoords, fromName, err := resolvePoint(req.From, req.FromPort, app)
+		vessel, err := req.vessel()
 		if err != nil {
 			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 			return
 		}
 
-		destCoords, toName, err := resolvePoint(req.To, req.ToPort, app)
+		originCoords, fromName, fromNamed, err := resolvePoint(req.From, req.FromPort, app)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
+
+		destCoords, toName, toNamed, err := resolvePoint(req.To, req.ToPort, app)
 		if err != nil {
 			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 			return
@@ -444,13 +492,21 @@ func setupRoutes(router *gin.Engine, app *App) {
 			Avoid:       req.Avoid,
 			Allow:       req.Allow,
 			Algorithm:   alg,
-			Kinks:       kinks,
 			ClearanceNM: clearance,
-			Accept:      req.Accept,
+			Vessel:      vessel,
 		}
 
 		// Calculate the passage using the cached route graph
-		data, err := calculatePassageInfo(originCoords, destCoords, routeName, app.RouteGraph, opts)
+		// Only a named point renames the first or last waypoint; a bare
+		// coordinate stays "Origin" / "Destination".
+		originName, destName := "", ""
+		if fromNamed {
+			originName = fromName
+		}
+		if toNamed {
+			destName = toName
+		}
+		data, err := calculatePassageInfo(originCoords, destCoords, routeName, originName, destName, app.RouteGraph, opts)
 		if errors.Is(err, route.ErrUnknownPassage) {
 			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 			return
@@ -474,7 +530,7 @@ func setupRoutes(router *gin.Engine, app *App) {
 }
 
 // calculatePassageInfo calculates the ocean waypoints and distance between two coordinates
-func calculatePassageInfo(originCoords, destinationCoords route.Position, routeName string, g *route.Graph, opts route.Options) (Output, error) {
+func calculatePassageInfo(originCoords, destinationCoords route.Position, routeName, originName, destName string, g *route.Graph, opts route.Options) (Output, error) {
 	r, err := g.Route([]route.Position{originCoords, destinationCoords}, opts)
 	if err != nil {
 		return Output{}, fmt.Errorf("pathfinding failed: %w", err)
@@ -494,7 +550,7 @@ func calculatePassageInfo(originCoords, destinationCoords route.Position, routeN
 	if clearance == 0 {
 		clearance = route.DefaultClearanceNM
 	}
-	return generateOutput(r, opts.Kinks, clearance, originCoords, destinationCoords, totalDistance, distToFirstWp, distFromLastWp, networkDistance, routeName, r.Passages), nil
+	return generateOutput(r, clearance, originCoords, destinationCoords, totalDistance, distToFirstWp, distFromLastWp, networkDistance, routeName, originName, destName, r.Passages), nil
 }
 
 // filterPorts filters the ports from the []Port struct
@@ -506,6 +562,30 @@ func (app *App) filterPorts(query string) []Port {
 		}
 	}
 	return filteredPorts
+}
+
+// maxPointNameLen bounds the label a client may give a coordinate point.
+const maxPointNameLen = 100
+
+// portMatchNM is how close a coordinate point must be to a known port to take
+// its name.
+const portMatchNM = 1.0
+
+// portAt returns the known port nearest p when it lies within portMatchNM.
+func (app *App) portAt(p route.Position) (Port, bool) {
+	best, bestM := -1, portMatchNM*route.MetresPerNM
+	for i, port := range app.PortData {
+		if math.Abs(port.Latitude-p[1]) > 0.05 {
+			continue
+		}
+		if d := route.Distance(p, route.Position{port.Longitude, port.Latitude}); d <= bestM {
+			best, bestM = i, d
+		}
+	}
+	if best < 0 {
+		return Port{}, false
+	}
+	return app.PortData[best], true
 }
 
 // getPortCoordinates returns the coordinates of a port or an error if not found

@@ -5,6 +5,7 @@ import (
 	"compress/gzip"
 	"encoding/json"
 	"io"
+	"math"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -12,7 +13,6 @@ import (
 	"strings"
 	"sync"
 	"testing"
-	"time"
 
 	"github.com/captv89/seaRoute/route"
 	"github.com/gin-gonic/gin"
@@ -24,15 +24,19 @@ var (
 	testGraphErr  error
 )
 
-// testGraph loads the full datasets (network, land, TSS) once per test run.
+// testGraph loads the full datasets (network, land, TSS, depth when built) once per test run.
 func testGraph(t *testing.T) *route.Graph {
 	t.Helper()
 	testGraphOnce.Do(func() {
-		testGraphVal, testGraphErr = route.LoadAll(route.Datasets{
+		d := route.Datasets{
 			Network: "dataset/marnet_plus_5km.geojson",
 			Land:    "dataset/land_osm.bin.gz",
 			TSS:     "dataset/tss_osm.geojson.gz",
-		})
+		}
+		if _, err := os.Stat("dataset/depth_gebco.bin.gz"); err == nil {
+			d.Depth = "dataset/depth_gebco.bin.gz"
+		}
+		testGraphVal, testGraphErr = route.LoadAll(d)
 	})
 	if testGraphErr != nil {
 		t.Fatalf("failed to load route graph: %v", testGraphErr)
@@ -175,12 +179,13 @@ func TestWaypointRequest_EnrichedOutput(t *testing.T) {
 	if props.NodeCount != len(props.Waypoints) {
 		t.Errorf("node count %d does not match waypoints length %d", props.NodeCount, len(props.Waypoints))
 	}
-	if props.Waypoints[0].Name != "Origin" {
-		t.Errorf("first waypoint name should be Origin, got %q", props.Waypoints[0].Name)
+	// A port request names the first and last waypoints after the ports.
+	if props.Waypoints[0].Name != "Rotterdam" {
+		t.Errorf("first waypoint name should be Rotterdam, got %q", props.Waypoints[0].Name)
 	}
 	lastWP := props.Waypoints[len(props.Waypoints)-1]
-	if lastWP.Name != "Destination" {
-		t.Errorf("last waypoint name should be Destination, got %q", lastWP.Name)
+	if lastWP.Name != "Singapore" {
+		t.Errorf("last waypoint name should be Singapore, got %q", lastWP.Name)
 	}
 	if lastWP.CumDistanceNM <= 0 {
 		t.Errorf("last waypoint cumulative distance should be positive, got %.2f", lastWP.CumDistanceNM)
@@ -567,7 +572,7 @@ func postWaypoints(t *testing.T, r *gin.Engine, payload map[string]any) *httptes
 	return w
 }
 
-func TestWaypointsKinkDefaults(t *testing.T) {
+func TestWaypointsDefaults(t *testing.T) {
 	r := setupTestRouter(t)
 	w := postWaypoints(t, r, map[string]any{"fromPort": "Rotterdam", "toPort": "Singapore"})
 	if w.Code != http.StatusOK {
@@ -582,13 +587,10 @@ func TestWaypointsKinkDefaults(t *testing.T) {
 		t.Fatal(err)
 	}
 	props := res.Features[0].Properties
-	if string(props["kinks"]) != "true" {
-		t.Errorf("kinks = %s, want true", props["kinks"])
-	}
 	if string(props["clearance_nm"]) != "2" {
 		t.Errorf("clearance_nm = %s, want 2", props["clearance_nm"])
 	}
-	for _, k := range []string{"proposals", "stretches", "warnings", "ignored_accept", "hazards"} {
+	for _, k := range []string{"stretches", "warnings", "hazards", "notices"} {
 		if v := string(props[k]); !strings.HasPrefix(v, "[") {
 			t.Errorf("%s = %s, want an array", k, v)
 		}
@@ -605,39 +607,6 @@ func TestWaypointsClearanceRange(t *testing.T) {
 		if w.Code != tc.want {
 			t.Errorf("clearance_nm %v: status %d, want %d", tc.c, w.Code, tc.want)
 		}
-	}
-}
-
-func TestWaypointsAcceptLimits(t *testing.T) {
-	r := setupTestRouter(t)
-	many := make([]string, 201)
-	for i := range many {
-		many[i] = "k-abc"
-	}
-	cases := map[string]any{
-		"201 ids":    many,
-		"33 chars":   []string{strings.Repeat("a", 33)},
-		"bind error": []int{1},
-		"mixed":      []any{"ok", 1},
-		"10000 ids":  make([]string, 10000),
-		"1MB id":     []string{strings.Repeat("a", 1<<20)},
-	}
-	for name, accept := range cases {
-		start := time.Now()
-		w := postWaypoints(t, r, map[string]any{"fromPort": "Rotterdam", "toPort": "Hamburg", "accept": accept})
-		if w.Code != http.StatusBadRequest {
-			t.Errorf("%s: status %d, want 400", name, w.Code)
-		}
-		if d := time.Since(start); d > 100*time.Millisecond {
-			t.Errorf("%s: rejection took %v, want < 100ms", name, d)
-		}
-	}
-	ok := make([]string, 200)
-	for i := range ok {
-		ok[i] = strings.Repeat("a", 32)
-	}
-	if w := postWaypoints(t, r, map[string]any{"fromPort": "Rotterdam", "toPort": "Hamburg", "accept": ok}); w.Code != http.StatusOK {
-		t.Errorf("200 ids of 32 chars: status %d, want 200", w.Code)
 	}
 }
 
@@ -695,18 +664,39 @@ func TestLayersTSS(t *testing.T) {
 	}
 }
 
-func TestWaypointsKinksOff(t *testing.T) {
+func TestWaypointsRejectsNoKinkFields(t *testing.T) {
 	r := setupTestRouter(t)
-	w := postWaypoints(t, r, map[string]any{"fromPort": "Rotterdam", "toPort": "Singapore", "kinks": false, "accept": []string{"k-abc"}})
+	w := postWaypoints(t, r, map[string]any{"fromPort": "Rotterdam", "toPort": "Hamburg", "accept": []string{"k-1"}})
+	if w.Code != http.StatusOK {
+		t.Fatalf("status %d: %s", w.Code, w.Body.String())
+	}
+	var res struct {
+		Features []struct {
+			Properties map[string]json.RawMessage `json:"properties"`
+		} `json:"features"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &res); err != nil {
+		t.Fatal(err)
+	}
+	props := res.Features[0].Properties
+	for _, k := range []string{"proposals", "ignored_accept", "kinks"} {
+		if _, ok := props[k]; ok {
+			t.Errorf("response still has %q", k)
+		}
+	}
+}
+
+func TestWaypointsVesselDefaults(t *testing.T) {
+	r := setupTestRouter(t)
+	w := postWaypoints(t, r, map[string]any{"fromPort": "Rotterdam", "toPort": "Hamburg"})
 	if w.Code != http.StatusOK {
 		t.Fatalf("status %d: %s", w.Code, w.Body.String())
 	}
 	var res struct {
 		Features []struct {
 			Properties struct {
-				Kinks         bool     `json:"kinks"`
-				Proposals     []any    `json:"proposals"`
-				IgnoredAccept []string `json:"ignored_accept"`
+				Depth   route.DepthLimit `json:"depth"`
+				Notices []route.Notice   `json:"notices"`
 			} `json:"properties"`
 		} `json:"features"`
 	}
@@ -714,13 +704,67 @@ func TestWaypointsKinksOff(t *testing.T) {
 		t.Fatal(err)
 	}
 	p := res.Features[0].Properties
-	if p.Kinks {
-		t.Error("kinks echoed true, want false")
+	if p.Depth.DraughtM != 10 || math.Abs(p.Depth.LimitM-13.568) > 1e-6 {
+		t.Errorf("depth = %+v, want draught 10, limit 13.568", p.Depth)
 	}
-	if len(p.Proposals) != 0 {
-		t.Errorf("got %d proposals, want 0", len(p.Proposals))
+	// With the real GEBCO grid the Dutch coast may add a reroute notice; the
+	// default vessel must still have a route deep enough (the Elbe fairway is
+	// below the grid's resolution and must not close it).
+	if p.Notices == nil {
+		t.Error("notices is null, want an array")
 	}
-	if len(p.IgnoredAccept) != 1 || p.IgnoredAccept[0] != "k-abc" {
-		t.Errorf("ignored_accept = %v, want [k-abc]", p.IgnoredAccept)
+	for _, n := range p.Notices {
+		if n.Kind == "draught-no-route" {
+			t.Errorf("default vessel has no route deep enough: %+v", n)
+		}
+	}
+}
+
+func TestWaypointsVesselValidation(t *testing.T) {
+	r := setupTestRouter(t)
+	for _, tc := range []struct {
+		field string
+		val   any
+		want  string
+	}{
+		{"draught_m", 30.0, "draught_m must be between 1 and 25"},
+		{"draught_m", 0.0, "draught_m must be between 1 and 25"},
+		{"speed_kn", 0.0, "speed_kn must be between 1 and 30"},
+		{"vessel_type", "ferry", "vessel_type must be one of"},
+	} {
+		w := postWaypoints(t, r, map[string]any{"fromPort": "Rotterdam", "toPort": "Hamburg", tc.field: tc.val})
+		if w.Code != http.StatusBadRequest || !strings.Contains(w.Body.String(), tc.want) {
+			t.Errorf("%s=%v: status %d body %s, want 400 containing %q", tc.field, tc.val, w.Code, w.Body.String(), tc.want)
+		}
+	}
+}
+
+func TestResolvePointNames(t *testing.T) {
+	app := &App{PortData: []Port{{Country: "Japan", Port: "Yokohama", Latitude: 35.4576, Longitude: 139.6345}}}
+	f := func(v float64) *float64 { return &v }
+	cases := []struct {
+		name  string
+		p     WaypointPoint
+		want  string
+		named bool
+	}{
+		{"client label", WaypointPoint{Lat: f(1.26), Lon: f(103.82), Name: " Singapore "}, "Singapore", true},
+		{"on a known port", WaypointPoint{Lat: f(35.46), Lon: f(139.63)}, "Yokohama", true},
+		{"open sea", WaypointPoint{Lat: f(30), Lon: f(150)}, "30.00, 150.00", false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, got, named, err := resolvePoint(&tc.p, "", app)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got != tc.want || named != tc.named {
+				t.Errorf("got %q named=%v, want %q named=%v", got, named, tc.want, tc.named)
+			}
+		})
+	}
+	long := WaypointPoint{Lat: f(0), Lon: f(0), Name: strings.Repeat("x", maxPointNameLen+1)}
+	if _, _, _, err := resolvePoint(&long, "", app); err == nil {
+		t.Error("over-long name accepted")
 	}
 }

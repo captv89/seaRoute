@@ -19,11 +19,7 @@
     let currentTotalDistNM = 8420;
     let currentWaypoints = [];
     let currentCoords = [];
-    // Kink-removal state: shortcut proposals are accepted per route, never globally.
-    let currentProposals = [];
-    let acceptedProposalIds = new Set();
-    let rejectedProposalIds = new Set();
-    let routeInputSig = '';
+    let currentLatLngs = []; // route as Leaflet [lat, lon], longitudes unwrapped across the antimeridian
     let routeRequestSeq = 0; // monotonically increasing; only the latest response is rendered
     let mapPickingMode = null; // null | 'origin' | 'dest'
     let currentGlowPolyline = null;
@@ -1748,6 +1744,17 @@
                 if (sysNodes && data.nodes) {
                     sysNodes.textContent = `${Number(data.nodes).toLocaleString()} / ${Number(data.edges).toLocaleString()}`;
                 }
+                const sysDatasets = document.getElementById('sys-info-datasets');
+                if (sysDatasets && Array.isArray(data.datasets) && data.datasets.length) {
+                    sysDatasets.innerHTML = data.datasets.map(d => `
+                        <li class="flex justify-between gap-2" title="${escapeHtml(d.use || '')}">
+                            <span class="flex items-center gap-1 text-on-surface">
+                                <span class="w-1.5 h-1.5 rounded-full shrink-0 ${d.loaded ? 'bg-tertiary' : 'bg-error'}" aria-hidden="true"></span>
+                                ${escapeHtml(d.name)}
+                            </span>
+                            <span class="text-right ${d.loaded ? '' : 'text-error'}">${escapeHtml(d.loaded ? d.source : d.source + ' (off)')}</span>
+                        </li>`).join('');
+                }
 
                 // Render dynamic avoid pills if supported, preserving any active selections
                 if (data.passages && Array.isArray(data.passages) && avoidTagsContainer) {
@@ -1937,6 +1944,22 @@
         });
     }
 
+    // Port labels: the port last picked for each end, kept while the
+    // coordinates still match it, so the route names the port, not the numbers.
+    const pickedPorts = { origin: null, dest: null };
+    function rememberPort(side, lat, lon, name) {
+        pickedPorts[side] = name ? { lat, lon, name } : null;
+    }
+    function pointLabel(side, lat, lon) {
+        const near = (p) => Math.abs(p.lat - lat) < 1e-3 && Math.abs(p.lon - lon) < 1e-3;
+        const preset = document.getElementById(side === 'origin' ? 'origin-preset' : 'dest-preset');
+        const item = preset && PRESET_COORDS[preset.value];
+        if (item && near(item)) return item.name.split(',')[0].trim();
+        const picked = pickedPorts[side];
+        if (picked && near(picked)) return picked.name;
+        return '';
+    }
+
     // Autocomplete Dropdowns (GET /ports?search=...)
     function setupPortAutocomplete(inputId, dropdownId, latInputId, lonInputId, presetSelectId) {
         const input = document.getElementById(inputId);
@@ -1986,6 +2009,7 @@
                                 if (lonInput) lonInput.value = formatCoordDMS(p.longitude, false);
                                 if (presetSelect) presetSelect.value = 'CUSTOM';
                                 input.value = `${p.port} (${p.country})`;
+                                rememberPort(inputId === 'origin-search' ? 'origin' : 'dest', p.latitude, p.longitude, p.port);
                                 dropdown.innerHTML = '';
                                 dropdown.classList.add('hidden');
                                 showToast(`Selected: ${p.port} (${p.country})`);
@@ -2086,6 +2110,7 @@
                 origSearch.value = destSearch.value;
                 destSearch.value = tempSearch;
             }
+            [pickedPorts.origin, pickedPorts.dest] = [pickedPorts.dest, pickedPorts.origin];
             showToast('Origin and Destination swapped', 'swap_vert');
         });
     }
@@ -2098,10 +2123,7 @@
     const iconCompute = document.getElementById('icon-compute');
     const btnComputeText = document.getElementById('btn-compute-text');
 
-    let computeInFlight = false;
-
     function setComputeLoading(isLoading) {
-        computeInFlight = isLoading;
         if (btnCompute) btnCompute.disabled = isLoading;
         if (spinnerCompute) {
             if (isLoading) spinnerCompute.classList.remove('hidden');
@@ -2111,54 +2133,114 @@
             if (isLoading) iconCompute.classList.add('hidden');
             else iconCompute.classList.remove('hidden');
         }
-        // Proposal actions would race the in-flight request
-        document.querySelectorAll('#proposals-card button, #hazards-card [data-hazard-fix], .review-popup button').forEach(b => { b.disabled = isLoading; });
+        document.querySelectorAll('.review-popup button').forEach(b => { b.disabled = isLoading; });
         if (btnComputeText) {
             btnComputeText.textContent = isLoading ? 'Computing Optimal Route...' : 'Compute Optimal Sea Route';
         }
     }
 
-    // Kink-removal controls
-    const toggleKinks = document.getElementById('toggle-kinks');
-    const clearanceInput = document.getElementById('clearance-input');
-    const clearanceDec = document.getElementById('clearance-dec');
-    const clearanceInc = document.getElementById('clearance-inc');
-    const CLEARANCE_MIN = 0.5;
-    const CLEARANCE_MAX = 10;
-    const CLEARANCE_DEFAULT = 2;
-
-    function readClearance() {
-        const v = parseFloat(clearanceInput ? clearanceInput.value : '');
-        if (isNaN(v)) return CLEARANCE_DEFAULT;
-        return Math.min(CLEARANCE_MAX, Math.max(CLEARANCE_MIN, Math.round(v * 2) / 2));
+    // Vessel controls: clamped 0.5-step steppers (clearance, draught) and a type selector.
+    // Any change re-requests the route when one is already on the map.
+    function rerouteIfShown() {
+        if (currentRouteData) computeRoute({ keepView: true });
     }
 
-    function writeClearance(v) {
-        if (clearanceInput) clearanceInput.value = String(v);
-        syncClearanceState();
-    }
-
-    function syncClearanceState() {
-        const on = !toggleKinks || toggleKinks.checked;
-        const v = readClearance();
-        [clearanceInput, clearanceDec, clearanceInc].forEach(el => { if (el) el.disabled = !on; });
-        if (clearanceDec && on) clearanceDec.disabled = v <= CLEARANCE_MIN;
-        if (clearanceInc && on) clearanceInc.disabled = v >= CLEARANCE_MAX;
-        const row = document.getElementById('clearance-row');
-        if (row) row.classList.toggle('opacity-50', !on);
-    }
-
-    if (toggleKinks) toggleKinks.addEventListener('change', syncClearanceState);
-    if (clearanceInput) {
+    function makeStepper(id, min, max, def, onChange) {
+        const input = document.getElementById(`${id}-input`);
+        const dec = document.getElementById(`${id}-dec`);
+        const inc = document.getElementById(`${id}-inc`);
+        // Text input (not type=number) so the decimal point is always '.',
+        // whatever the browser locale; a typed ',' is accepted too.
+        const read = () => {
+            const v = parseFloat(String(input ? input.value : '').trim().replace(',', '.'));
+            if (isNaN(v)) return def;
+            return Math.min(max, Math.max(min, Math.round(v * 2) / 2));
+        };
+        const show = (v) => { if (input) input.value = v.toFixed(1); };
+        const sync = () => {
+            const v = read();
+            if (dec) dec.disabled = v <= min;
+            if (inc) inc.disabled = v >= max;
+        };
+        let last = read();
+        show(last);
+        // set shows v without firing onChange (the value changed elsewhere).
+        read.set = (v) => {
+            show(Math.min(max, Math.max(min, Math.round(v * 2) / 2)));
+            last = read();
+            sync();
+        };
+        const write = (v) => {
+            show(v);
+            sync();
+            if (v !== last) {
+                last = v;
+                if (onChange) onChange();
+            }
+        };
         // Snap to a valid step once the user is done typing.
-        clearanceInput.addEventListener('change', () => writeClearance(readClearance()));
+        if (input) {
+            input.addEventListener('change', () => write(read()));
+            input.addEventListener('keydown', (e) => {
+                if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
+                    e.preventDefault();
+                    write(Math.min(max, Math.max(min, read() + (e.key === 'ArrowUp' ? 0.5 : -0.5))));
+                }
+            });
+        }
+        if (dec) dec.addEventListener('click', () => write(Math.max(min, read() - 0.5)));
+        if (inc) inc.addEventListener('click', () => write(Math.min(max, read() + 0.5)));
+        sync();
+        return read;
     }
-    if (clearanceDec) clearanceDec.addEventListener('click', () => writeClearance(Math.max(CLEARANCE_MIN, readClearance() - 0.5)));
-    if (clearanceInc) clearanceInc.addEventListener('click', () => writeClearance(Math.min(CLEARANCE_MAX, readClearance() + 0.5)));
-    syncClearanceState();
+
+    const readClearance = makeStepper('clearance', 0.5, 10, 2, null);
+    const readDraught = makeStepper('draught', 1, 25, 10, () => rerouteIfShown());
+    // Vessel speed and the summary slider are one value: the speed sets the
+    // squat allowance (so the route) and the ETA.
+    const readSpeed = makeStepper('speed', 6, 30, 18, () => {
+        const sl = document.getElementById('speed-slider');
+        if (sl) sl.value = String(readSpeed());
+        updateTransitDuration();
+        rerouteIfShown();
+    });
+
+    let vesselType = 'bulk';
+    const VESSEL_ON = ['bg-primary-container', 'text-on-primary-container', 'font-semibold'];
+    const VESSEL_OFF = ['text-on-surface-variant', 'hover:text-on-surface', 'hover:bg-surface-container'];
+    document.querySelectorAll('.vessel-type-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+            if (btn.dataset.vesselType === vesselType) return;
+            vesselType = btn.dataset.vesselType;
+            document.querySelectorAll('.vessel-type-btn').forEach(b => {
+                const on = b === btn;
+                b.setAttribute('aria-pressed', String(on));
+                b.classList.remove(...VESSEL_ON, ...VESSEL_OFF);
+                b.classList.add(...(on ? VESSEL_ON : VESSEL_OFF));
+            });
+            rerouteIfShown();
+        });
+    });
+
+    // Slider value is the voyage speed the squat allowance is computed at.
+    function currentSpeedKn() {
+        const sl = document.getElementById('speed-slider');
+        return (sl ? parseFloat(sl.value) : 18) || 18;
+    }
+    (function bindSpeedReroute() {
+        const sl = document.getElementById('speed-slider');
+        // 'change' fires on release, so dragging does not flood the server
+        if (sl) sl.addEventListener('change', rerouteIfShown);
+    })();
+
+    function renderDepthReadout(props) {
+        const el = document.getElementById('depth-readout');
+        const d = props.depth;
+        if (!el || !d) return;
+        el.textContent = `Depth limit ${Number(d.depth_limit_m).toFixed(1)} m = ${Number(d.draught_m).toFixed(1)} draught + ${Number(d.squat_m).toFixed(1)} squat + ${Number(d.margin_m).toFixed(1)} margin`;
+    }
 
     /**
-     * opts.acceptDelta: {ids, on} Accept/Undo change, committed only after the response succeeds
      * opts.keepView: do not re-fit the map to the route
      */
     function computeRoute(opts = {}) {
@@ -2180,37 +2262,19 @@
         const avoidList = Array.from(document.querySelectorAll('.avoid-pill.active'))
             .map(p => p.getAttribute('data-avoid'))
             .filter(Boolean);
-        const kinks = toggleKinks ? toggleKinks.checked : true;
         const clearanceNM = readClearance();
 
-        // Accepted proposals belong to one route: reset them when its inputs change.
-        const sig = JSON.stringify([fromLat, fromLon, toLat, toLon, [...avoidList].sort(), kinks, clearanceNM]);
-        let acceptDelta = opts.acceptDelta || null;
-        if (sig !== routeInputSig) {
-            const hadState = acceptedProposalIds.size > 0 || rejectedProposalIds.size > 0;
-            routeInputSig = sig;
-            acceptedProposalIds = new Set();
-            rejectedProposalIds = new Set();
-            if (acceptDelta) {
-                // Stale proposal IDs belong to the previous inputs: recompute without them
-                acceptDelta = null;
-                opts = Object.assign({}, opts, { keepView: false });
-                showToast('Route inputs changed \u2014 proposals recomputed', 'info');
-            } else if (hadState) {
-                showToast('Route inputs changed \u2014 accepted shortcuts reset', 'info');
-            }
-        }
-        const candidate = new Set(acceptedProposalIds);
-        if (acceptDelta) acceptDelta.ids.forEach(id => acceptDelta.on ? candidate.add(id) : candidate.delete(id));
-
+        const fromName = pointLabel('origin', fromLat, fromLon);
+        const toName = pointLabel('dest', toLat, toLon);
         const requestPayload = {
-            from: { lat: fromLat, lon: fromLon },
-            to: { lat: toLat, lon: toLon },
+            from: Object.assign({ lat: fromLat, lon: fromLon }, fromName ? { name: fromName } : {}),
+            to: Object.assign({ lat: toLat, lon: toLon }, toName ? { name: toName } : {}),
             algorithm: currentAlgorithm,
             avoid: avoidList,
-            kinks: kinks,
             clearance_nm: clearanceNM,
-            accept: Array.from(candidate)
+            draught_m: readDraught(),
+            vessel_type: vesselType,
+            speed_kn: currentSpeedKn()
         };
 
         const reqId = ++routeRequestSeq;
@@ -2232,8 +2296,6 @@
             .then(data => {
                 if (reqId !== routeRequestSeq) return; // superseded by a newer request
                 setComputeLoading(false);
-                // Commit the accepted set only now, so the list always matches the drawn route
-                acceptedProposalIds = candidate;
                 renderRoute(data, { keepView: Boolean(opts.keepView) });
             })
             .catch(err => {
@@ -2245,6 +2307,78 @@
     }
 
     if (btnCompute) btnCompute.addEventListener('click', () => computeRoute());
+
+    // Clear route: removes the route and its results, keeps origin,
+    // destination and vessel settings so the next compute starts from them.
+    const btnClearRoute = document.getElementById('btn-clear-route');
+    function setClearEnabled(on) {
+        if (btnClearRoute) btnClearRoute.disabled = !on;
+    }
+    function clearRoute() {
+        if (!currentRouteData) return;
+        routeRequestSeq++; // drop any response still in flight
+        setComputeLoading(false);
+        if (simActive) stopSimulation();
+        routeLayerGroup.clearLayers();
+        resetReview();
+        currentRouteData = null;
+        currentCoords = [];
+        currentLatLngs = [];
+        currentWaypoints = [];
+        currentGlowPolyline = null;
+        currentFlowPolyline = null;
+        currentTotalDistNM = 0;
+
+        const setText = (id, text) => { const el = document.getElementById(id); if (el) el.textContent = text; };
+        const setHtml = (id, html) => { const el = document.getElementById(id); if (el) el.innerHTML = html; };
+        setHtml('stat-dist', '-- <span class="text-[10px] font-normal">NM</span>');
+        setText('stat-dist-alt', '-- KM • -- MI');
+        setHtml('stat-nodes', '-- <span class="text-[10px] font-normal">Nodes</span>');
+        setText('stat-status', 'No route');
+        setText('stat-land-incursions', '-- Land Incursions');
+        setText('stat-time', '--');
+        setText('collapsed-dist-val', '--');
+        setText('collapsed-pts-val', '--');
+        setText('header-dist-badge', '-- NM');
+        setText('header-duration-badge', '--');
+        setText('depth-readout', 'Depth limit is worked out with the route (squat uses this speed).');
+        renderRouteNotices({});
+        renderManifestTable([]);
+        setText('manifest-header', 'Waypoint Manifest');
+        setClearEnabled(false);
+        showToast('Route cleared', 'delete');
+    }
+    if (btnClearRoute) btnClearRoute.addEventListener('click', clearRoute);
+
+    /**
+     * unwrapLatLngs turns [lon, lat] points into Leaflet [lat, lon] with each
+     * longitude moved by whole turns to within 180° of the one before, so a
+     * leg over the antimeridian is drawn as the short hop it is, not as a
+     * line back across the whole map.
+     */
+    function unwrapLatLngs(coords, refLng) {
+        const out = [];
+        let prev = refLng;
+        coords.forEach(c => {
+            let lng = c[0];
+            if (prev !== undefined) lng += 360 * Math.round((prev - lng) / 360);
+            out.push([c[1], lng]);
+            prev = lng;
+        });
+        return out;
+    }
+
+    // nearestRouteLng is the unwrapped route longitude closest to lng, so an
+    // overlay starts on the same copy of the world as the route.
+    function nearestRouteLng(lng) {
+        let best = lng, bestD = Infinity;
+        currentLatLngs.forEach(ll => {
+            const shifted = lng + 360 * Math.round((ll[1] - lng) / 360);
+            const d = Math.abs(shifted - ll[1]);
+            if (d < bestD) { bestD = d; best = shifted; }
+        });
+        return best;
+    }
 
     /**
      * Renders computed route onto Leaflet map & updates all metrics/manifest
@@ -2263,14 +2397,26 @@
 
         currentCoords = coords;
         currentWaypoints = waypoints;
-        currentProposals = props.proposals || [];
+        currentLatLngs = unwrapLatLngs(coords);
+        setClearEnabled(true);
 
         // Clear existing route graphics
         routeLayerGroup.clearLayers();
         resetReview();
 
-        // Convert [lon, lat] coordinates to Leaflet [lat, lon]
-        const latLngs = coords.map(c => [c[1], c[0]]);
+        // Leaflet [lat, lon], continuous across the antimeridian
+        const latLngs = currentLatLngs;
+
+        // Avoided stretches (draught reroutes): faint dashed, under the route, not clickable
+        (props.notices || []).forEach(n => {
+            const raw = n.avoided || [];
+            if (raw.length < 2) return;
+            const av = unwrapLatLngs(raw, nearestRouteLng(raw[0][0]));
+            routeLayerGroup.addLayer(L.polyline(av, {
+                color: '#94a3b8', weight: 3, opacity: 0.35, dashArray: '6 8',
+                interactive: false, lineCap: 'round', lineJoin: 'round'
+            }));
+        });
 
         // 1. Double polyline: Cyan Glow + White/Cyan Flow Dash
         const isDark = document.documentElement.classList.contains('dark');
@@ -2346,7 +2492,7 @@
                         iconSize: [size, size],
                         iconAnchor: [size / 2, size / 2]
                     });
-                    const marker = L.marker([wp.coordinates[1], wp.coordinates[0]], { icon: wpIcon });
+                    const marker = L.marker(latLngs[idx] || [wp.coordinates[1], wp.coordinates[0]], { icon: wpIcon });
                     marker.bindPopup(
                         `<b>#${wp.index} ${escapeHtml(wp.name)}</b>${wp.passage ? '<br><span style="color:#f59e0b;font-weight:bold;">Passage: ' + escapeHtml(wp.passage) + '</span>' : ''}<br>Leg: ${wp.leg_distance_nm.toFixed(1)} NM<br>Cumul: ${wp.cum_distance_nm.toFixed(1)} NM<br>${formatCoordDMS(wp.coordinates[1], true)}, ${formatCoordDMS(wp.coordinates[0], false)}`
                     );
@@ -2408,26 +2554,24 @@
         // 4. Update Waypoint Manifest Table
         renderManifestTable(waypoints);
 
-        // 5. Kink removal: warnings, proposals, ignored IDs, unknown-coast note
-        renderRouteNotices(props, Boolean(opts.quiet));
+        // 5. Route notices: warnings, hazards, unknown-coast note
+        renderRouteNotices(props);
 
         if (!opts.quiet) showToast(`Sea route calculated successfully (${Math.round(totalDistNM).toLocaleString()} NM)`);
     }
 
     // =========================================================================
-    // 9.1 Kink Removal Output: warnings banner, proposals, stretch notes
+    // 9.1 Route notices: warnings banner, hazards, stretch notes
     // =========================================================================
     const FLAG_STYLES = {
         'tss-unresolved': 'text-error font-semibold',
         'tss-unknown': 'text-on-surface-variant italic',
-        'user-accepted': 'text-secondary',
         'osm-tss': 'text-tss',
-        'smoothed': 'text-primary',
         'connector': 'text-on-surface-variant',
         'marnet': 'text-on-surface-variant'
     };
 
-    function renderRouteNotices(props, quiet) {
+    function renderRouteNotices(props) {
         // Warnings banner (tss-unresolved)
         const warnBox = document.getElementById('route-warnings');
         const warnList = document.getElementById('route-warnings-list');
@@ -2448,21 +2592,53 @@
             unknownNote.classList.toggle('flex', hasUnknown);
         }
 
-        // Accepted IDs the server did not recognise: drop them and say so
-        const ignored = props.ignored_accept || [];
-        if (ignored.length > 0) {
-            ignored.forEach(id => acceptedProposalIds.delete(id));
-            if (!quiet) showToast(`Ignored ${ignored.length} stale shortcut ${ignored.length === 1 ? 'proposal' : 'proposals'}`, 'warning');
-        }
-
+        renderDepthReadout(props);
+        renderDraughtNotices(props);
         renderHazards(props);
-        renderProposals();
     }
 
+    // Draught notices: one row per reroute / no-route, click fits the avoided stretch
+    let noticeAvoided = [];
+
+    function renderDraughtNotices(props) {
+        const card = document.getElementById('notices-card');
+        const list = document.getElementById('notices-list');
+        if (!card || !list) return;
+        const notices = props.notices || [];
+        noticeAvoided = notices.map(n => n.avoided || []);
+        card.classList.toggle('hidden', notices.length === 0);
+        card.classList.toggle('flex', notices.length > 0);
+        list.innerHTML = notices.map((n, i) => {
+            const noRoute = n.kind === 'draught-no-route';
+            const icon = noRoute ? 'block' : 'alt_route';
+            const tone = noRoute ? 'text-error' : 'text-warning';
+            const chip = !noRoute && Number(n.extra_nm) > 0
+                ? `<span class="shrink-0 font-mono text-[9px] px-1.5 py-0.5 rounded-sm bg-warning/15 border border-warning/40 text-warning tabular-nums">+${Math.round(Number(n.extra_nm)).toLocaleString()} NM</span>`
+                : '';
+            const body = `<span class="material-symbols-outlined review-item__icon ${tone}" aria-hidden="true">${icon}</span>
+                <span class="flex-1 min-w-0 font-mono text-[10px] text-on-surface leading-snug">${escapeHtml(n.text)}</span>${chip}`;
+            return noticeAvoided[i].length >= 2
+                ? `<li class="review-item"><button class="review-item__main" data-notice-fit="${i}" type="button">${body}</button></li>`
+                : `<li class="review-item"><div class="review-item__main" style="cursor:default">${body}</div></li>`;
+        }).join('');
+    }
+
+    (function bindNotices() {
+        const card = document.getElementById('notices-card');
+        if (!card) return;
+        card.addEventListener('click', (e) => {
+            const btn = e.target.closest('[data-notice-fit]');
+            if (!btn) return;
+            const av = noticeAvoided[Number(btn.dataset.noticeFit)] || [];
+            if (av.length < 2) return;
+            map.fitBounds(L.latLngBounds(av.map(c => [c[1], c[0]])), { padding: [40, 40], maxZoom: 8 });
+        });
+    })();
+
     // =========================================================================
-    // 9.2 Route review: hazards and proposals, on the map and in the side pane
+    // 9.2 Route review: hazards, on the map and in the side pane
     // =========================================================================
-    // Selection keys: 'proposal:<id>' or 'hazard:<index>'. Hazard indices are
+    // Selection keys: 'hazard:<index>'. Hazard indices are
     // per response, so every new render clears the selection.
     let reviewLayers = new Map();   // key -> { layer, base }
     let reviewSelection = null;
@@ -2471,9 +2647,7 @@
     const HAZARD_KIND_LABEL = {
         'marnet': 'Network leg',
         'osm-tss': 'TSS lane or join',
-        'connector': 'Port approach',
-        'smoothed': 'Smoothed leg',
-        'user-accepted': 'Accepted shortcut'
+        'connector': 'Port approach'
     };
 
     function themeColor(token) {
@@ -2499,25 +2673,24 @@
         const legs = h.to - h.from;
         const legText = `${legs} ${legs === 1 ? 'leg' : 'legs'}`;
         if (h.passage) {
+            if (h.severity === 'shallow') return `${passageName(h.passage)}: ${legText} too shallow`;
             return h.severity === 'aground'
                 ? `${passageName(h.passage)}: ${legText} aground`
                 : `${passageName(h.passage)}: ${legText} close to land`;
         }
         const kind = HAZARD_KIND_LABEL[h.kind] || h.kind;
         if (h.severity === 'unchecked') return `${kind}: outside the land data`;
+        if (h.severity === 'shallow') return `${kind}: ${legText} too shallow`;
+        if (h.severity === 'approach') return `Port approach: ${legText} ${legs === 1 ? 'is' : 'are'} tight`;
         if (h.severity === 'aground') return legs > 1 ? `${kind} aground (${legText})` : `${kind} aground`;
         return `${kind}: ${Number(h.min_clearance_nm).toFixed(1)} NM from land`;
     }
 
-    // Pending proposals that can fix a hazard: not rejected, not accepted, still offered.
-    function hazardFixes(h) {
-        const offered = new Set(currentProposals.map(p => p.id));
-        return (h.fixes || []).filter(id => offered.has(id) && !rejectedProposalIds.has(id) && !acceptedProposalIds.has(id));
-    }
-
     const HAZARD_LOOK = {
         aground: { label: 'Aground', icon: 'report', cls: 'is-aground' },
+        shallow: { label: 'Shallow', icon: 'report', cls: 'is-aground' },
         close: { label: 'Close pass', icon: 'warning', cls: 'is-close' },
+        approach: { label: 'Port approach', icon: 'warning', cls: 'is-close' },
         unchecked: { label: 'Not checked', icon: 'help', cls: 'is-close' }
     };
 
@@ -2527,6 +2700,7 @@
 
     function hazardClearanceText(h) {
         if (h.severity === 'aground') return 'touches land data';
+        if (h.severity === 'shallow') return 'less water than the depth limit';
         if (h.severity === 'unchecked') return 'unknown';
         const nm = Number(h.min_clearance_nm);
         return nm < 0.1 ? '< 0.1 NM' : `${nm.toFixed(1)} NM`;
@@ -2534,16 +2708,12 @@
 
     function hazardPopup(h, index) {
         const look = hazardLook(h);
-        const fixes = hazardFixes(h);
         const rows = [
             ['Severity', look.label],
             ['Clearance', hazardClearanceText(h)],
             ['Legs', String(h.to - h.from)],
             ['From', formatLatLon(h.start)]
         ];
-        const action = fixes.length > 0
-            ? `<button class="review-btn review-btn--warn" data-hazard-fix="${escapeHtml(fixes[0])}" type="button">Show fix</button>`
-            : `<span class="review-tag">Needs attention</span>`;
         return `<div class="review-popup">
             <div class="review-popup__head ${look.cls}">
                 <span class="material-symbols-outlined" aria-hidden="true">${look.icon}</span>
@@ -2551,27 +2721,7 @@
             </div>
             <dl class="review-popup__rows">${rows.map(([k, v]) => `<dt>${k}</dt><dd>${escapeHtml(v)}</dd>`).join('')}</dl>
             ${h.note ? `<p class="review-popup__note">${escapeHtml(h.note)}</p>` : ''}
-            <div class="review-popup__actions">${action}</div>
-        </div>`;
-    }
-
-    function proposalPopup(p) {
-        const accepted = acceptedProposalIds.has(p.id);
-        const id = escapeHtml(p.id);
-        const actions = accepted
-            ? `<span class="review-tag review-tag--ok">Accepted</span><button class="review-btn" data-proposal-undo="${id}" type="button">Undo</button>`
-            : `<button class="review-btn review-btn--warn" data-proposal-accept="${id}" type="button">Accept</button><button class="review-btn" data-proposal-reject="${id}" type="button">Reject</button>`;
-        return `<div class="review-popup">
-            <div class="review-popup__head is-proposal">
-                <span class="material-symbols-outlined" aria-hidden="true">alt_route</span>
-                <span>Shortcut proposal</span>
-            </div>
-            <dl class="review-popup__rows">
-                <dt>Reason</dt><dd>${escapeHtml(p.reason)}</dd>
-                <dt>Clearance</dt><dd>${Number(p.min_clearance_nm).toFixed(1)} NM</dd>
-                <dt>Saves</dt><dd>${Number(p.saved_nm).toFixed(2)} NM</dd>
-            </dl>
-            <div class="review-popup__actions">${actions}</div>
+            <div class="review-popup__actions"><span class="review-tag">Needs attention</span></div>
         </div>`;
     }
 
@@ -2620,11 +2770,7 @@
 
     function hazardItem(h, index) {
         const look = hazardLook(h);
-        const fixes = hazardFixes(h);
         const key = `hazard:${index}`;
-        const status = fixes.length > 0
-            ? `<button class="review-btn review-btn--warn" data-hazard-fix="${escapeHtml(fixes[0])}" type="button">Fix available: accept shortcut</button>`
-            : `<span class="review-tag">Needs attention</span>`;
         return `<li class="review-item ${look.cls}" data-review-key="${key}">
             <button class="review-item__main" data-review-select="${key}" type="button">
                 <span class="material-symbols-outlined review-item__icon" aria-hidden="true">${look.icon}</span>
@@ -2634,7 +2780,7 @@
                     ${h.note ? `<span class="text-[9px] text-on-surface-variant leading-tight">${escapeHtml(h.note)}</span>` : ''}
                 </span>
             </button>
-            <span class="review-item__actions">${status}</span>
+            <span class="review-item__actions"><span class="review-tag">Needs attention</span></span>
         </li>`;
     }
 
@@ -2648,15 +2794,15 @@
         if (!card || !list) return;
 
         const hazards = props.hazards || [];
-        const latLngs = currentCoords.map(c => [c[1], c[0]]);
+        const latLngs = currentLatLngs;
         const red = themeColor('--color-error');
         const amber = themeColor('--color-warning');
 
-        // Drawn over the route, under the proposals; one colour per severity
+        // Drawn over the route, one colour per severity
         hazards.forEach((h, i) => {
             const seg = latLngs.slice(h.from, h.to + 1);
             if (seg.length < 2) return;
-            const aground = h.severity === 'aground';
+            const aground = h.severity === 'aground' || h.severity === 'shallow';
             const style = {
                 color: aground ? red : amber,
                 weight: aground ? 5 : 4,
@@ -2668,12 +2814,13 @@
             addReviewLayer(`hazard:${i}`, seg, style, hazardPopup(h, i));
         });
 
-        // Aground and unchecked runs stay listed; close passes collapse
+        // Aground, shallow and unchecked runs stay listed; close passes and port approaches collapse
         const aground = [], close = [];
-        hazards.forEach((h, i) => (h.severity === 'close' ? close : aground).push([h, i]));
+        hazards.forEach((h, i) => (h.severity === 'close' || h.severity === 'approach' ? close : aground).push([h, i]));
         card.classList.toggle('hidden', hazards.length === 0);
         card.classList.toggle('flex', hazards.length > 0);
         if (countEl) countEl.textContent = String(hazards.length);
+        renderIncursionStat(hazards);
         list.innerHTML = aground.map(([h, i]) => hazardItem(h, i)).join('');
         list.classList.toggle('hidden', aground.length === 0);
         list.classList.toggle('flex', aground.length > 0);
@@ -2682,75 +2829,15 @@
             group.classList.toggle('hidden', close.length === 0);
             group.classList.toggle('flex', close.length > 0);
             const clearance = Number(props.clearance_nm || 2);
-            summary.textContent = `${close.length} close ${close.length === 1 ? 'pass' : 'passes'} (under ${clearance} NM)`;
+            const nApproach = close.filter(([h]) => h.severity === 'approach').length;
+            const nClose = close.length - nApproach;
+            const parts = [];
+            if (nClose) parts.push(`${nClose} close ${nClose === 1 ? 'pass' : 'passes'} (under ${clearance} NM)`);
+            if (nApproach) parts.push(`${nApproach} port ${nApproach === 1 ? 'approach' : 'approaches'}`);
+            summary.textContent = parts.join(', ');
             closeList.innerHTML = close.map(([h, i]) => hazardItem(h, i)).join('');
             setHazardsCloseExpanded(hazardsCloseExpanded);
         }
-    }
-
-    function proposalTooltip(p) {
-        return `${escapeHtml(p.reason)}<br>min clearance ${Number(p.min_clearance_nm).toFixed(1)} NM<br>saves ${Number(p.saved_nm).toFixed(1)} NM`;
-    }
-
-    function renderProposals() {
-        const card = document.getElementById('proposals-card');
-        const list = document.getElementById('proposals-list');
-        const countEl = document.getElementById('proposals-count');
-        const acceptAll = document.getElementById('btn-accept-all');
-        if (!card || !list) return;
-
-        const visible = currentProposals.filter(p => !rejectedProposalIds.has(p.id));
-
-        // Dashed amber overlay for every pending proposal, clickable
-        visible.forEach(p => {
-            if (acceptedProposalIds.has(p.id) || !p.path || p.path.length < 2) return;
-            addReviewLayer(`proposal:${p.id}`, p.path.map(c => [c[1], c[0]]), {
-                color: '#f59e0b',
-                weight: 3,
-                opacity: 0.95,
-                dashArray: '6 6'
-            }, proposalPopup(p)).bindTooltip(proposalTooltip(p), { sticky: true });
-        });
-
-        card.classList.toggle('hidden', visible.length === 0);
-        card.classList.toggle('flex', visible.length > 0);
-        if (countEl) countEl.textContent = String(visible.length);
-        const pending = visible.filter(p => !acceptedProposalIds.has(p.id));
-        if (acceptAll) acceptAll.classList.toggle('hidden', pending.length === 0);
-
-        list.innerHTML = visible.map(p => {
-            const accepted = acceptedProposalIds.has(p.id);
-            const id = escapeHtml(p.id);
-            const key = escapeHtml(`proposal:${p.id}`);
-            const actions = accepted
-                ? `<span class="font-mono text-[9px] px-1.5 py-0.5 rounded-sm bg-secondary/15 text-secondary border border-secondary/30 flex items-center gap-1"><span class="material-symbols-outlined text-[11px]">check</span>Accepted</span>
-                   <button class="font-mono text-[9px] px-1.5 py-0.5 rounded-sm bg-surface-container hover:bg-surface-container-high text-on-surface-variant border border-surface-container-high cursor-pointer transition-colors" data-proposal-undo="${id}" type="button">Undo</button>`
-                : `<button class="font-mono text-[9px] px-1.5 py-0.5 rounded-sm bg-warning/20 hover:bg-warning/30 text-warning border border-warning/40 font-semibold cursor-pointer transition-colors" data-proposal-accept="${id}" type="button">Accept</button>
-                   <button class="font-mono text-[9px] px-1.5 py-0.5 rounded-sm bg-surface-container hover:bg-surface-container-high text-on-surface-variant border border-surface-container-high cursor-pointer transition-colors" data-proposal-reject="${id}" type="button">Reject</button>`;
-            const select = accepted ? '' : ` data-review-select="${key}"`;
-            return `<li class="review-item is-proposal" data-review-key="${key}">
-                <button class="review-item__main"${select} type="button"${accepted ? ' disabled' : ''}>
-                    <span class="flex flex-col min-w-0">
-                        <span class="font-mono text-[10px] text-on-surface">${escapeHtml(p.reason)}</span>
-                        <span class="font-mono text-[9px] text-on-surface-variant tabular-nums">min ${Number(p.min_clearance_nm).toFixed(1)} NM clearance &bull; saves ${Number(p.saved_nm).toFixed(1)} NM</span>
-                    </span>
-                </button>
-                <span class="review-item__actions">${actions}</span>
-            </li>`;
-        }).join('');
-    }
-
-    function setProposalAccepted(ids, accepted) {
-        map.closePopup();
-        computeRoute({ acceptDelta: { ids, on: accepted }, keepView: true });
-    }
-
-    function rejectProposal(id) {
-        // Reject only hides the item; the route is unchanged
-        map.closePopup();
-        rejectedProposalIds.add(id);
-        routeLayerGroup.clearLayers();
-        renderRoute(currentRouteData, { keepView: true, quiet: true });
     }
 
     // One handler for the side pane and the map popups
@@ -2758,21 +2845,12 @@
         const btn = e.target.closest('button');
         if (!btn || btn.disabled) return;
         const d = btn.dataset;
-        // A popup rebuilt during a compute has live buttons: a second accept
-        // would be built from the old accepted set and drop the first.
-        if (computeInFlight && (d.proposalAccept || d.proposalUndo || d.proposalReject)) return;
-        if (d.proposalAccept) setProposalAccepted([d.proposalAccept], true);
-        else if (d.proposalUndo) setProposalAccepted([d.proposalUndo], false);
-        else if (d.proposalReject) rejectProposal(d.proposalReject);
-        else if (d.hazardFix) selectReviewItem(`proposal:${d.hazardFix}`, { fit: true, scroll: true, popup: true });
-        else if (d.reviewSelect) selectReviewItem(d.reviewSelect, { fit: true, scroll: false, popup: true });
+        if (d.reviewSelect) selectReviewItem(d.reviewSelect, { fit: true, scroll: false, popup: true });
     }
 
     (function bindReviewActions() {
-        ['hazards-card', 'proposals-list'].forEach(id => {
-            const el = document.getElementById(id);
-            if (el) el.addEventListener('click', handleReviewClick);
-        });
+        const hazardsCard = document.getElementById('hazards-card');
+        if (hazardsCard) hazardsCard.addEventListener('click', handleReviewClick);
         const toggle = document.getElementById('hazards-close-toggle');
         if (toggle) toggle.addEventListener('click', () => setHazardsCloseExpanded(!hazardsCloseExpanded));
         // Leaflet stops click propagation out of popups: bind on each open
@@ -2783,16 +2861,23 @@
                 el.addEventListener('click', handleReviewClick);
             }
         });
-        const acceptAll = document.getElementById('btn-accept-all');
-        if (acceptAll) {
-            acceptAll.addEventListener('click', () => {
-                const ids = currentProposals
-                    .filter(p => !rejectedProposalIds.has(p.id) && !acceptedProposalIds.has(p.id))
-                    .map(p => p.id);
-                if (ids.length > 0) setProposalAccepted(ids, true);
-            });
-        }
     })();
+
+    /**
+     * Land incursions stat: stretches that touch land outside a port approach,
+     * plus stretches the land data does not cover (not verified either way).
+     */
+    function renderIncursionStat(hazards) {
+        const el = document.getElementById('stat-land-incursions');
+        if (!el) return;
+        const n = hazards.filter(h => h.severity === 'aground' && h.kind !== 'connector').length;
+        const unchecked = hazards.filter(h => h.severity === 'unchecked').length;
+        let text = `${n} Land Incursion${n === 1 ? '' : 's'}`;
+        if (unchecked > 0) text += ` · ${unchecked} unverified`;
+        el.textContent = text;
+        el.classList.remove('text-tertiary', 'text-warning', 'text-error');
+        el.classList.add(n > 0 ? 'text-error' : unchecked > 0 ? 'text-warning' : 'text-tertiary');
+    }
 
     /**
      * Renders tabular waypoint manifest
@@ -2878,7 +2963,10 @@
     }
 
     if (speedSlider) {
-        speedSlider.addEventListener('input', updateTransitDuration);
+        speedSlider.addEventListener('input', () => {
+            readSpeed.set(parseFloat(speedSlider.value) || 18);
+            updateTransitDuration();
+        });
     }
 
     // =========================================================================
@@ -2911,8 +2999,8 @@
     ];
 
     function getSimulationCoordinates() {
-        if (currentCoords && currentCoords.length > 1) {
-            return currentCoords.map(c => [c[1], c[0]]); // [lat, lon]
+        if (currentLatLngs && currentLatLngs.length > 1) {
+            return currentLatLngs; // [lat, lon], unwrapped
         }
         return FALLBACK_SIM_WAYPOINTS.map(wp => [wp.lat, wp.lon]);
     }
@@ -3276,7 +3364,6 @@
             if (currentAlgorithm) params.set('algo', currentAlgorithm);
             if (avoidList.length > 0) params.set('avoid', avoidList.join(','));
             if (speed) params.set('speed', speed);
-            if (toggleKinks && !toggleKinks.checked) params.set('kinks', '0');
             if (readClearance() !== CLEARANCE_DEFAULT) params.set('clr', String(readClearance()));
 
             const shareUrl = `${window.location.origin}${window.location.pathname}?${params.toString()}`;
@@ -3327,6 +3414,7 @@
                         if (ports && ports.length > 0) {
                             const p = ports[0];
                             setOrigin(p.latitude, p.longitude, 'CUSTOM', `${p.port}, ${p.country}`);
+                            rememberPort('origin', p.latitude, p.longitude, p.port);
                             hasCustomParams = true;
                         }
                     }).catch(() => {});
@@ -3353,6 +3441,7 @@
                         if (ports && ports.length > 0) {
                             const p = ports[0];
                             setDest(p.latitude, p.longitude, 'CUSTOM', `${p.port}, ${p.country}`);
+                            rememberPort('dest', p.latitude, p.longitude, p.port);
                             hasCustomParams = true;
                         }
                     }).catch(() => {});
@@ -3387,9 +3476,6 @@
             updateAvoidBadge();
         }
 
-        if (params.has('kinks') && toggleKinks) {
-            toggleKinks.checked = !['0', 'false', 'off'].includes(params.get('kinks').trim().toLowerCase());
-        }
         if (params.has('clr')) {
             const clr = parseFloat(params.get('clr'));
             if (!isNaN(clr)) writeClearance(Math.min(CLEARANCE_MAX, Math.max(CLEARANCE_MIN, Math.round(clr * 2) / 2)));

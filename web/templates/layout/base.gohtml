@@ -221,7 +221,7 @@
                 <span class="material-symbols-outlined text-[16px]">info</span>
             </button>
             <!-- Dropdown info card -->
-            <div class="hidden absolute right-0 top-full mt-2 w-72 bg-surface-container-low border border-surface-container-high rounded-sm shadow-2xl p-3 z-50 flex flex-col gap-2 font-mono text-[10px]" id="info-popover-card">
+            <div class="hidden absolute right-0 top-full mt-2 w-80 max-w-[calc(100vw-2rem)] bg-surface-container-low border border-surface-container-high rounded-sm shadow-2xl p-3 z-50 flex flex-col gap-2 font-mono text-[10px]" id="info-popover-card">
                 <div class="flex items-center justify-between pb-1.5 border-b border-surface-container-high">
                     <span class="text-primary font-bold uppercase tracking-wider flex items-center gap-1">
                         <span class="material-symbols-outlined text-[14px]">terminal</span> System Metadata
@@ -241,9 +241,15 @@
                         <span>Graph Nodes / Edges</span>
                         <span class="text-on-surface" id="sys-info-nodes-edges">42,800 / 118,400</span>
                     </div>
-                    <div class="flex justify-between py-0.5 border-b border-surface-container/50">
-                        <span>DataSource</span>
-                        <span class="text-on-surface">Eurostat / Maritime GIS</span>
+                    <div class="flex flex-col gap-1 py-0.5 border-b border-surface-container/50">
+                        <span>Datasets</span>
+                        <ul class="flex flex-col gap-1" id="sys-info-datasets">
+                            <li class="flex justify-between gap-2"><span class="text-on-surface">Sea lane network</span><span class="text-right">Eurostat MARNET 5 km</span></li>
+                            <li class="flex justify-between gap-2"><span class="text-on-surface">Water depth</span><span class="text-right">GEBCO 2026 grid</span></li>
+                            <li class="flex justify-between gap-2"><span class="text-on-surface">Coastline</span><span class="text-right">OpenStreetMap</span></li>
+                            <li class="flex justify-between gap-2"><span class="text-on-surface">Traffic separation</span><span class="text-right">OpenStreetMap</span></li>
+                            <li class="flex justify-between gap-2"><span class="text-on-surface">Ports</span><span class="text-right">NGA World Port Index</span></li>
+                        </ul>
                     </div>
                     <div class="flex justify-between py-0.5 border-b border-surface-container/50">
                         <span>Algorithm Mode</span>

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"math"
+	"os"
 	"slices"
 	"strings"
 	"sync"
@@ -19,21 +20,27 @@ var ports = map[string]route.Position{
 	"Gdynia":    {18.546982540197764, 54.538336522499797},
 }
 
+const depthFile = "../dataset/depth_gebco.bin.gz"
+
 var (
 	fullOnce  sync.Once
 	fullGraph *route.Graph
 	fullErr   error
 )
 
-// fullSession serves a graph with land and TSS, so proposals can occur.
+// fullSession serves a graph with land and TSS, so hazards can occur.
 func fullSession(t *testing.T) *mcp.ClientSession {
 	t.Helper()
 	fullOnce.Do(func() {
-		fullGraph, fullErr = route.LoadAll(route.Datasets{
+		d := route.Datasets{
 			Network: "../dataset/marnet_plus_5km.geojson",
 			Land:    "../dataset/land_osm.bin.gz",
 			TSS:     "../dataset/tss_osm.geojson.gz",
-		})
+		}
+		if _, err := os.Stat(depthFile); err == nil {
+			d.Depth = depthFile
+		}
+		fullGraph, fullErr = route.LoadAll(d)
 	})
 	if fullErr != nil {
 		t.Fatal(fullErr)
@@ -103,11 +110,13 @@ func TestDistanceToGoPath(t *testing.T) {
 func TestDistanceToGoAvoid(t *testing.T) {
 	cs := session(t)
 	var via, round distanceOut
-	call(t, cs, "distance_to_go", map[string]any{"from": map[string]any{"port": "Rotterdam"}, "to": map[string]any{"port": "Gdynia"}}, &via)
-	call(t, cs, "distance_to_go", map[string]any{"from": map[string]any{"lat": 51.9, "lon": 4.44}, "to": map[string]any{"port": "Gdynia"}, "avoid": []string{"kiel"}}, &round)
-	t.Logf("via Kiel %.1f nm %v; avoiding %.1f nm %v", via.DistanceNM, via.Passages, round.DistanceNM, round.Passages)
-	if !slices.Contains(via.Passages, "kiel") || slices.Contains(round.Passages, "kiel") || round.DistanceNM <= via.DistanceNM {
-		t.Errorf("avoid kiel not applied: %+v vs %+v", via, round)
+	from := map[string]any{"lat": 51.9, "lon": 4.44}
+	to := map[string]any{"lat": 1.26, "lon": 103.8}
+	call(t, cs, "distance_to_go", map[string]any{"from": from, "to": to}, &via)
+	call(t, cs, "distance_to_go", map[string]any{"from": from, "to": to, "avoid": []string{"suez"}}, &round)
+	t.Logf("default %.1f nm %v; avoiding suez %.1f nm %v", via.DistanceNM, via.Passages, round.DistanceNM, round.Passages)
+	if !slices.Contains(via.Passages, "suez") || slices.Contains(round.Passages, "suez") || round.DistanceNM <= via.DistanceNM {
+		t.Errorf("avoid suez not applied: %+v vs %+v", via, round)
 	}
 }
 
@@ -154,60 +163,17 @@ func withArgs(extra map[string]any) map[string]any {
 	return a
 }
 
-func TestDistanceToGoProposalsNotApplied(t *testing.T) {
+func TestIncludePathAddsPathAndStretches(t *testing.T) {
 	cs := fullSession(t)
-	var smooth, plain distanceOut
-	call(t, cs, "distance_to_go", withArgs(nil), &smooth)
-	call(t, cs, "distance_to_go", withArgs(map[string]any{"kinks": false}), &plain)
-	if len(smooth.Proposals) == 0 {
-		t.Fatal("no proposals for Rotterdam to Singapore")
-	}
-	if len(plain.Proposals) != 0 {
-		t.Errorf("kinks=false returned %d proposals", len(plain.Proposals))
-	}
-	for _, p := range smooth.Proposals {
-		if p.ID == "" || p.Reason == "" || len(p.Path) != 0 {
-			t.Errorf("bad proposal without include_path: %+v", p)
-		}
-	}
-	var again distanceOut
-	call(t, cs, "distance_to_go", withArgs(map[string]any{"accept": []string{}}), &again)
-	if again.DistanceNM != smooth.DistanceNM {
-		t.Errorf("listing proposals changed distance: %.1f vs %.1f", again.DistanceNM, smooth.DistanceNM)
-	}
-}
-
-func TestDistanceToGoAcceptApplies(t *testing.T) {
-	cs := fullSession(t)
-	var base, applied, ignored distanceOut
-	call(t, cs, "distance_to_go", withArgs(nil), &base)
-	if len(base.Proposals) == 0 {
-		t.Fatal("no proposals")
-	}
-	p := base.Proposals[0]
-	call(t, cs, "distance_to_go", withArgs(map[string]any{"accept": []string{p.ID}}), &applied)
-	if drop := base.DistanceNM - applied.DistanceNM; math.Abs(drop-p.SavedNM) > 0.11 {
-		t.Errorf("distance dropped %.2f nm; proposal saved_nm %.2f", drop, p.SavedNM)
-	}
-	if len(applied.IgnoredAccept) != 0 {
-		t.Errorf("ignored_accept = %v; want empty", applied.IgnoredAccept)
-	}
-	call(t, cs, "distance_to_go", withArgs(map[string]any{"kinks": false, "accept": []string{p.ID}}), &ignored)
-	if !slices.Equal(ignored.IgnoredAccept, []string{p.ID}) {
-		t.Errorf("kinks=false ignored_accept = %v; want [%s]", ignored.IgnoredAccept, p.ID)
-	}
-}
-
-func TestIncludePathAddsProposalPathAndStretches(t *testing.T) {
-	cs := fullSession(t)
+	pts := []map[string]any{{"port": "Rotterdam"}, {"lat": 1.26, "lon": 103.8}}
 	var out routeOut
-	call(t, cs, "route", map[string]any{"points": []map[string]any{{"port": "Rotterdam"}, {"lat": 1.26, "lon": 103.8}}, "include_path": true}, &out)
-	if len(out.Proposals) == 0 || len(out.Proposals[0].Path) < 2 || len(out.Stretches) == 0 {
-		t.Errorf("want proposal paths and stretches with include_path; got %d proposals, %d stretches", len(out.Proposals), len(out.Stretches))
+	call(t, cs, "route", map[string]any{"points": pts, "include_path": true}, &out)
+	if len(out.Path) < 2 || len(out.Stretches) == 0 {
+		t.Errorf("want path and stretches with include_path; got %d vertices, %d stretches", len(out.Path), len(out.Stretches))
 	}
 	var bare routeOut
-	call(t, cs, "route", map[string]any{"points": []map[string]any{{"port": "Rotterdam"}, {"lat": 1.26, "lon": 103.8}}}, &bare)
-	if len(bare.Stretches) != 0 || len(bare.Proposals) == 0 || len(bare.Proposals[0].Path) != 0 {
+	call(t, cs, "route", map[string]any{"points": pts}, &bare)
+	if len(bare.Path) != 0 || len(bare.Stretches) != 0 {
 		t.Errorf("path data returned without include_path")
 	}
 }
@@ -218,10 +184,6 @@ func TestClearanceOutOfRangeToolError(t *testing.T) {
 		if res := call(t, cs, "distance_to_go", withArgs(map[string]any{"clearance_nm": c}), nil); !res.IsError {
 			t.Errorf("clearance_nm %v: want tool error", c)
 		}
-	}
-	long := strings.Repeat("x", 33)
-	if res := call(t, cs, "route", map[string]any{"points": []map[string]any{{"port": "Rotterdam"}, {"port": "Gdynia"}}, "accept": []string{long}}, nil); !res.IsError {
-		t.Error("overlong accept ID: want tool error")
 	}
 }
 
@@ -241,4 +203,66 @@ func TestRouteReturnsHazards(t *testing.T) {
 	if d.Hazards == nil || len(d.Hazards) == 0 {
 		t.Errorf("distance_to_go hazards = %#v", d.Hazards)
 	}
+}
+
+func TestDistanceToGoKielDraught(t *testing.T) {
+	cs := session(t)
+	args := map[string]any{"from": map[string]any{"port": "Rotterdam"}, "to": map[string]any{"port": "Gdynia"}}
+	var deep, shoal distanceOut
+	call(t, cs, "distance_to_go", args, &deep)
+	args["draught_m"] = 8
+	call(t, cs, "distance_to_go", args, &shoal)
+	if slices.Contains(deep.Passages, "kiel") || !slices.Contains(shoal.Passages, "kiel") {
+		t.Errorf("default draught %v, 8 m draught %v; want Kiel only with 8 m", deep.Passages, shoal.Passages)
+	}
+}
+
+func TestVesselValidationToolError(t *testing.T) {
+	cs := session(t)
+	for _, extra := range []map[string]any{
+		{"draught_m": 0}, {"draught_m": 26}, {"speed_kn": 0}, {"speed_kn": 31}, {"vessel_type": "ferry"},
+	} {
+		if res := call(t, cs, "distance_to_go", withArgs(extra), nil); !res.IsError {
+			t.Errorf("%v: want tool error", extra)
+		}
+	}
+}
+
+func TestRouteDepthDefaults(t *testing.T) {
+	var out routeOut
+	call(t, session(t), "route", map[string]any{"points": []map[string]any{{"port": "Rotterdam"}, {"lat": 1.26, "lon": 103.8}}}, &out)
+	if out.Depth.DraughtM != 10 || math.Abs(out.Depth.LimitM-13.568) > 1e-6 || out.Notices == nil || len(out.Notices) != 0 {
+		t.Errorf("depth %+v notices %#v; want draught 10 and empty notices", out.Depth, out.Notices)
+	}
+}
+
+// Jeddah to Piraeus at 21 m cannot use Suez (20.1 m limit); needs no depth data.
+func TestRouteSuezDraughtNotice(t *testing.T) {
+	var out routeOut
+	pts := []map[string]any{{"lat": 21.48, "lon": 39.17}, {"lat": 37.94, "lon": 23.64}}
+	call(t, session(t), "route", map[string]any{"points": pts, "draught_m": 21}, &out)
+	found := false
+	for _, n := range out.Notices {
+		found = found || strings.Contains(n.Text, "suez limit of 20.1 m")
+	}
+	if !found {
+		t.Errorf("no suez limit notice: %+v", out.Notices)
+	}
+}
+
+func TestMCPRouteDraughtNotice(t *testing.T) {
+	if _, err := os.Stat(depthFile); err != nil {
+		t.Skip("depth dataset not built")
+	}
+	var out routeOut
+	// The open Yellow Sea, not Qingdao: every network edge into Qingdao is
+	// shallower than the 25.8 m a 22 m tanker needs, so there is no route at all.
+	pts := []map[string]any{{"lat": 26.65, "lon": 50.17}, {"lat": 34.5, "lon": 123.0}}
+	call(t, fullSession(t), "route", map[string]any{"points": pts, "draught_m": 22}, &out)
+	for _, n := range out.Notices {
+		if n.Kind == "draught-reroute" {
+			return
+		}
+	}
+	t.Errorf("no draught-reroute notice: %+v", out.Notices)
 }

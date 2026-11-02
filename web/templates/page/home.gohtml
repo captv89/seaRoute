@@ -229,92 +229,76 @@
                 </div>
             </div>
 
-            <!-- 3b. ROUTE SMOOTHING (kink removal) -->
+            <!-- 3b. VESSEL (draught, speed, type, land clearance) -->
             <div class="p-2.5 rounded-sm bg-surface-container-low border border-surface-container-high flex flex-col gap-2">
-                <div class="flex items-center justify-between">
-                    <label class="font-label-sm text-[10px] uppercase font-bold text-primary flex items-center gap-1.5">
-                        <span class="material-symbols-outlined text-[14px]">timeline</span> Route Smoothing
-                    </label>
-                    <span class="font-mono text-[9px] text-on-surface-variant">Rhumb legs</span>
+                <span class="font-label-sm text-[10px] uppercase font-bold text-primary flex items-center gap-1.5">
+                    <span class="material-symbols-outlined text-[14px]" aria-hidden="true">directions_boat</span> Vessel
+                </span>
+                <div class="flex items-center justify-between gap-2">
+                    <label class="font-mono text-[10px] uppercase text-on-surface-variant" for="draught-input">Draught</label>
+                    <div class="flex items-stretch border border-surface-container-high rounded-sm bg-surface-container-lowest">
+                        <button aria-label="Decrease draught" class="w-6 flex items-center justify-center text-on-surface-variant hover:text-primary hover:bg-surface-container disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer transition-colors" id="draught-dec" type="button">
+                            <span class="material-symbols-outlined text-[14px]">remove</span>
+                        </button>
+                        <input aria-label="Draught in metres" autocomplete="off" class="w-14 px-1 py-1 text-center font-mono text-[11px] text-on-surface bg-transparent border-0 focus:ring-0 focus:outline-none tabular-nums" id="draught-input" inputmode="decimal" spellcheck="false" type="text" value="10.0"/>
+                        <button aria-label="Increase draught" class="w-6 flex items-center justify-center text-on-surface-variant hover:text-primary hover:bg-surface-container disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer transition-colors" id="draught-inc" type="button">
+                            <span class="material-symbols-outlined text-[14px]">add</span>
+                        </button>
+                        <span class="px-1.5 flex items-center font-mono text-[9px] text-on-surface-variant border-l border-surface-container-high">M</span>
+                    </div>
                 </div>
-                <label class="flex items-center justify-between gap-2 cursor-pointer" for="toggle-kinks">
-                    <span class="flex flex-col">
-                        <span class="font-mono text-[11px] text-on-surface font-medium">Remove kinks</span>
-                        <span class="font-mono text-[9px] text-on-surface-variant leading-tight">Straighten zigzags on the mesh. TSS lanes are always honoured.</span>
-                    </span>
-                    <input checked class="rounded-none border-surface-variant bg-surface-container-lowest text-primary focus:ring-0 cursor-pointer" id="toggle-kinks" type="checkbox"/>
-                </label>
-                <div class="flex items-center justify-between gap-2" id="clearance-row">
+                <div class="flex items-center justify-between gap-2">
+                    <label class="font-mono text-[10px] uppercase text-on-surface-variant" for="speed-input">Speed</label>
+                    <div class="flex items-stretch border border-surface-container-high rounded-sm bg-surface-container-lowest">
+                        <button aria-label="Decrease speed" class="w-6 flex items-center justify-center text-on-surface-variant hover:text-primary hover:bg-surface-container disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer transition-colors" id="speed-dec" type="button">
+                            <span class="material-symbols-outlined text-[14px]">remove</span>
+                        </button>
+                        <input aria-label="Speed in knots" autocomplete="off" class="w-14 px-1 py-1 text-center font-mono text-[11px] text-on-surface bg-transparent border-0 focus:ring-0 focus:outline-none tabular-nums" id="speed-input" inputmode="decimal" spellcheck="false" type="text" value="18.0"/>
+                        <button aria-label="Increase speed" class="w-6 flex items-center justify-center text-on-surface-variant hover:text-primary hover:bg-surface-container disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer transition-colors" id="speed-inc" type="button">
+                            <span class="material-symbols-outlined text-[14px]">add</span>
+                        </button>
+                        <span class="px-1.5 flex items-center font-mono text-[9px] text-on-surface-variant border-l border-surface-container-high">KN</span>
+                    </div>
+                </div>
+                <div class="flex items-center justify-between gap-2">
+                    <span class="font-mono text-[10px] uppercase text-on-surface-variant" id="vessel-type-label">Type</span>
+                    <div class="flex flex-1 max-w-[220px] items-stretch border border-surface-container-high rounded-sm bg-surface-container-lowest divide-x divide-surface-container-high" role="group" aria-labelledby="vessel-type-label" id="vessel-type-group">
+                        <button aria-pressed="false" class="vessel-type-btn flex-1 px-1 py-1 font-mono text-[10px] cursor-pointer transition-colors text-on-surface-variant hover:text-on-surface hover:bg-surface-container" data-vessel-type="tanker" type="button">Tanker</button>
+                        <button aria-pressed="true" class="vessel-type-btn flex-1 px-1 py-1 font-mono text-[10px] cursor-pointer transition-colors bg-primary-container text-on-primary-container font-semibold" data-vessel-type="bulk" type="button">Bulk</button>
+                        <button aria-pressed="false" class="vessel-type-btn flex-1 px-1 py-1 font-mono text-[10px] cursor-pointer transition-colors text-on-surface-variant hover:text-on-surface hover:bg-surface-container" data-vessel-type="general" type="button">General</button>
+                        <button aria-pressed="false" class="vessel-type-btn flex-1 px-1 py-1 font-mono text-[10px] cursor-pointer transition-colors text-on-surface-variant hover:text-on-surface hover:bg-surface-container" data-vessel-type="container" type="button">Container</button>
+                    </div>
+                </div>
+                <div class="flex items-center justify-between gap-2">
                     <label class="font-mono text-[10px] uppercase text-on-surface-variant" for="clearance-input">Land clearance</label>
                     <div class="flex items-stretch border border-surface-container-high rounded-sm bg-surface-container-lowest">
                         <button aria-label="Decrease clearance" class="w-6 flex items-center justify-center text-on-surface-variant hover:text-primary hover:bg-surface-container disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer transition-colors" id="clearance-dec" type="button">
                             <span class="material-symbols-outlined text-[14px]">remove</span>
                         </button>
-                        <input aria-label="Land clearance in nautical miles" class="w-12 py-1 text-center font-mono text-[11px] text-on-surface bg-transparent border-0 focus:ring-0 focus:outline-none tabular-nums" id="clearance-input" inputmode="decimal" max="10" min="0.5" step="0.5" type="number" value="2"/>
+                        <input aria-label="Land clearance in nautical miles" autocomplete="off" class="w-14 px-1 py-1 text-center font-mono text-[11px] text-on-surface bg-transparent border-0 focus:ring-0 focus:outline-none tabular-nums" id="clearance-input" inputmode="decimal" spellcheck="false" type="text" value="2.0"/>
                         <button aria-label="Increase clearance" class="w-6 flex items-center justify-center text-on-surface-variant hover:text-primary hover:bg-surface-container disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer transition-colors" id="clearance-inc" type="button">
                             <span class="material-symbols-outlined text-[14px]">add</span>
                         </button>
                         <span class="px-1.5 flex items-center font-mono text-[9px] text-on-surface-variant border-l border-surface-container-high">NM</span>
                     </div>
                 </div>
+                <p class="font-mono text-[9px] text-on-surface-variant leading-tight" id="depth-readout" aria-live="polite">Depth limit is worked out with the route (squat uses this speed).</p>
             </div>
 
-            <!-- Compute Action Button -->
-            <button class="w-full bg-primary-container text-on-primary-container py-2.5 px-3 rounded-sm font-label-lg text-[13px] font-bold flex items-center justify-center gap-2 hover:brightness-110 active:brightness-95 shadow-md transition-all cursor-pointer" id="btn-compute" type="button">
-                <span class="material-symbols-outlined text-[18px] animate-spin hidden" id="spinner-compute">progress_activity</span>
-                <span class="material-symbols-outlined text-[18px]" id="icon-compute">calculate</span>
-                <span id="btn-compute-text">Compute Optimal Sea Route</span>
-            </button>
-
-            <!-- Routing warnings (tss-unresolved) -->
-            <div class="hidden p-2.5 rounded-sm bg-error-container/30 border border-error/50 flex-col gap-1" id="route-warnings" role="alert">
-                <span class="font-mono text-[10px] uppercase font-bold text-error flex items-center gap-1.5">
-                    <span class="material-symbols-outlined text-[14px]">warning</span> TSS rules left no route
-                </span>
-                <ul class="flex flex-col gap-1 font-mono text-[10px] text-on-surface leading-tight" id="route-warnings-list"></ul>
-            </div>
-
-            <!-- Route hazards: segments on or near land -->
-            <section class="hidden p-2.5 rounded-sm bg-surface-container-low border border-error/40 flex-col gap-2" id="hazards-card" aria-labelledby="hazards-title">
-                <div class="flex items-center justify-between gap-2">
-                    <h3 class="font-label-sm text-[10px] font-bold uppercase text-error flex items-center gap-1.5" id="hazards-title">
-                        <span class="material-symbols-outlined text-[14px]" aria-hidden="true">report</span> Route Hazards
-                        <span class="font-mono text-[9px] px-1.5 rounded-sm bg-error/15 border border-error/40 tabular-nums" id="hazards-count">0</span>
-                    </h3>
-                </div>
-                <p class="text-[9px] font-mono text-on-surface-variant leading-tight">
-                    Legs that touch land or pass inside the clearance. Select one to find it on the map.
-                </p>
-                <ul class="flex flex-col gap-1.5" id="hazards-list"></ul>
-                <div class="hidden flex-col gap-1.5" id="hazards-close-group">
-                    <button class="review-toggle flex items-center justify-between gap-2 w-full p-1.5 rounded-sm bg-surface-container-lowest border border-warning/30 hover:border-warning/60 text-left cursor-pointer" id="hazards-close-toggle" type="button" aria-expanded="false" aria-controls="hazards-close-list">
-                        <span class="flex items-center gap-1.5 font-mono text-[10px] text-warning">
-                            <span class="material-symbols-outlined text-[13px]" aria-hidden="true">warning</span>
-                            <span id="hazards-close-summary"></span>
-                        </span>
-                        <span class="material-symbols-outlined text-[14px] text-on-surface-variant review-toggle__chevron" aria-hidden="true">expand_more</span>
-                    </button>
-                    <ul class="hidden flex-col gap-1.5" id="hazards-close-list"></ul>
-                </div>
-            </section>
-
-            <!-- Shortcut proposals -->
-            <div class="hidden p-2.5 rounded-sm bg-surface-container-low border border-warning/40 flex-col gap-2" id="proposals-card">
-                <div class="flex items-center justify-between gap-2">
-                    <span class="font-label-sm text-[10px] font-bold uppercase text-warning flex items-center gap-1.5">
-                        <span class="material-symbols-outlined text-[14px]">alt_route</span> Shortcut Proposals
-                        <span class="font-mono text-[9px] px-1.5 rounded-sm bg-warning/20 border border-warning/40" id="proposals-count">0</span>
-                    </span>
-                    <button class="font-mono text-[9px] px-1.5 py-0.5 rounded-sm bg-warning/20 hover:bg-warning/30 text-warning border border-warning/40 font-semibold cursor-pointer transition-colors" id="btn-accept-all" type="button">Accept all</button>
-                </div>
-                <p class="text-[9px] font-mono text-on-surface-variant leading-tight">
-                    Shorter legs that pass closer to land than the clearance. Never applied unless you accept them.
-                </p>
-                <ul class="flex flex-col gap-1.5" id="proposals-list"></ul>
+            <!-- Compute + Clear actions -->
+            <div class="flex items-stretch gap-1.5">
+                <button class="flex-1 min-w-0 bg-primary-container text-on-primary-container py-2.5 px-3 rounded-sm font-label-lg text-[13px] font-bold flex items-center justify-center gap-2 hover:brightness-110 active:brightness-95 shadow-md transition-all cursor-pointer" id="btn-compute" type="button">
+                    <span class="material-symbols-outlined text-[18px] animate-spin hidden" id="spinner-compute">progress_activity</span>
+                    <span class="material-symbols-outlined text-[18px]" id="icon-compute">calculate</span>
+                    <span class="truncate" id="btn-compute-text">Compute Optimal Sea Route</span>
+                </button>
+                <button aria-label="Clear route" class="w-11 shrink-0 rounded-sm bg-surface-container border border-surface-container-high text-on-surface-variant flex items-center justify-center transition-colors hover:text-error hover:border-error/50 hover:bg-error/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:text-on-surface-variant disabled:hover:border-surface-container-high disabled:hover:bg-surface-container cursor-pointer" disabled id="btn-clear-route" title="Clear route" type="button">
+                    <span class="material-symbols-outlined text-[18px]" aria-hidden="true">delete</span>
+                </button>
             </div>
 
             <!-- Route Metrics Summary -->
-            <div class="p-2.5 bg-surface-container rounded-sm border border-surface-container-high flex flex-col gap-2">
+            <div class="p-2.5 bg-surface-container rounded-sm border border-surface-container-high flex flex-col gap-2" id="route-summary">
                 <div class="flex items-center justify-between">
                     <span class="font-label-sm text-[10px] font-bold uppercase text-on-surface flex items-center gap-1">
                         <span class="material-symbols-outlined text-primary text-[14px]">analytics</span> Route Output Summary
@@ -330,7 +314,7 @@
                     <div class="bg-surface-container-low p-2 rounded-sm border border-surface-container-high">
                         <p class="font-mono text-[9px] uppercase text-on-surface-variant">Marnet Graph Nodes</p>
                         <p class="font-mono text-[16px] text-secondary font-bold leading-tight" id="stat-nodes">-- <span class="text-[10px] font-normal">Nodes</span></p>
-                        <p class="font-mono text-[9px] text-tertiary" id="stat-land-incursions">0 Land Incursions</p>
+                        <p class="font-mono text-[9px] text-tertiary" id="stat-land-incursions">-- Land Incursions</p>
                     </div>
                 </div>
                 <p class="hidden font-mono text-[9px] text-on-surface-variant leading-tight items-center gap-1" id="tss-unknown-note">
@@ -343,11 +327,11 @@
                         <span class="font-mono text-[10px] text-on-surface-variant uppercase">Transit Speed: <span class="text-on-surface font-semibold font-mono" id="speed-label">18.0 kts</span></span>
                         <span class="font-mono text-[11px] text-secondary font-semibold" id="stat-time">--</span>
                     </div>
-                    <input class="w-full accent-primary h-1 bg-surface-container-highest rounded cursor-pointer" id="speed-slider" max="28" min="8" step="0.5" type="range" value="18"/>
+                    <input aria-label="Transit speed in knots" class="w-full accent-primary h-1 bg-surface-container-highest rounded cursor-pointer" id="speed-slider" max="30" min="6" step="0.5" type="range" value="18"/>
                     <div class="flex justify-between text-[8px] font-mono text-outline">
-                        <span>8 kts (Eco)</span>
+                        <span>6 kts (Eco)</span>
                         <span>18 kts (Cruising)</span>
-                        <span>28 kts (Fast)</span>
+                        <span>30 kts (Fast)</span>
                     </div>
                 </div>
                 <!-- ROUTE PLAYBACK & SIMULATION ACTION BUTTON -->
@@ -357,12 +341,59 @@
                 </button>
             </div>
 
+
+            <!-- Routing warnings (tss-unresolved) -->
+            <div class="hidden p-2.5 rounded-sm bg-error-container/30 border border-error/50 flex-col gap-1" id="route-warnings" role="alert">
+                <span class="font-mono text-[10px] uppercase font-bold text-error flex items-center gap-1.5">
+                    <span class="material-symbols-outlined text-[14px]">warning</span> TSS rules left no route
+                </span>
+                <ul class="flex flex-col gap-1 font-mono text-[10px] text-on-surface leading-tight" id="route-warnings-list"></ul>
+            </div>
+
+            <!-- Draught notices: reroutes and no-route -->
+            <section class="hidden p-2.5 rounded-sm bg-surface-container-low border border-warning/40 flex-col gap-2" id="notices-card" aria-labelledby="notices-title">
+                <h3 class="font-label-sm text-[10px] font-bold uppercase text-warning flex items-center gap-1.5" id="notices-title">
+                    <span class="material-symbols-outlined text-[14px]" aria-hidden="true">sailing</span> Draught Notices
+                </h3>
+                <ul class="flex flex-col gap-1.5" id="notices-list"></ul>
+            </section>
+
+            <!-- Route hazards: segments on or near land -->
+            <section class="hidden p-2.5 rounded-sm bg-surface-container-low border border-error/40 flex-col gap-2" id="hazards-card" aria-labelledby="hazards-title">
+                <div class="flex items-center justify-between gap-2">
+                    <h3 class="font-label-sm text-[10px] font-bold uppercase text-error flex items-center gap-1.5" id="hazards-title">
+                        <span class="material-symbols-outlined text-[14px]" aria-hidden="true">report</span> Route Hazards
+                        <span class="font-mono text-[9px] px-1.5 rounded-sm bg-error/15 border border-error/40 tabular-nums" id="hazards-count">0</span>
+                    </h3>
+                </div>
+                <p class="text-[9px] font-mono text-on-surface-variant leading-tight">
+                    Legs that touch land, run shallow, or pass inside the clearance. Select one to find it on the map.
+                </p>
+                <ul class="flex flex-col gap-1.5" id="hazards-list"></ul>
+                <div class="hidden flex-col gap-1.5" id="hazards-close-group">
+                    <button class="review-toggle flex items-center justify-between gap-2 w-full p-1.5 rounded-sm bg-surface-container-lowest border border-warning/30 hover:border-warning/60 text-left cursor-pointer" id="hazards-close-toggle" type="button" aria-expanded="false" aria-controls="hazards-close-list">
+                        <span class="flex items-center gap-1.5 font-mono text-[10px] text-warning">
+                            <span class="material-symbols-outlined text-[13px]" aria-hidden="true">warning</span>
+                            <span id="hazards-close-summary"></span>
+                        </span>
+                        <span class="material-symbols-outlined text-[14px] text-on-surface-variant review-toggle__chevron" aria-hidden="true">expand_more</span>
+                    </button>
+                    <ul class="hidden flex-col gap-1.5" id="hazards-close-list"></ul>
+                </div>
+            </section>
+
             <!-- 4. WAYPOINT MANIFEST (Tabular Monospace Detail) -->
             <div class="flex flex-col gap-1.5">
-                <div class="flex items-center justify-between px-1">
-                    <div class="flex items-center gap-1.5">
-                        <span class="material-symbols-outlined text-[14px] text-primary">format_list_numbered</span>
-                        <span class="font-label-sm text-[11px] uppercase font-bold text-on-surface" id="manifest-header">Waypoint Manifest</span>
+                <div class="flex items-start justify-between px-1">
+                    <div class="flex flex-col gap-0.5">
+                        <div class="flex items-center gap-1.5">
+                            <span class="material-symbols-outlined text-[14px] text-primary">format_list_numbered</span>
+                            <span class="font-label-sm text-[11px] uppercase font-bold text-on-surface" id="manifest-header">Waypoint Manifest</span>
+                        </div>
+                        <p class="flex items-center gap-1 font-mono text-[9px] text-warning leading-tight">
+                            <span class="material-symbols-outlined text-[11px]" aria-hidden="true">warning</span>
+                            <span>Planning aid only. Not for navigation: verify against official charts.</span>
+                        </p>
                     </div>
                     <div class="flex items-center gap-1">
                         <button class="font-mono text-[9px] text-on-surface-variant hover:text-secondary px-1.5 py-0.5 rounded-sm bg-surface-container border border-surface-container-high flex items-center gap-1 cursor-pointer" id="btn-export-csv" title="Export Waypoints as CSV" type="button">

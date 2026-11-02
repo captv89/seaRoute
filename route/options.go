@@ -1,32 +1,50 @@
 package route
 
-import (
-	"errors"
-	"fmt"
-)
+import "errors"
 
-// Limits on the kink-removal options, shared by the REST and MCP front ends.
+// Limits on the clearance option, shared by the REST and MCP front ends.
 const (
 	DefaultClearanceNM = 2.0
 	MinClearanceNM     = 0.5
 	MaxClearanceNM     = 10.0
-	MaxAcceptIDs       = 200
-	MaxAcceptIDLen     = 32
 )
 
-// CheckKinkOptions validates a clearance (in nautical miles, already
-// defaulted) and the accept IDs against the limits above.
-func CheckKinkOptions(clearanceNM float64, accept []string) error {
+// CheckClearance validates a clearance in nautical miles, already defaulted.
+func CheckClearance(clearanceNM float64) error {
 	if clearanceNM < MinClearanceNM || clearanceNM > MaxClearanceNM {
 		return errors.New("clearance_nm must be between 0.5 and 10")
 	}
-	if len(accept) > MaxAcceptIDs {
-		return fmt.Errorf("too many accept IDs (max %d)", MaxAcceptIDs)
+	return nil
+}
+
+// CheckVessel validates a vessel's draught, speed and type. It does not apply
+// defaults; NewVessel does that and then calls it.
+func CheckVessel(v Vessel) error {
+	if v.DraughtM < 1 || v.DraughtM > 25 {
+		return errors.New("draught_m must be between 1 and 25")
 	}
-	for _, id := range accept {
-		if len(id) > MaxAcceptIDLen {
-			return fmt.Errorf("accept ID too long (max %d characters)", MaxAcceptIDLen)
-		}
+	if v.SpeedKn < 1 || v.SpeedKn > 30 {
+		return errors.New("speed_kn must be between 1 and 30")
+	}
+	if _, ok := BlockCoefficient(v.Type); !ok {
+		return errors.New("vessel_type must be one of tanker, bulk, general, container")
 	}
 	return nil
+}
+
+// NewVessel builds a vessel from optional request fields and validates it. A
+// nil pointer or empty type means the default; an explicit value, including 0,
+// is kept as given.
+func NewVessel(draughtM, speedKn *float64, vesselType string) (Vessel, error) {
+	v := Vessel{DraughtM: DefaultDraughtM, SpeedKn: DefaultSpeedKn, Type: DefaultVesselType}
+	if draughtM != nil {
+		v.DraughtM = *draughtM
+	}
+	if speedKn != nil {
+		v.SpeedKn = *speedKn
+	}
+	if vesselType != "" {
+		v.Type = VesselType(vesselType)
+	}
+	return v, CheckVessel(v)
 }
