@@ -138,7 +138,7 @@ Open `http://localhost:8080` in your web browser.
 
 ### Weather forecast (voyage simulation)
 
-With `WEATHER_DIR` set, the server downloads the latest ECMWF IFS open data run (wind, gusts, pressure, ocean current and waves, 0.25 degrees, out to 15 days) at start and checks for a newer run every hour. The first start fetches about 470 MB; the run file and the previous one use up to about 1.6 GB of disk, so keep `WEATHER_DIR` on a volume (the compose files use the named volume `searoute-weather`). Without `WEATHER_DIR`, or when the store cannot be opened, weather is off and everything else works as before.
+With `WEATHER_DIR` set, the server downloads the latest ECMWF IFS open data run (wind, gusts, pressure, ocean current and waves, 0.25 degrees, out to 15 days) at start and checks for a newer run every hour. The first start fetches about 470 MB; the current run file, the previous one and the `.tmp` download of the next run are about 1.6 GB each, so peak disk use is about 5 GB. Keep `WEATHER_DIR` on a volume (the compose files use the named volume `searoute-weather`). Without `WEATHER_DIR`, or when the store cannot be opened, weather is off and everything else works as before.
 
 * `POST /voyage/weather` sails a track at a constant speed (6 to 30 kn) and returns hourly samples with the forecast along it and a summary per leg. Rate limited; body up to 2 MiB.
 * `GET /weather/tile/:run/:field/:step/:z/:x/:y.png` serves PNG map tiles (`wind`, `waves`, `current`). Only the current run id is served; tiles are cacheable for a day.
