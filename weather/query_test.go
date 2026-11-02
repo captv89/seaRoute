@@ -1,8 +1,10 @@
 package weather
 
 import (
+	"encoding/json"
 	"math"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -171,4 +173,35 @@ func TestConditionsNilWhenEmpty(t *testing.T) {
 	if c := v.Conditions(); c != nil {
 		t.Errorf("conditions = %+v, want nil", c)
 	}
+}
+
+func TestConditionsJSONNull(t *testing.T) {
+	w := 10.0
+	b, err := json.Marshal(Conditions{WindKn: &w})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(b), `"current_kn":null`) || !strings.Contains(string(b), `"wind_kn":10`) {
+		t.Errorf("json = %s", b)
+	}
+}
+
+func TestAtWaveDirectionCancelsToNaN(t *testing.T) {
+	r := newTestRun(t, testGrid, map[FieldID]fill{MWD: cornerFill([2][2]float32{{0, 180}, {0, 180}})})
+	if v := r.At(9.5, 20.5, testRef)[MWD]; !isNaN(v) {
+		t.Errorf("MWD = %v, want NaN", v)
+	}
+}
+
+func TestDirectionRange(t *testing.T) {
+	if d := direction(-1e-9, 1); d < 0 || d >= 360 {
+		t.Errorf("direction = %v, want within [0,360)", d)
+	}
+}
+
+func TestSpatialSharedCache(t *testing.T) {
+	r := newTestRun(t, testGrid, map[FieldID]fill{U10: cornerFill([2][2]float32{{0, 1}, {2, 3}})})
+	src := r.newRowCache().get
+	near(t, "spatial", r.spatial(src, U10, 0, 9.5, 20.5), 1.5, 0.01)
+	near(t, "spatial again", r.spatial(src, U10, 0, 9.5, 20.5), 1.5, 0.01)
 }

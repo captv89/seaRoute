@@ -13,15 +13,15 @@ type Values [NumFields]float32
 // Conditions is Values converted for display: knots, hPa and compass degrees.
 // A nil field has no value.
 type Conditions struct {
-	WindKn       *float64 `json:"wind_kn,omitempty"`
-	WindFromDeg  *float64 `json:"wind_from_deg,omitempty"`
-	GustKn       *float64 `json:"gust_kn,omitempty"`
-	PressureHPa  *float64 `json:"pressure_hpa,omitempty"`
-	CurrentKn    *float64 `json:"current_kn,omitempty"`
-	CurrentToDeg *float64 `json:"current_to_deg,omitempty"`
-	WaveM        *float64 `json:"wave_m,omitempty"`
-	WaveFromDeg  *float64 `json:"wave_from_deg,omitempty"`
-	WavePeriodS  *float64 `json:"wave_period_s,omitempty"`
+	WindKn       *float64 `json:"wind_kn"`
+	WindFromDeg  *float64 `json:"wind_from_deg"`
+	GustKn       *float64 `json:"gust_kn"`
+	PressureHPa  *float64 `json:"pressure_hpa"`
+	CurrentKn    *float64 `json:"current_kn"`
+	CurrentToDeg *float64 `json:"current_to_deg"`
+	WaveM        *float64 `json:"wave_m"`
+	WaveFromDeg  *float64 `json:"wave_from_deg"`
+	WavePeriodS  *float64 `json:"wave_period_s"`
 }
 
 const knotsPerMS = 3600.0 / 1852
@@ -48,17 +48,21 @@ func (r *Run) At(lat, lon float64, t time.Time) Values {
 		s0 = s1 - 1
 		w = float64(t.Sub(r.ValidTime(s0))) / float64(r.ValidTime(s1).Sub(r.ValidTime(s0)))
 	}
+	cs := r.stencil(lat, lon)
+	if len(cs) == 0 {
+		return out
+	}
+	src := r.newRowCache().get
 	for f := FieldID(0); f < NumFields; f++ {
 		if f == MWD {
-			sin0, cos0, ok0 := r.spatialVector(f, s0, lat, lon)
-			sin1, cos1, ok1 := r.spatialVector(f, s1, lat, lon)
+			sin0, cos0, ok0 := r.vectorCorners(src, cs, f, s0)
+			sin1, cos1, ok1 := r.vectorCorners(src, cs, f, s1)
 			if ok0 && ok1 {
-				s, c := sin0+(sin1-sin0)*w, cos0+(cos1-cos0)*w
-				out[f] = float32(math.Mod(math.Atan2(s, c)*180/math.Pi+360, 360))
+				out[f] = direction(sin0+(sin1-sin0)*w, cos0+(cos1-cos0)*w)
 			}
 			continue
 		}
-		a, b := float64(r.spatial(f, s0, lat, lon)), float64(r.spatial(f, s1, lat, lon))
+		a, b := float64(r.scalarCorners(src, cs, f, s0)), float64(r.scalarCorners(src, cs, f, s1))
 		if !math.IsNaN(a) && !math.IsNaN(b) {
 			out[f] = float32(a + (b-a)*w)
 		}
@@ -125,28 +129,54 @@ func (r *Run) stencil(lat, lon float64) []corner {
 	return cs
 }
 
-// sample reads the stencil values of one field at one step, calling use with
-// each valid value and its weight. Missing values are skipped. It returns the
-// total weight of the valid points (0 when none, or on a read error).
-func (r *Run) sample(f FieldID, stepIdx int, lat, lon float64, use func(v, w float64)) float64 {
-	cs := r.stencil(lat, lon)
-	if len(cs) == 0 {
-		return 0
-	}
-	rows := make(map[int][]int16, 2)
-	for _, c := range cs {
-		if _, ok := rows[c.row]; ok {
-			continue
+// rowSource returns one grid row (NX quantized values) of a field at a step.
+// ok is false when the row cannot be read. The returned slice must not be
+// modified or kept past the next call that may refill the source.
+type rowSource func(f FieldID, stepIdx, row int) (row16 []int16, ok bool)
+
+type rowKey struct {
+	f         FieldID
+	step, row int
+}
+
+// rowCache is a rowSource that reads each row from the run once. Create one
+// per batch of nearby points (one point query, or one map tile) and use get
+// as the source; rows are shared across fields, steps and points. It is not
+// safe for concurrent use.
+type rowCache struct {
+	r    *Run
+	rows map[rowKey][]int16 // nil value: the row could not be read
+}
+
+func (r *Run) newRowCache() *rowCache {
+	return &rowCache{r: r, rows: make(map[rowKey][]int16)}
+}
+
+// get implements rowSource.
+func (c *rowCache) get(f FieldID, stepIdx, row int) ([]int16, bool) {
+	k := rowKey{f, stepIdx, row}
+	buf, seen := c.rows[k]
+	if !seen {
+		buf = make([]int16, c.r.Grid.NX)
+		if err := c.r.readRow(f, stepIdx, row, buf); err != nil {
+			buf = nil
 		}
-		buf := make([]int16, r.Grid.NX)
-		if err := r.readRow(f, stepIdx, c.row, buf); err != nil {
-			return 0
-		}
-		rows[c.row] = buf
+		c.rows[k] = buf
 	}
+	return buf, buf != nil
+}
+
+// sample calls use with each valid value of field f at step stepIdx among the
+// stencil corners cs, with its weight. Missing values and unreadable rows are
+// skipped. It returns the total weight of the valid points (0 when none).
+func (r *Run) sample(src rowSource, cs []corner, f FieldID, stepIdx int, use func(v, w float64)) float64 {
 	total := 0.0
 	for _, c := range cs {
-		v := r.decode(f, rows[c.row][c.col])
+		row, ok := src(f, stepIdx, c.row)
+		if !ok {
+			continue
+		}
+		v := r.decode(f, row[c.col])
 		if math.IsNaN(float64(v)) {
 			continue
 		}
@@ -156,32 +186,23 @@ func (r *Run) sample(f FieldID, stepIdx int, lat, lon float64, use func(v, w flo
 	return total
 }
 
-// spatial is the bilinear value of one scalar field at one forecast step.
-// Missing corners (land, off-grid rows) are dropped and the remaining weights
-// renormalized; NaN when no corner has a value. It does not interpolate in
-// time, so other callers (map tiles) can use it for a single step. For MWD it
-// averages the direction as a vector and returns degrees.
-func (r *Run) spatial(f FieldID, stepIdx int, lat, lon float64) float32 {
-	if f == MWD {
-		s, c, ok := r.spatialVector(f, stepIdx, lat, lon)
-		if !ok {
-			return nan32()
-		}
-		return float32(math.Mod(math.Atan2(s, c)*180/math.Pi+360, 360))
-	}
+// scalarCorners is the weighted mean of a scalar field over the valid
+// corners, or NaN when none is valid.
+func (r *Run) scalarCorners(src rowSource, cs []corner, f FieldID, stepIdx int) float32 {
 	sum := 0.0
-	total := r.sample(f, stepIdx, lat, lon, func(v, w float64) { sum += v * w })
+	total := r.sample(src, cs, f, stepIdx, func(v, w float64) { sum += v * w })
 	if total == 0 {
 		return nan32()
 	}
 	return float32(sum / total)
 }
 
-// spatialVector is the bilinear mean of a direction field (degrees) at one
-// step, as the unit vector (sin, cos). ok is false when no corner has a value.
-func (r *Run) spatialVector(f FieldID, stepIdx int, lat, lon float64) (sin, cos float64, ok bool) {
+// vectorCorners is the weighted mean of a direction field (degrees) over the
+// valid corners, as the unit vector (sin, cos). ok is false when no corner is
+// valid.
+func (r *Run) vectorCorners(src rowSource, cs []corner, f FieldID, stepIdx int) (sin, cos float64, ok bool) {
 	var s, c float64
-	total := r.sample(f, stepIdx, lat, lon, func(v, w float64) {
+	total := r.sample(src, cs, f, stepIdx, func(v, w float64) {
 		rad := v * math.Pi / 180
 		s += math.Sin(rad) * w
 		c += math.Cos(rad) * w
@@ -190,6 +211,38 @@ func (r *Run) spatialVector(f FieldID, stepIdx int, lat, lon float64) (sin, cos 
 		return 0, 0, false
 	}
 	return s / total, c / total, true
+}
+
+// direction turns a mean (sin, cos) vector into compass degrees in [0, 360),
+// or NaN when the directions cancel out.
+func direction(s, c float64) float32 {
+	if math.Hypot(s, c) < 1e-9 {
+		return nan32()
+	}
+	d := float32(compass(math.Atan2(s, c) * 180 / math.Pi))
+	if d >= 360 {
+		d = 0
+	}
+	return d
+}
+
+// spatial is the bilinear value of one field at one forecast step, reading
+// rows through src (use a rowCache's get to share reads between points).
+// Missing corners (land, off-grid rows) are dropped and the remaining weights
+// renormalized; NaN when no corner has a value. There is no interpolation in
+// time, so a caller such as the map tile renderer can use it for a single
+// field and step. For MWD the direction is averaged as a vector and returned
+// in degrees.
+func (r *Run) spatial(src rowSource, f FieldID, stepIdx int, lat, lon float64) float32 {
+	cs := r.stencil(lat, lon)
+	if f == MWD {
+		s, c, ok := r.vectorCorners(src, cs, f, stepIdx)
+		if !ok {
+			return nan32()
+		}
+		return direction(s, c)
+	}
+	return r.scalarCorners(src, cs, f, stepIdx)
 }
 
 func valid(v float32) bool { return !math.IsNaN(float64(v)) }
