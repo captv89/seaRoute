@@ -121,7 +121,7 @@ func (f *Fetcher) client() *http.Client {
 }
 
 func (f *Fetcher) steps() []int {
-	if f.Steps != nil {
+	if len(f.Steps) > 0 {
 		return f.Steps
 	}
 	return DefaultSteps()
@@ -264,7 +264,8 @@ func (f *Fetcher) Fetch(ctx context.Context, run time.Time, path string) error {
 	jobs := make(chan job)
 	var (
 		wg      sync.WaitGroup
-		putMu   sync.Mutex // RunWriter.Put updates shared bookkeeping
+		putMu   sync.Mutex // RunWriter.Put updates shared bookkeeping; also guards puts
+		puts    = map[string]int{}
 		errOnce sync.Once
 		firstEr error
 	)
@@ -283,7 +284,7 @@ func (f *Fetcher) Fetch(ctx context.Context, run time.Time, path string) error {
 				if ctx.Err() != nil {
 					continue
 				}
-				if err := f.fetchStep(ctx, run, steps[j.idx], j.idx, j.stream, w, &putMu); err != nil {
+				if err := f.fetchStep(ctx, run, steps[j.idx], j.idx, j.stream, w, &putMu, puts); err != nil {
 					fail(err)
 				}
 			}
@@ -307,11 +308,18 @@ feed:
 	if err := ctx.Err(); err != nil {
 		return err
 	}
+	// A stream with no field at all means the index was empty or the
+	// parameter names changed; never install such a run.
+	for _, s := range streams {
+		if puts[s] == 0 {
+			return fmt.Errorf("weather: no %s fields found in run %s", s, RunID(run))
+		}
+	}
 	return w.Close()
 }
 
 // fetchStep downloads every wanted field of one stream at one step.
-func (f *Fetcher) fetchStep(ctx context.Context, run time.Time, step, idx int, stream string, w *RunWriter, putMu *sync.Mutex) error {
+func (f *Fetcher) fetchStep(ctx context.Context, run time.Time, step, idx int, stream string, w *RunWriter, putMu *sync.Mutex, puts map[string]int) error {
 	body, err := f.get(ctx, gribURL(f.base(), run, stream, step, "index"), "", http.StatusOK, -1, maxIndexBytes)
 	if err != nil {
 		return err
@@ -343,6 +351,9 @@ func (f *Fetcher) fetchStep(ctx context.Context, run time.Time, step, idx int, s
 		}
 		putMu.Lock()
 		err = w.Put(fid, idx, fld.Values)
+		if err == nil {
+			puts[stream]++
+		}
 		putMu.Unlock()
 		if err != nil {
 			return err

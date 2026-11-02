@@ -18,7 +18,7 @@ var testRun = time.Date(2026, 11, 1, 0, 0, 0, 0, time.UTC)
 
 // fixtureServer serves the swh fixture as the wave message of run
 // 2026-11-01 00Z step 24, with Range support. The oper index is empty.
-func fixtureServer(t *testing.T, dataStatus int) *httptest.Server {
+func fixtureServer(t *testing.T, dataStatus int, operParam string) *httptest.Server {
 	t.Helper()
 	index, err := os.ReadFile("testdata/fixture.index")
 	if err != nil {
@@ -31,7 +31,9 @@ func fixtureServer(t *testing.T, dataStatus int) *httptest.Server {
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case strings.HasSuffix(r.URL.Path, "-oper-fc.index"):
-			w.Write(nil)
+			if operParam != "" {
+				fmt.Fprintf(w, `{"param": %q, "_offset": 0, "_length": %d}`+"\n", operParam, len(data))
+			}
 		case strings.HasSuffix(r.URL.Path, "-wave-fc.index"):
 			w.Write(index)
 		case strings.HasSuffix(r.URL.Path, ".grib2"):
@@ -112,7 +114,7 @@ func TestWantedSkipsGustAtStep0(t *testing.T) {
 }
 
 func TestFetchWritesRun(t *testing.T) {
-	srv := fixtureServer(t, 0)
+	srv := fixtureServer(t, 0, "10u")
 	defer srv.Close()
 	path := filepath.Join(t.TempDir(), "run.bin")
 	if err := testFetcher(srv.URL, []int{24}).Fetch(context.Background(), testRun, path); err != nil {
@@ -127,13 +129,38 @@ func TestFetchWritesRun(t *testing.T) {
 	if d := math.Abs(float64(v[SWH]) - 2.285643); d > 0.005 {
 		t.Errorf("SWH %v, want 2.2856", v[SWH])
 	}
-	if !isNaN(v[U10]) {
-		t.Errorf("U10 %v, want NaN", v[U10])
+	if isNaN(v[U10]) {
+		t.Error("U10 is NaN, want a value")
+	}
+	if !isNaN(v[V10]) {
+		t.Errorf("V10 %v, want NaN", v[V10])
+	}
+}
+
+func TestFetchEmptyStreamFails(t *testing.T) {
+	srv := fixtureServer(t, 0, "")
+	defer srv.Close()
+	path := filepath.Join(t.TempDir(), "run.bin")
+	if err := testFetcher(srv.URL, []int{24}).Fetch(context.Background(), testRun, path); err == nil {
+		t.Fatal("want error")
+	}
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Errorf("file left behind: %v", err)
+	}
+}
+
+func TestLatestEmptyStepsUsesDefault(t *testing.T) {
+	srv := httptest.NewServer(http.NotFoundHandler())
+	defer srv.Close()
+	f := testFetcher(srv.URL, []int{})
+	f.Now = func() time.Time { return testRun }
+	if _, err := f.Latest(context.Background()); err == nil {
+		t.Fatal("want not-ready error, not a panic")
 	}
 }
 
 func TestFetchWrongValidTimeFails(t *testing.T) {
-	srv := fixtureServer(t, 0)
+	srv := fixtureServer(t, 0, "10u")
 	defer srv.Close()
 	path := filepath.Join(t.TempDir(), "run.bin")
 	if err := testFetcher(srv.URL, []int{48}).Fetch(context.Background(), testRun, path); err == nil {
@@ -145,7 +172,7 @@ func TestFetchWrongValidTimeFails(t *testing.T) {
 }
 
 func TestFetchServerErrorRemovesFile(t *testing.T) {
-	srv := fixtureServer(t, http.StatusInternalServerError)
+	srv := fixtureServer(t, http.StatusInternalServerError, "10u")
 	defer srv.Close()
 	path := filepath.Join(t.TempDir(), "run.bin")
 	if err := testFetcher(srv.URL, []int{24}).Fetch(context.Background(), testRun, path); err == nil {
