@@ -65,6 +65,9 @@ type Voyage struct {
 	DistanceNM  float64      `json:"distance_nm"`
 	Samples     []Sample     `json:"samples"`
 	Legs        []LegSummary `json:"legs"`
+
+	// Scales are the tile colour scales, so a legend matches the tiles.
+	Scales map[string][]ScaleStop `json:"scales"`
 }
 
 func badVoyage(format string, args ...any) error {
@@ -196,6 +199,7 @@ func PlanVoyage(run *Run, req VoyageRequest) (Voyage, error) {
 		DistanceNM: cumNM[n-1],
 		Samples:    samples,
 		Legs:       summaries,
+		Scales:     Scales,
 	}
 	if run != nil {
 		id, ref, end := run.ID, run.Ref, run.End()
