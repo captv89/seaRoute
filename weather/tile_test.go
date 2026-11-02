@@ -158,3 +158,32 @@ func benchRun(b *testing.B, g Grid) *Run {
 	b.Cleanup(func() { r.Close() })
 	return r
 }
+
+func TestTileReadFailureNotCached(t *testing.T) {
+	r := tileRun(t)
+	r.Close()
+	ts := NewTiles(1<<20, 1)
+	if _, err := ts.Get(r, "wind", 3, 0, 0, 0); err == nil {
+		t.Fatal("Get on a closed run succeeded")
+	}
+	if len(ts.byKey) != 0 || ts.renders.Load() != 0 {
+		t.Errorf("failed render was cached: %d entries, %d renders", len(ts.byKey), ts.renders.Load())
+	}
+}
+
+func TestTileNegativeValue(t *testing.T) {
+	r := newTestRun(t, tileGrid, map[FieldID]fill{SWH: func(_, _, _ int) float32 { return -5 }})
+	if _, err := NewTiles(1<<20, 1).Get(r, "waves", 3, 0, 0, 0); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestTileCachedExactSize(t *testing.T) {
+	b, err := NewTiles(1<<20, 1).Get(tileRun(t), "wind", 3, 0, 0, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cap(b) != len(b) {
+		t.Errorf("cap %d != len %d", cap(b), len(b))
+	}
+}

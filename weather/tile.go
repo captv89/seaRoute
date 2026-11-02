@@ -201,7 +201,15 @@ func render(r *Run, tf *tileField, step, z, x, y int) ([]byte, error) {
 		lons[i] = (float64(x*tileSize+i)+0.5)/n*360 - 180
 		lats[i] = math.Atan(math.Sinh(math.Pi*(1-2*(float64(y*tileSize+i)+0.5)/n))) * 180 / math.Pi
 	}
-	src := r.newRowCache().get
+	cache := r.newRowCache()
+	failed := false
+	src := func(f FieldID, stepIdx, row int) ([]int16, bool) {
+		rw, ok := cache.get(f, stepIdx, row)
+		if !ok {
+			failed = true
+		}
+		return rw, ok
+	}
 	img := image.NewNRGBA(image.Rect(0, 0, tileSize, tileSize))
 	for py, lat := range lats {
 		for px, lon := range lons {
@@ -216,17 +224,20 @@ func render(r *Run, tf *tileField, step, z, x, y int) ([]byte, error) {
 			if math.IsNaN(v) {
 				continue
 			}
-			v *= tf.unit
-			i := int(math.Round(math.Min(v/tf.max, 1) * (lutSize - 1)))
+			v = math.Max(0, math.Min(v*tf.unit, tf.max)) // corrupt data may be negative
+			i := int(math.Round(v / tf.max * (lutSize - 1)))
 			c := tf.lut[i]
 			o := img.PixOffset(px, py)
 			img.Pix[o], img.Pix[o+1], img.Pix[o+2], img.Pix[o+3] = c[0], c[1], c[2], tileAlpha
 		}
+	}
+	if failed {
+		return nil, errors.New("weather: tile: forecast rows could not be read")
 	}
 	var buf bytes.Buffer
 	enc := png.Encoder{CompressionLevel: png.BestSpeed}
 	if err := enc.Encode(&buf, img); err != nil {
 		return nil, err
 	}
-	return buf.Bytes(), nil
+	return bytes.Clone(buf.Bytes()), nil // exact size, so the cache byte cap holds
 }
