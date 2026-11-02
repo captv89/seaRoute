@@ -239,5 +239,7 @@ func render(r *Run, tf *tileField, step, z, x, y int) ([]byte, error) {
 	if err := enc.Encode(&buf, img); err != nil {
 		return nil, err
 	}
-	return bytes.Clone(buf.Bytes()), nil // exact size, so the cache byte cap holds
+	out := make([]byte, buf.Len())
+	copy(out, buf.Bytes())
+	return out, nil // exact size, so the cache byte cap holds
 }
