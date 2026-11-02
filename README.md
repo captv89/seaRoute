@@ -100,8 +100,7 @@ docker run -d \
 ## Building from Source
 
 ### Prerequisites
-* [Go 1.22+](https://go.dev/)
-* GCC / CGO build toolchain (for SQLite embedded driver)
+* [Go 1.26+](https://go.dev/) (no C toolchain needed: the SQLite driver is pure Go)
 
 ### Installation
 

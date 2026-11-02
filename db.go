@@ -2,8 +2,8 @@ package main
 
 import (
 	"database/sql"
-	_ "github.com/mattn/go-sqlite3"
 	"log"
+	_ "modernc.org/sqlite"
 )
 
 type Port struct {
@@ -17,7 +17,7 @@ type Port struct {
 func LoadPorts() ([]Port, error) {
 	var ports []Port
 	// Open the database
-	db, err := sql.Open("sqlite3", "./dataset/port-list.sqlite")
+	db, err := sql.Open("sqlite", "./dataset/port-list.sqlite")
 	if err != nil {
 		return nil, err
 	}

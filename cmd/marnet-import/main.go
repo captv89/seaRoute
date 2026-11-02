@@ -20,7 +20,7 @@ import (
 	"os"
 	"strconv"
 
-	_ "github.com/mattn/go-sqlite3"
+	_ "modernc.org/sqlite"
 )
 
 func main() {
@@ -37,7 +37,7 @@ func main() {
 }
 
 func run(in, out string) error {
-	db, err := sql.Open("sqlite3", "file:"+in+"?mode=ro")
+	db, err := sql.Open("sqlite", "file:"+in+"?mode=ro")
 	if err != nil {
 		return err
 	}
