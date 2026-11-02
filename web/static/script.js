@@ -3782,6 +3782,97 @@
         updateWeatherScaleDock();
     });
 
+    // --- Weather CSV export --------------------------------------------------
+    // Pure: builds the CSV text for a /voyage/weather response. meta is
+    // { from, to, speedKn } (labels as shown in the UI). RFC 4180: CRLF lines,
+    // fields with a comma, quote or newline are quoted. "# " lines are comments.
+    function buildVoyageCSV(v, meta) {
+        meta = meta || {};
+        const csvField = (x) => {
+            const t = x === null || x === undefined ? '' : String(x);
+            return /[",\r\n]/.test(t) ? `"${t.replace(/"/g, '""')}"` : t;
+        };
+        const iso = (str) => {
+            const ms = Date.parse(String(str).replace(/(\.\d{3})\d+/, '$1'));
+            return isFinite(ms) ? new Date(ms).toISOString().slice(0, 16) + 'Z' : '';
+        };
+        const num = (x, d) => (typeof x === 'number' && isFinite(x)) ? x.toFixed(d) : '';
+        const row = (cells) => cells.map(csvField).join(',');
+        const out = [
+            '# seaRoute voyage weather',
+            `# From: ${meta.from || ''}`,
+            `# To: ${meta.to || ''}`,
+            `# Departure: ${iso(v.departure)}`,
+            `# ETA: ${iso(v.eta)}`,
+            `# Speed: ${num(meta.speedKn, 1)} kn`,
+            `# Distance: ${num(v.distance_nm, 1)} NM`,
+            `# Forecast run: ${v.run_time ? iso(v.run_time) : 'none'}`,
+            `# Forecast end: ${v.forecast_end ? iso(v.forecast_end) : 'none'}`,
+            '# Forecast data: ECMWF IFS open data, CC BY 4.0',
+            row(['leg', 'time_utc', 'lat', 'lon', 'dist_nm', 'course_deg', 'wind_kn', 'wind_from_deg', 'gust_kn',
+                'current_kn', 'current_to_deg', 'wave_m', 'wave_from_deg', 'wave_period_s', 'pressure_hpa']),
+        ];
+        (v.samples || []).forEach(s => {
+            const w = s.weather || {};
+            out.push(row([
+                (s.leg || 0) + 1, iso(s.time), num(s.lat, 5), num(s.lon, 5), num(s.dist_nm, 1), num(s.course_deg, 0),
+                num(w.wind_kn, 1), num(w.wind_from_deg, 1), num(w.gust_kn, 1),
+                num(w.current_kn, 1), num(w.current_to_deg, 1), num(w.wave_m, 1), num(w.wave_from_deg, 1),
+                num(w.wave_period_s, 1), num(w.pressure_hpa, 1),
+            ]));
+        });
+        out.push('');
+        out.push(row(['leg', 'start_utc', 'end_utc', 'max_wind_kn', 'max_gust_kn', 'max_wave_m', 'max_current_kn', 'forecast_pct']));
+        (v.legs || []).forEach(l => {
+            out.push(row([
+                (l.leg || 0) + 1, iso(l.start), iso(l.end), num(l.max_wind_kn, 1), num(l.max_gust_kn, 1),
+                num(l.max_wave_m, 1), num(l.max_current_kn, 1),
+                typeof l.forecast_frac === 'number' ? Math.round(l.forecast_frac * 100) : '',
+            ]));
+        });
+        return out.join('\r\n') + '\r\n';
+    }
+
+    // Label for one end of the voyage: preset or picked port name, else coordinates.
+    function exportEndLabel(side, latInput, lonInput) {
+        const lat = parseCoordinate(latInput ? latInput.value : '', true);
+        const lon = parseCoordinate(lonInput ? lonInput.value : '', false);
+        if (isNaN(lat) || isNaN(lon)) return '';
+        return pointLabel(side, lat, lon) || `${lat.toFixed(4)}, ${lon.toFixed(4)}`;
+    }
+
+    function exportVoyageCSV() {
+        if (!voyage) return;
+        const csv = buildVoyageCSV(voyage, {
+            from: exportEndLabel('origin', originLatInput, originLonInput),
+            to: exportEndLabel('dest', destLatInput, destLonInput),
+            speedKn: currentSpeedKn(),
+        });
+        const dep = new Date(parseTime(voyage.departure));
+        const stamp = isFinite(dep) ? dep.toISOString().slice(0, 16).replace(/[-:]/g, '') : 'voyage';
+        const url = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8' }));
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `voyage-weather-${stamp}Z.csv`;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        setTimeout(() => URL.revokeObjectURL(url), 1000);
+    }
+    (function bindExportButton() {
+        const btn = document.getElementById('btn-export-weather');
+        if (!btn) return;
+        const sync = () => {
+            const ok = Boolean(voyage);
+            btn.disabled = !ok;
+            btn.setAttribute('aria-disabled', ok ? 'false' : 'true');
+            btn.title = ok ? 'Download the voyage weather as CSV' : 'Available once voyage weather has loaded';
+        };
+        btn.addEventListener('click', exportVoyageCSV);
+        onVoyageUpdated(sync);
+        sync();
+    })();
+
     function openSimulation() {
         if (simActive) return;
         if (!hasRoute()) {
