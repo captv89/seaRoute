@@ -2203,6 +2203,7 @@
         const sl = document.getElementById('speed-slider');
         if (sl) sl.value = String(readSpeed());
         updateTransitDuration();
+        setVoyage(null); // old samples are timed for the old speed
         rerouteIfShown();
     });
 
@@ -2554,7 +2555,11 @@
         }
 
         // Transit duration update based on current speed slider
-        if (!opts.keepView) setVoyage(null); // new route: old samples no longer apply
+        if (!opts.keepView) {
+            setVoyage(null); // new route: old samples no longer apply
+            simHours = 0; // playback restarts at departure
+            lastTotalHours = 0; // do not rescale the old position onto the new route
+        }
         updateTransitDuration();
         fetchVoyageWeather();
 
@@ -3007,7 +3012,12 @@
     // Debounced (300 ms) POST of the current track; only the latest response is used.
     function fetchVoyageWeather() {
         clearTimeout(voyageTimer);
-        if (!hasRoute()) return;
+        voyageReqSeq++; // anything already in flight is for an older route/speed/departure
+        if (!hasRoute()) {
+            voyageLoading = false;
+            return;
+        }
+        voyageLoading = true;
         voyageTimer = setTimeout(requestVoyageWeather, 300);
     }
     function requestVoyageWeather() {
@@ -3253,11 +3263,15 @@
             updateTransitDuration();
         });
         // 'change' fires on release, so dragging does not flood the server
-        speedSlider.addEventListener('change', fetchVoyageWeather);
+        speedSlider.addEventListener('change', () => {
+            setVoyage(null); // samples are timed for the old speed; fall back until the new response
+            fetchVoyageWeather();
+        });
     }
     if (departureInput) {
         const onDepartureChange = () => {
             updateTransitDuration();
+            setVoyage(null);
             fetchVoyageWeather();
         };
         departureInput.addEventListener('input', updateTransitDuration);
@@ -3267,6 +3281,7 @@
         btnDepartureNow.addEventListener('click', () => {
             departureInput.value = nowUTCInputValue();
             updateTransitDuration();
+            setVoyage(null);
             fetchVoyageWeather();
         });
     }
