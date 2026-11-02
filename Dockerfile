@@ -35,8 +35,9 @@ COPY --from=builder /searoute /app/searoute
 COPY dataset /app/dataset
 COPY web /app/web
 
-# Create temp directory with proper permissions
-RUN mkdir -p /app/temp && chown -R appuser:appgroup /app
+# Create temp and weather directories with proper permissions (a named volume
+# mounted on /app/weather takes this owner)
+RUN mkdir -p /app/temp /app/weather && chown -R appuser:appgroup /app
 
 # Switch to non-root user
 USER appuser

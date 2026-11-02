@@ -11,11 +11,16 @@ services:
       - OWM_API_KEY=${OWM_API_KEY:-}
       - CARTO_API_KEY=${CARTO_API_KEY:-}
       - GA_TRACKING_ID=${GA_TRACKING_ID:-}
+      - WEATHER_DIR=/app/weather
     volumes:
       - ./temp:/app/temp
+      - searoute-weather:/app/weather
     healthcheck:
       test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:8080/ > /dev/null || exit 1"]
       interval: 30s
       timeout: 3s
       retries: 3
     restart: unless-stopped
+
+volumes:
+  searoute-weather:

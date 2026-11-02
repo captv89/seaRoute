@@ -6,6 +6,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -14,6 +15,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strconv"
 	"strings"
 	"sync"
 	"syscall"
@@ -21,6 +23,7 @@ import (
 
 	"github.com/captv89/seaRoute/mcpserver"
 	"github.com/captv89/seaRoute/route"
+	"github.com/captv89/seaRoute/weather"
 	"github.com/gin-gonic/gin"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
@@ -31,6 +34,10 @@ type App struct {
 	RouteGraph *route.Graph
 	// Datasets lists the data the router runs on, for the system info card.
 	Datasets []DatasetInfo
+	// Weather holds the forecast run; nil when WEATHER_DIR is unset or unusable.
+	Weather *weather.Store
+	// Tiles renders and caches weather map tiles.
+	Tiles *weather.Tiles
 }
 
 // DatasetInfo describes one dataset and whether it loaded.
@@ -80,6 +87,12 @@ func (r WaypointRequest) vessel() (route.Vessel, error) {
 
 // maxWaypointsBody caps the /waypoints body; 200 IDs of 32 chars is under 10 KB.
 const maxWaypointsBody = 64 << 10
+
+// maxVoyageBody caps the /voyage/weather body; 20000 track points are well under 2 MiB.
+const maxVoyageBody = 2 << 20
+
+// tileTimeout bounds how long a tile request waits for its render.
+const tileTimeout = 10 * time.Second
 
 // Rate limiting state
 var (
@@ -160,6 +173,25 @@ func main() {
 	app.RouteGraph = routeGraph
 	log.Println("Route graph loaded")
 
+	// Weather forecast: off unless WEATHER_DIR is set. A bad directory is not fatal.
+	shutdownCtx, stopWeather := context.WithCancel(context.Background())
+	defer stopWeather()
+	if dir := os.Getenv("WEATHER_DIR"); dir != "" {
+		store, err := weather.NewStore(dir)
+		if err != nil {
+			log.Printf("Warning: weather store %s: %v, weather is off", dir, err)
+		} else {
+			app.Weather = store
+			app.Tiles = weather.NewTiles(64<<20, 4)
+			baseURL := os.Getenv("WEATHER_BASE_URL")
+			if baseURL == "" {
+				baseURL = weather.DefaultBaseURL
+			}
+			go store.Loop(shutdownCtx, &weather.Fetcher{BaseURL: baseURL}, time.Hour)
+			log.Printf("Weather forecast on, directory %s", dir)
+		}
+	}
+
 	// Set the router as the default one provided by Gin
 	router := gin.Default()
 
@@ -213,6 +245,7 @@ func main() {
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
 	<-quit
 	log.Println("Shutting down server...")
+	stopWeather()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
@@ -308,7 +341,12 @@ func setupRoutes(router *gin.Engine, app *App) {
 
 	// Handle passages metadata
 	router.GET("/passages", func(c *gin.Context) {
+		weatherStatus := weather.Status{}
+		if app.Weather != nil {
+			weatherStatus = app.Weather.Status()
+		}
 		c.JSON(http.StatusOK, gin.H{
+			"weather":           weatherStatus,
 			"passages":          app.RouteGraph.Passages(),
 			"closed_by_default": route.ClosedByDefault,
 			"engine":            "seaRoute v2.0",
@@ -318,6 +356,87 @@ func setupRoutes(router *gin.Engine, app *App) {
 			"ports_count":       len(app.PortData),
 			"datasets":          app.Datasets,
 		})
+	})
+
+	// Plan a voyage along a track and sample the forecast on the way.
+	router.POST("/voyage/weather", limit, func(c *gin.Context) {
+		c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, maxVoyageBody)
+		var req weather.VoyageRequest
+		if err := json.NewDecoder(c.Request.Body).Decode(&req); err != nil {
+			var tooBig *http.MaxBytesError
+			if errors.As(err, &tooBig) {
+				c.JSON(http.StatusRequestEntityTooLarge, gin.H{"error": "request body too large"})
+				return
+			}
+			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid JSON body"})
+			return
+		}
+		var run *weather.Run
+		if app.Weather != nil {
+			run = app.Weather.Current()
+		}
+		v, err := weather.PlanVoyage(run, req)
+		if errors.Is(err, weather.ErrBadVoyage) {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
+		if err != nil {
+			log.Printf("voyage weather: %v", err)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "internal error"})
+			return
+		}
+		c.JSON(http.StatusOK, v)
+	})
+
+	// Weather map tiles. Not rate limited, like the other map layers; renders
+	// are bounded by the tile cache's worker limit.
+	router.GET("/weather/tile/:run/:field/:step/:z/:x/:y", func(c *gin.Context) {
+		if app.Weather == nil || app.Tiles == nil {
+			c.Status(http.StatusNotFound)
+			return
+		}
+		run := app.Weather.Current()
+		if run == nil || c.Param("run") != run.ID {
+			c.Status(http.StatusNotFound)
+			return
+		}
+		step, err1 := strconv.Atoi(c.Param("step"))
+		z, err2 := strconv.Atoi(c.Param("z"))
+		x, err3 := strconv.Atoi(c.Param("x"))
+		ys, hasExt := strings.CutSuffix(c.Param("y"), ".png")
+		y, err4 := strconv.Atoi(ys)
+		if err1 != nil || err2 != nil || err3 != nil || err4 != nil || !hasExt {
+			c.Status(http.StatusNotFound)
+			return
+		}
+		type result struct {
+			png []byte
+			err error
+		}
+		ctx, cancel := context.WithTimeout(c.Request.Context(), tileTimeout)
+		defer cancel()
+		field := c.Param("field")    // read now: the gin context is reused once the handler returns
+		done := make(chan result, 1) // buffered: the goroutine never blocks if we gave up
+		go func() {
+			b, err := app.Tiles.Get(run, field, step, z, x, y)
+			done <- result{b, err}
+		}()
+		select {
+		case <-ctx.Done():
+			c.Status(http.StatusServiceUnavailable)
+		case r := <-done:
+			if errors.Is(r.err, weather.ErrNotFound) {
+				c.Status(http.StatusNotFound)
+				return
+			}
+			if r.err != nil {
+				log.Printf("weather tile: %v", r.err)
+				c.Status(http.StatusInternalServerError)
+				return
+			}
+			c.Header("Cache-Control", "public, max-age=86400, immutable")
+			c.Data(http.StatusOK, "image/png", r.png)
+		}
 	})
 
 	// Serve the routing mesh GeoJSON

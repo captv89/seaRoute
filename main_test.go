@@ -9,12 +9,15 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/captv89/seaRoute/route"
+	"github.com/captv89/seaRoute/weather"
 	"github.com/gin-gonic/gin"
 )
 
@@ -766,5 +769,185 @@ func TestResolvePointNames(t *testing.T) {
 	long := WaypointPoint{Lat: f(0), Lon: f(0), Name: strings.Repeat("x", maxPointNameLen+1)}
 	if _, _, _, err := resolvePoint(&long, "", app); err == nil {
 		t.Error("over-long name accepted")
+	}
+}
+
+// weatherRunTime is the reference time of the synthetic forecast run in tests.
+var weatherRunTime = time.Date(2026, 11, 1, 0, 0, 0, 0, time.UTC)
+
+// setupWeatherRouter builds a router whose App has a weather store over a
+// temp dir holding one synthetic run with a uniform 5 m/s westerly wind.
+func setupWeatherRouter(t *testing.T) (*gin.Engine, string) {
+	t.Helper()
+	gin.SetMode(gin.TestMode)
+	dir := t.TempDir()
+	id := weather.RunID(weatherRunTime)
+	grid := weather.Grid{NX: 4, NY: 3, Lat0: 10, Lon0: 20, DLat: -1, DLon: 1}
+	steps := []int{0, 3}
+	w, err := weather.CreateRun(filepath.Join(dir, "ecmwf-"+id+".bin"), weatherRunTime, grid, steps)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for s := range steps {
+		for _, f := range []weather.FieldID{weather.U10, weather.V10} {
+			vals := make([]float32, grid.NX*grid.NY)
+			if f == weather.U10 {
+				for i := range vals {
+					vals[i] = 5
+				}
+			}
+			if err := w.Put(f, s, vals); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	if err := w.Close(); err != nil {
+		t.Fatal(err)
+	}
+	store, err := weather.NewStore(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	app := &App{Weather: store, Tiles: weather.NewTiles(1<<20, 2), RouteGraph: testGraph(t)}
+	router := gin.New()
+	setupRoutes(router, app)
+	return router, id
+}
+
+func postVoyage(r *gin.Engine, body any) *httptest.ResponseRecorder {
+	var buf bytes.Buffer
+	if s, ok := body.(string); ok {
+		buf.WriteString(s)
+	} else {
+		_ = json.NewEncoder(&buf).Encode(body)
+	}
+	req := httptest.NewRequest(http.MethodPost, "/voyage/weather", &buf)
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	return w
+}
+
+func voyageBody(speed float64) map[string]any {
+	return map[string]any{
+		"track":     [][2]float64{{20.5, 10}, {20.5, 9}},
+		"departure": weatherRunTime.Format(time.RFC3339),
+		"speed_kn":  speed,
+	}
+}
+
+func TestVoyageWeatherNoRun(t *testing.T) {
+	r := setupTestRouter(t)
+	w := postVoyage(r, voyageBody(12))
+	if w.Code != http.StatusOK {
+		t.Fatalf("status %d: %s", w.Code, w.Body)
+	}
+	var v struct {
+		Run     *string          `json:"run"`
+		ETA     string           `json:"eta"`
+		Samples []map[string]any `json:"samples"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &v); err != nil {
+		t.Fatal(err)
+	}
+	if v.Run != nil || v.ETA == "" || len(v.Samples) == 0 {
+		t.Errorf("run %v eta %q samples %d", v.Run, v.ETA, len(v.Samples))
+	}
+}
+
+func TestVoyageWeatherWithRun(t *testing.T) {
+	r, id := setupWeatherRouter(t)
+	w := postVoyage(r, voyageBody(30))
+	if w.Code != http.StatusOK {
+		t.Fatalf("status %d: %s", w.Code, w.Body)
+	}
+	var v struct {
+		Run     *string          `json:"run"`
+		Samples []map[string]any `json:"samples"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &v); err != nil {
+		t.Fatal(err)
+	}
+	if v.Run == nil || *v.Run != id {
+		t.Fatalf("run %v, want %s", v.Run, id)
+	}
+	withWeather := 0
+	for _, s := range v.Samples {
+		if s["weather"] != nil {
+			withWeather++
+		}
+	}
+	if withWeather == 0 {
+		t.Error("no sample has weather")
+	}
+}
+
+func TestVoyageWeatherBadInput(t *testing.T) {
+	r := setupTestRouter(t)
+	if w := postVoyage(r, voyageBody(50)); w.Code != http.StatusBadRequest || !strings.Contains(w.Body.String(), `"error"`) {
+		t.Errorf("speed 50: status %d body %s", w.Code, w.Body)
+	}
+	if w := postVoyage(r, "{not json"); w.Code != http.StatusBadRequest {
+		t.Errorf("bad JSON: status %d", w.Code)
+	}
+	big := `{"track":[],"pad":"` + strings.Repeat("a", 2<<20) + `"}`
+	if w := postVoyage(r, big); w.Code != http.StatusRequestEntityTooLarge && w.Code != http.StatusBadRequest {
+		t.Errorf("big body: status %d", w.Code)
+	}
+}
+
+func TestTileOldRun404(t *testing.T) {
+	r, id := setupWeatherRouter(t)
+	get := func(path string) *httptest.ResponseRecorder {
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, path, nil))
+		return w
+	}
+	if w := get("/weather/tile/1999010100/wind/0/0/0/0.png"); w.Code != http.StatusNotFound {
+		t.Errorf("old run: status %d", w.Code)
+	}
+	for _, bad := range []string{"/wind/0/0/0/0", "/wind/x/0/0/0.png", "/nope/0/0/0/0.png", "/wind/1/0/0/0.png"} {
+		if w := get("/weather/tile/" + id + bad); w.Code != http.StatusNotFound {
+			t.Errorf("%s: status %d, want 404", bad, w.Code)
+		}
+	}
+	w := get("/weather/tile/" + id + "/wind/0/0/0/0.png")
+	if w.Code != http.StatusOK || w.Header().Get("Content-Type") != "image/png" {
+		t.Fatalf("current run: status %d type %q", w.Code, w.Header().Get("Content-Type"))
+	}
+	if cc := w.Header().Get("Cache-Control"); cc != "public, max-age=86400, immutable" {
+		t.Errorf("Cache-Control %q", cc)
+	}
+	// Weather off: tiles are 404.
+	off := setupTestRouter(t)
+	w2 := httptest.NewRecorder()
+	off.ServeHTTP(w2, httptest.NewRequest(http.MethodGet, "/weather/tile/"+id+"/wind/0/0/0/0.png", nil))
+	if w2.Code != http.StatusNotFound {
+		t.Errorf("weather off: status %d", w2.Code)
+	}
+}
+
+func TestPassagesWeatherStatus(t *testing.T) {
+	r := setupTestRouter(t)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/passages", nil))
+	var body struct {
+		Weather map[string]any `json:"weather"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	if len(body.Weather) != 1 || body.Weather["enabled"] != false {
+		t.Errorf("weather = %v, want {enabled:false}", body.Weather)
+	}
+	r2, id := setupWeatherRouter(t)
+	w = httptest.NewRecorder()
+	r2.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/passages", nil))
+	body.Weather = nil
+	if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	if body.Weather["enabled"] != true || body.Weather["run"] != id {
+		t.Errorf("weather = %v", body.Weather)
 	}
 }
