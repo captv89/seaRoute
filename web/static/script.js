@@ -36,6 +36,8 @@
     let simWxNoteStale = false; // note shows 'Loading forecast' and needs a refresh
     let simWxRun = null;        // run id of the layers on the map
     let simWxLastScales = null; // last legend scales, kept while a refetch is pending
+    let simWxRefetchedRun = ''; // run id whose tile errors already triggered one refetch
+    let simWxTileFailRun = '';  // run id whose tiles still fail after that refetch
     let simPlaying = false;
     let simProgress = 0; // 0 to 100, derived from simHours
     let simHours = 0; // playback position: hours since departure
@@ -3606,6 +3608,17 @@
             dropSimWxLayer(old);
         };
         layer.on('load', promote);
+        // A 404 means the server moved to a newer run: refetch once so the layer follows it.
+        layer.on('tileerror', () => {
+            if (simWxRefetchedRun !== run) {
+                simWxRefetchedRun = run;
+                fetchVoyageWeather();
+            } else if (simWxTileFailRun !== run) {
+                simWxTileFailRun = run;
+                const el = document.getElementById('sim-ecmwf-note');
+                if (el) el.textContent = 'Weather tiles unavailable';
+            }
+        });
         layer._simTimer = setTimeout(promote, 8000); // tiles that never settle must not pin the old layer
         simWxPending = layer;
         simWxRun = run;
@@ -3658,7 +3671,7 @@
             } else {
                 hour = forecastStepHour((t - start) / 3600e3);
                 key = `${run}|${simWxField}|${hour}`;
-                note = `+${hour} h`;
+                note = simWxTileFailRun === run ? 'Weather tiles unavailable' : `+${hour} h`;
             }
         }
         if (key === simWxKey && !simWxNoteStale) return;
@@ -3731,8 +3744,12 @@
             if (locked) {
                 el.dataset.prevTitle = el.getAttribute('title') || '';
                 el.setAttribute('title', hint);
-                el.setAttribute('aria-label', el.getAttribute('aria-label') || el.textContent.trim() || 'Live weather');
+                el.dataset.prevAria = el.getAttribute('aria-label') || '';
+                el.setAttribute('aria-label', el.dataset.prevAria || el.textContent.trim() || 'Live weather');
             } else if ('prevTitle' in el.dataset) {
+                if (el.dataset.prevAria) el.setAttribute('aria-label', el.dataset.prevAria);
+                else el.removeAttribute('aria-label');
+                delete el.dataset.prevAria;
                 if (el.dataset.prevTitle) el.setAttribute('title', el.dataset.prevTitle);
                 else el.removeAttribute('title');
                 delete el.dataset.prevTitle;
@@ -3788,6 +3805,7 @@
     // fields with a comma, quote or newline are quoted. "# " lines are comments.
     function buildVoyageCSV(v, meta) {
         meta = meta || {};
+        const label = (x) => String(x === null || x === undefined ? '' : x).replace(/[\r\n]+/g, ' ').replace(/,/g, ';');
         const csvField = (x) => {
             const t = x === null || x === undefined ? '' : String(x);
             return /[",\r\n]/.test(t) ? `"${t.replace(/"/g, '""')}"` : t;
@@ -3800,8 +3818,8 @@
         const row = (cells) => cells.map(csvField).join(',');
         const out = [
             '# seaRoute voyage weather',
-            `# From: ${meta.from || ''}`,
-            `# To: ${meta.to || ''}`,
+            `# From: ${label(meta.from)}`,
+            `# To: ${label(meta.to)}`,
             `# Departure: ${iso(v.departure)}`,
             `# ETA: ${iso(v.eta)}`,
             `# Speed: ${num(meta.speedKn, 1)} kn`,
@@ -3849,11 +3867,11 @@
             speedKn: currentSpeedKn(),
         });
         const dep = new Date(parseTime(voyage.departure));
-        const stamp = isFinite(dep) ? dep.toISOString().slice(0, 16).replace(/[-:]/g, '') : 'voyage';
+        const stamp = isFinite(dep) ? dep.toISOString().slice(0, 16).replace(/[-:]/g, '') + 'Z' : '';
         const url = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8' }));
         const a = document.createElement('a');
         a.href = url;
-        a.download = `voyage-weather-${stamp}Z.csv`;
+        a.download = stamp ? `voyage-weather-${stamp}.csv` : 'voyage-weather.csv';
         document.body.appendChild(a);
         a.click();
         a.remove();
