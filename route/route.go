@@ -155,7 +155,7 @@ type Graph struct {
 	twin        []int32 // per directed edge: the reverse edge
 	land        *Land
 	approach    map[int64][]approachNode // nodes of fixed-limit passages (depth), by 0.5 degree cell
-	corridor    map[int64][]int32        // MARNET vertices by 1-degree cell, for inCorridor
+	corridor    map[int64][]Position     // densified MARNET edges by 1-degree cell, for inCorridor
 	tss         *TSS
 	depth       *Depth
 	minDepth    []float32 // per directed edge: shallowest depth along it, +Inf when unknown or exempt
@@ -325,7 +325,7 @@ func newGraph(segs []Segment, land *Land, tss *TSS, depth *Depth, netHash string
 	}
 	g.marnetNodes = len(g.nodes)
 	if land != nil {
-		g.buildCorridor()
+		g.buildCorridor(edges)
 	}
 	g.stats.marnet = len(edges) / 2
 	if tss != nil {

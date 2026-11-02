@@ -1,22 +1,36 @@
 package route
 
-import "math"
+import (
+	"math"
 
-// The land dataset keeps only coastline within Land.CorridorNM of a MARNET
-// vertex (see cmd/land-import). A shortcut judged against land the dataset
-// does not hold could cross an island or a coast it cannot see, so the router
-// only judges legs whose every point lies well inside that corridor.
+	"github.com/captv89/seaRoute/internal/corridor"
+)
 
-// corridorCellDeg is the cell size of the MARNET vertex grid, in degrees.
-const corridorCellDeg = 1.0
+// The land and depth datasets keep only data within Land.CorridorNM of the
+// MARNET network (see internal/corridor: every edge, densified). A shortcut
+// judged against land the dataset does not hold could cross an island or a
+// coast it cannot see, so the router only judges legs whose every point lies
+// well inside that corridor. The network's own geometry is never trusted:
+// some MARNET edges cut across land.
 
-// buildCorridor indexes the MARNET vertices by corridorCellDeg cell.
-func (g *Graph) buildCorridor() {
-	g.corridor = map[int64][]int32{}
-	for v := range g.marnetNodes {
-		p := g.nodes[v]
+// corridorCellDeg is the cell size of the network sample grid, in degrees.
+const corridorCellDeg = 0.5
+
+// buildCorridor indexes the points of every MARNET edge, densified exactly as
+// the importers densify them (corridor.Densify), by corridorCellDeg cell.
+func (g *Graph) buildCorridor(edges []edge) {
+	g.corridor = map[int64][]Position{}
+	add := func(lon, lat float64) {
+		p := Position{wrapLon(lon), lat}
 		k := cellKey(int32(math.Floor(p[0]/corridorCellDeg)), int32(math.Floor(p[1]/corridorCellDeg)))
-		g.corridor[k] = append(g.corridor[k], int32(v))
+		g.corridor[k] = append(g.corridor[k], p)
+	}
+	for i := 0; i < len(edges); i += 2 { // edges come in forward/reverse pairs
+		e := edges[i]
+		a, b := g.nodes[e.from], g.nodes[e.to]
+		for _, q := range corridor.Densify(a[0], a[1], b[0], b[1]) {
+			add(q[0], q[1])
+		}
 	}
 }
 
@@ -32,21 +46,28 @@ func (g *Graph) inCorridor(a, b Position, marginM float64) bool {
 		return false
 	}
 	for _, p := range rhumbSamples(a, b, corridorSampleNM) {
-		if !g.nearVertex(p, r) {
+		if !g.nearNetwork(p, r) {
 			return false
 		}
 	}
 	return true
 }
 
-// nearVertex reports whether a MARNET vertex lies within rM metres of p.
-func (g *Graph) nearVertex(p Position, rM float64) bool {
+// nearNetwork reports whether a sample of the MARNET network lies within rM
+// metres of p (less 2%, see below). The samples are the points the importers kept data around, so
+// with rM below CorridorNM the data holds the land near p.
+func (g *Graph) nearNetwork(p Position, rM float64) bool {
 	const degM = earthRadiusM * math.Pi / 180
 	ey := rM / degM
 	ex := math.Min(360, rM/(degM*math.Max(0.01, math.Cos(math.Min(89, math.Abs(p[1])+ey)*math.Pi/180))))
 	cy0, cy1 := int32(math.Floor((p[1]-ey)/corridorCellDeg)), int32(math.Floor((p[1]+ey)/corridorCellDeg))
 	cx0, cx1 := int32(math.Floor((p[0]-ex)/corridorCellDeg)), int32(math.Floor((p[0]+ex)/corridorCellDeg))
 	cells := int32(math.Round(360 / corridorCellDeg))
+	// Flat-earth distance in degrees of latitude, with the longitude scale at
+	// p. Within the corridor (tens of NM) its error is under 2%, so the radius
+	// is cut by 2% to stay on the safe side.
+	cosP := math.Cos(p[1] * math.Pi / 180)
+	rr := ey * 0.98 * ey * 0.98
 	for cx := cx0; cx <= cx1 && cx-cx0 < cells; cx++ {
 		wx := cx
 		if lo := int32(math.Floor(-180 / corridorCellDeg)); wx < lo {
@@ -55,8 +76,12 @@ func (g *Graph) nearVertex(p Position, rM float64) bool {
 			wx -= cells
 		}
 		for cy := cy0; cy <= cy1; cy++ {
-			for _, v := range g.corridor[cellKey(wx, cy)] {
-				if Distance(p, g.nodes[v]) <= rM {
+			for _, q := range g.corridor[cellKey(wx, cy)] {
+				dl := math.Abs(q[0] - p[0])
+				if dl > 180 {
+					dl = 360 - dl
+				}
+				if x, y := dl*cosP, q[1]-p[1]; x*x+y*y <= rr {
 					return true
 				}
 			}

@@ -2,6 +2,7 @@ package corridor
 
 import (
 	"encoding/json"
+	"math"
 	"os"
 	"path/filepath"
 	"testing"
@@ -47,5 +48,25 @@ func TestCellsWrapAntimeridian(t *testing.T) {
 	}
 	if !cells[[2]int32{-360, 0}] || !cells[[2]int32{359, 0}] {
 		t.Error("cells either side of the antimeridian should be marked")
+	}
+}
+
+// TestCellsCoverLongEdge: the middle of a long edge is covered, not only the
+// cells around its two vertices.
+func TestCellsCoverLongEdge(t *testing.T) {
+	net := writeNet(t, [][2]float64{{0.25, 0.25}, {10.25, 0.25}}) // 600 NM edge
+	cells, err := Cells(net, 30, 0.5)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !cells[[2]int32{10, 0}] { // cell of (5.25, 0.25)
+		t.Error("midpoint cell of a long edge should be marked")
+	}
+}
+
+func TestDensifyAntimeridian(t *testing.T) {
+	ps := Densify(179.9, 0, -179.9, 0)
+	if last := ps[len(ps)-1]; len(ps) != 4 || math.Abs(last[0]-180.1) > 1e-9 {
+		t.Errorf("short way across the antimeridian: got %v", ps)
 	}
 }

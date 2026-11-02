@@ -19,6 +19,7 @@
     let currentTotalDistNM = 8420;
     let currentWaypoints = [];
     let currentCoords = [];
+    let currentLatLngs = []; // route as Leaflet [lat, lon], longitudes unwrapped across the antimeridian
     let routeRequestSeq = 0; // monotonically increasing; only the latest response is rendered
     let mapPickingMode = null; // null | 'origin' | 'dest'
     let currentGlowPolyline = null;
@@ -1743,6 +1744,17 @@
                 if (sysNodes && data.nodes) {
                     sysNodes.textContent = `${Number(data.nodes).toLocaleString()} / ${Number(data.edges).toLocaleString()}`;
                 }
+                const sysDatasets = document.getElementById('sys-info-datasets');
+                if (sysDatasets && Array.isArray(data.datasets) && data.datasets.length) {
+                    sysDatasets.innerHTML = data.datasets.map(d => `
+                        <li class="flex justify-between gap-2" title="${escapeHtml(d.use || '')}">
+                            <span class="flex items-center gap-1 text-on-surface">
+                                <span class="w-1.5 h-1.5 rounded-full shrink-0 ${d.loaded ? 'bg-tertiary' : 'bg-error'}" aria-hidden="true"></span>
+                                ${escapeHtml(d.name)}
+                            </span>
+                            <span class="text-right ${d.loaded ? '' : 'text-error'}">${escapeHtml(d.loaded ? d.source : d.source + ' (off)')}</span>
+                        </li>`).join('');
+                }
 
                 // Render dynamic avoid pills if supported, preserving any active selections
                 if (data.passages && Array.isArray(data.passages) && avoidTagsContainer) {
@@ -1932,6 +1944,22 @@
         });
     }
 
+    // Port labels: the port last picked for each end, kept while the
+    // coordinates still match it, so the route names the port, not the numbers.
+    const pickedPorts = { origin: null, dest: null };
+    function rememberPort(side, lat, lon, name) {
+        pickedPorts[side] = name ? { lat, lon, name } : null;
+    }
+    function pointLabel(side, lat, lon) {
+        const near = (p) => Math.abs(p.lat - lat) < 1e-3 && Math.abs(p.lon - lon) < 1e-3;
+        const preset = document.getElementById(side === 'origin' ? 'origin-preset' : 'dest-preset');
+        const item = preset && PRESET_COORDS[preset.value];
+        if (item && near(item)) return item.name.split(',')[0].trim();
+        const picked = pickedPorts[side];
+        if (picked && near(picked)) return picked.name;
+        return '';
+    }
+
     // Autocomplete Dropdowns (GET /ports?search=...)
     function setupPortAutocomplete(inputId, dropdownId, latInputId, lonInputId, presetSelectId) {
         const input = document.getElementById(inputId);
@@ -1981,6 +2009,7 @@
                                 if (lonInput) lonInput.value = formatCoordDMS(p.longitude, false);
                                 if (presetSelect) presetSelect.value = 'CUSTOM';
                                 input.value = `${p.port} (${p.country})`;
+                                rememberPort(inputId === 'origin-search' ? 'origin' : 'dest', p.latitude, p.longitude, p.port);
                                 dropdown.innerHTML = '';
                                 dropdown.classList.add('hidden');
                                 showToast(`Selected: ${p.port} (${p.country})`);
@@ -2081,6 +2110,7 @@
                 origSearch.value = destSearch.value;
                 destSearch.value = tempSearch;
             }
+            [pickedPorts.origin, pickedPorts.dest] = [pickedPorts.dest, pickedPorts.origin];
             showToast('Origin and Destination swapped', 'swap_vert');
         });
     }
@@ -2119,19 +2149,29 @@
         const input = document.getElementById(`${id}-input`);
         const dec = document.getElementById(`${id}-dec`);
         const inc = document.getElementById(`${id}-inc`);
+        // Text input (not type=number) so the decimal point is always '.',
+        // whatever the browser locale; a typed ',' is accepted too.
         const read = () => {
-            const v = parseFloat(input ? input.value : '');
+            const v = parseFloat(String(input ? input.value : '').trim().replace(',', '.'));
             if (isNaN(v)) return def;
             return Math.min(max, Math.max(min, Math.round(v * 2) / 2));
         };
+        const show = (v) => { if (input) input.value = v.toFixed(1); };
         const sync = () => {
             const v = read();
             if (dec) dec.disabled = v <= min;
             if (inc) inc.disabled = v >= max;
         };
         let last = read();
+        show(last);
+        // set shows v without firing onChange (the value changed elsewhere).
+        read.set = (v) => {
+            show(Math.min(max, Math.max(min, Math.round(v * 2) / 2)));
+            last = read();
+            sync();
+        };
         const write = (v) => {
-            if (input) input.value = String(v);
+            show(v);
             sync();
             if (v !== last) {
                 last = v;
@@ -2139,7 +2179,15 @@
             }
         };
         // Snap to a valid step once the user is done typing.
-        if (input) input.addEventListener('change', () => write(read()));
+        if (input) {
+            input.addEventListener('change', () => write(read()));
+            input.addEventListener('keydown', (e) => {
+                if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
+                    e.preventDefault();
+                    write(Math.min(max, Math.max(min, read() + (e.key === 'ArrowUp' ? 0.5 : -0.5))));
+                }
+            });
+        }
         if (dec) dec.addEventListener('click', () => write(Math.max(min, read() - 0.5)));
         if (inc) inc.addEventListener('click', () => write(Math.min(max, read() + 0.5)));
         sync();
@@ -2148,6 +2196,14 @@
 
     const readClearance = makeStepper('clearance', 0.5, 10, 2, null);
     const readDraught = makeStepper('draught', 1, 25, 10, () => rerouteIfShown());
+    // Vessel speed and the summary slider are one value: the speed sets the
+    // squat allowance (so the route) and the ETA.
+    const readSpeed = makeStepper('speed', 6, 30, 18, () => {
+        const sl = document.getElementById('speed-slider');
+        if (sl) sl.value = String(readSpeed());
+        updateTransitDuration();
+        rerouteIfShown();
+    });
 
     let vesselType = 'bulk';
     const VESSEL_ON = ['bg-primary-container', 'text-on-primary-container', 'font-semibold'];
@@ -2208,9 +2264,11 @@
             .filter(Boolean);
         const clearanceNM = readClearance();
 
+        const fromName = pointLabel('origin', fromLat, fromLon);
+        const toName = pointLabel('dest', toLat, toLon);
         const requestPayload = {
-            from: { lat: fromLat, lon: fromLon },
-            to: { lat: toLat, lon: toLon },
+            from: Object.assign({ lat: fromLat, lon: fromLon }, fromName ? { name: fromName } : {}),
+            to: Object.assign({ lat: toLat, lon: toLon }, toName ? { name: toName } : {}),
             algorithm: currentAlgorithm,
             avoid: avoidList,
             clearance_nm: clearanceNM,
@@ -2250,6 +2308,78 @@
 
     if (btnCompute) btnCompute.addEventListener('click', () => computeRoute());
 
+    // Clear route: removes the route and its results, keeps origin,
+    // destination and vessel settings so the next compute starts from them.
+    const btnClearRoute = document.getElementById('btn-clear-route');
+    function setClearEnabled(on) {
+        if (btnClearRoute) btnClearRoute.disabled = !on;
+    }
+    function clearRoute() {
+        if (!currentRouteData) return;
+        routeRequestSeq++; // drop any response still in flight
+        setComputeLoading(false);
+        if (simActive) stopSimulation();
+        routeLayerGroup.clearLayers();
+        resetReview();
+        currentRouteData = null;
+        currentCoords = [];
+        currentLatLngs = [];
+        currentWaypoints = [];
+        currentGlowPolyline = null;
+        currentFlowPolyline = null;
+        currentTotalDistNM = 0;
+
+        const setText = (id, text) => { const el = document.getElementById(id); if (el) el.textContent = text; };
+        const setHtml = (id, html) => { const el = document.getElementById(id); if (el) el.innerHTML = html; };
+        setHtml('stat-dist', '-- <span class="text-[10px] font-normal">NM</span>');
+        setText('stat-dist-alt', '-- KM • -- MI');
+        setHtml('stat-nodes', '-- <span class="text-[10px] font-normal">Nodes</span>');
+        setText('stat-status', 'No route');
+        setText('stat-land-incursions', '-- Land Incursions');
+        setText('stat-time', '--');
+        setText('collapsed-dist-val', '--');
+        setText('collapsed-pts-val', '--');
+        setText('header-dist-badge', '-- NM');
+        setText('header-duration-badge', '--');
+        setText('depth-readout', 'Depth limit is worked out with the route (squat uses this speed).');
+        renderRouteNotices({});
+        renderManifestTable([]);
+        setText('manifest-header', 'Waypoint Manifest');
+        setClearEnabled(false);
+        showToast('Route cleared', 'delete');
+    }
+    if (btnClearRoute) btnClearRoute.addEventListener('click', clearRoute);
+
+    /**
+     * unwrapLatLngs turns [lon, lat] points into Leaflet [lat, lon] with each
+     * longitude moved by whole turns to within 180° of the one before, so a
+     * leg over the antimeridian is drawn as the short hop it is, not as a
+     * line back across the whole map.
+     */
+    function unwrapLatLngs(coords, refLng) {
+        const out = [];
+        let prev = refLng;
+        coords.forEach(c => {
+            let lng = c[0];
+            if (prev !== undefined) lng += 360 * Math.round((prev - lng) / 360);
+            out.push([c[1], lng]);
+            prev = lng;
+        });
+        return out;
+    }
+
+    // nearestRouteLng is the unwrapped route longitude closest to lng, so an
+    // overlay starts on the same copy of the world as the route.
+    function nearestRouteLng(lng) {
+        let best = lng, bestD = Infinity;
+        currentLatLngs.forEach(ll => {
+            const shifted = lng + 360 * Math.round((ll[1] - lng) / 360);
+            const d = Math.abs(shifted - ll[1]);
+            if (d < bestD) { bestD = d; best = shifted; }
+        });
+        return best;
+    }
+
     /**
      * Renders computed route onto Leaflet map & updates all metrics/manifest
      */
@@ -2267,18 +2397,21 @@
 
         currentCoords = coords;
         currentWaypoints = waypoints;
+        currentLatLngs = unwrapLatLngs(coords);
+        setClearEnabled(true);
 
         // Clear existing route graphics
         routeLayerGroup.clearLayers();
         resetReview();
 
-        // Convert [lon, lat] coordinates to Leaflet [lat, lon]
-        const latLngs = coords.map(c => [c[1], c[0]]);
+        // Leaflet [lat, lon], continuous across the antimeridian
+        const latLngs = currentLatLngs;
 
         // Avoided stretches (draught reroutes): faint dashed, under the route, not clickable
         (props.notices || []).forEach(n => {
-            const av = (n.avoided || []).map(c => [c[1], c[0]]);
-            if (av.length < 2) return;
+            const raw = n.avoided || [];
+            if (raw.length < 2) return;
+            const av = unwrapLatLngs(raw, nearestRouteLng(raw[0][0]));
             routeLayerGroup.addLayer(L.polyline(av, {
                 color: '#94a3b8', weight: 3, opacity: 0.35, dashArray: '6 8',
                 interactive: false, lineCap: 'round', lineJoin: 'round'
@@ -2359,7 +2492,7 @@
                         iconSize: [size, size],
                         iconAnchor: [size / 2, size / 2]
                     });
-                    const marker = L.marker([wp.coordinates[1], wp.coordinates[0]], { icon: wpIcon });
+                    const marker = L.marker(latLngs[idx] || [wp.coordinates[1], wp.coordinates[0]], { icon: wpIcon });
                     marker.bindPopup(
                         `<b>#${wp.index} ${escapeHtml(wp.name)}</b>${wp.passage ? '<br><span style="color:#f59e0b;font-weight:bold;">Passage: ' + escapeHtml(wp.passage) + '</span>' : ''}<br>Leg: ${wp.leg_distance_nm.toFixed(1)} NM<br>Cumul: ${wp.cum_distance_nm.toFixed(1)} NM<br>${formatCoordDMS(wp.coordinates[1], true)}, ${formatCoordDMS(wp.coordinates[0], false)}`
                     );
@@ -2661,7 +2794,7 @@
         if (!card || !list) return;
 
         const hazards = props.hazards || [];
-        const latLngs = currentCoords.map(c => [c[1], c[0]]);
+        const latLngs = currentLatLngs;
         const red = themeColor('--color-error');
         const amber = themeColor('--color-warning');
 
@@ -2687,6 +2820,7 @@
         card.classList.toggle('hidden', hazards.length === 0);
         card.classList.toggle('flex', hazards.length > 0);
         if (countEl) countEl.textContent = String(hazards.length);
+        renderIncursionStat(hazards);
         list.innerHTML = aground.map(([h, i]) => hazardItem(h, i)).join('');
         list.classList.toggle('hidden', aground.length === 0);
         list.classList.toggle('flex', aground.length > 0);
@@ -2728,6 +2862,22 @@
             }
         });
     })();
+
+    /**
+     * Land incursions stat: stretches that touch land outside a port approach,
+     * plus stretches the land data does not cover (not verified either way).
+     */
+    function renderIncursionStat(hazards) {
+        const el = document.getElementById('stat-land-incursions');
+        if (!el) return;
+        const n = hazards.filter(h => h.severity === 'aground' && h.kind !== 'connector').length;
+        const unchecked = hazards.filter(h => h.severity === 'unchecked').length;
+        let text = `${n} Land Incursion${n === 1 ? '' : 's'}`;
+        if (unchecked > 0) text += ` · ${unchecked} unverified`;
+        el.textContent = text;
+        el.classList.remove('text-tertiary', 'text-warning', 'text-error');
+        el.classList.add(n > 0 ? 'text-error' : unchecked > 0 ? 'text-warning' : 'text-tertiary');
+    }
 
     /**
      * Renders tabular waypoint manifest
@@ -2813,7 +2963,10 @@
     }
 
     if (speedSlider) {
-        speedSlider.addEventListener('input', updateTransitDuration);
+        speedSlider.addEventListener('input', () => {
+            readSpeed.set(parseFloat(speedSlider.value) || 18);
+            updateTransitDuration();
+        });
     }
 
     // =========================================================================
@@ -2846,8 +2999,8 @@
     ];
 
     function getSimulationCoordinates() {
-        if (currentCoords && currentCoords.length > 1) {
-            return currentCoords.map(c => [c[1], c[0]]); // [lat, lon]
+        if (currentLatLngs && currentLatLngs.length > 1) {
+            return currentLatLngs; // [lat, lon], unwrapped
         }
         return FALLBACK_SIM_WAYPOINTS.map(wp => [wp.lat, wp.lon]);
     }
@@ -3261,6 +3414,7 @@
                         if (ports && ports.length > 0) {
                             const p = ports[0];
                             setOrigin(p.latitude, p.longitude, 'CUSTOM', `${p.port}, ${p.country}`);
+                            rememberPort('origin', p.latitude, p.longitude, p.port);
                             hasCustomParams = true;
                         }
                     }).catch(() => {});
@@ -3287,6 +3441,7 @@
                         if (ports && ports.length > 0) {
                             const p = ports[0];
                             setDest(p.latitude, p.longitude, 'CUSTOM', `${p.port}, ${p.country}`);
+                            rememberPort('dest', p.latitude, p.longitude, p.port);
                             hasCustomParams = true;
                         }
                     }).catch(() => {});

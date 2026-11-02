@@ -179,12 +179,13 @@ func TestWaypointRequest_EnrichedOutput(t *testing.T) {
 	if props.NodeCount != len(props.Waypoints) {
 		t.Errorf("node count %d does not match waypoints length %d", props.NodeCount, len(props.Waypoints))
 	}
-	if props.Waypoints[0].Name != "Origin" {
-		t.Errorf("first waypoint name should be Origin, got %q", props.Waypoints[0].Name)
+	// A port request names the first and last waypoints after the ports.
+	if props.Waypoints[0].Name != "Rotterdam" {
+		t.Errorf("first waypoint name should be Rotterdam, got %q", props.Waypoints[0].Name)
 	}
 	lastWP := props.Waypoints[len(props.Waypoints)-1]
-	if lastWP.Name != "Destination" {
-		t.Errorf("last waypoint name should be Destination, got %q", lastWP.Name)
+	if lastWP.Name != "Singapore" {
+		t.Errorf("last waypoint name should be Singapore, got %q", lastWP.Name)
 	}
 	if lastWP.CumDistanceNM <= 0 {
 		t.Errorf("last waypoint cumulative distance should be positive, got %.2f", lastWP.CumDistanceNM)
@@ -735,5 +736,35 @@ func TestWaypointsVesselValidation(t *testing.T) {
 		if w.Code != http.StatusBadRequest || !strings.Contains(w.Body.String(), tc.want) {
 			t.Errorf("%s=%v: status %d body %s, want 400 containing %q", tc.field, tc.val, w.Code, w.Body.String(), tc.want)
 		}
+	}
+}
+
+func TestResolvePointNames(t *testing.T) {
+	app := &App{PortData: []Port{{Country: "Japan", Port: "Yokohama", Latitude: 35.4576, Longitude: 139.6345}}}
+	f := func(v float64) *float64 { return &v }
+	cases := []struct {
+		name  string
+		p     WaypointPoint
+		want  string
+		named bool
+	}{
+		{"client label", WaypointPoint{Lat: f(1.26), Lon: f(103.82), Name: " Singapore "}, "Singapore", true},
+		{"on a known port", WaypointPoint{Lat: f(35.46), Lon: f(139.63)}, "Yokohama", true},
+		{"open sea", WaypointPoint{Lat: f(30), Lon: f(150)}, "30.00, 150.00", false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, got, named, err := resolvePoint(&tc.p, "", app)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got != tc.want || named != tc.named {
+				t.Errorf("got %q named=%v, want %q named=%v", got, named, tc.want, tc.named)
+			}
+		})
+	}
+	long := WaypointPoint{Lat: f(0), Lon: f(0), Name: strings.Repeat("x", maxPointNameLen+1)}
+	if _, _, _, err := resolvePoint(&long, "", app); err == nil {
+		t.Error("over-long name accepted")
 	}
 }

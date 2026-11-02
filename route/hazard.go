@@ -14,8 +14,9 @@ type Hazard struct {
 	// Severity is "aground" (within the land data tolerance of land),
 	// "shallow" (less water than the vessel needs, outside a port approach),
 	// "close" (clear of land, nearer than the clearance), "approach" (any of
-	// those inside a port approach) or "unchecked" (a connector that leaves
-	// the area the land data covers, so its clearance is unknown).
+	// those inside a port approach) or "unchecked" (a segment that leaves the
+	// area the land data covers through water the depth grid does not vouch
+	// for as open ocean, so its clearance is unknown).
 	Severity string `json:"severity"`
 	// MinClearanceNM is the smallest clearance beyond the land tolerance,
 	// rounded to 0.1; 0 when aground.
@@ -29,7 +30,7 @@ const (
 	notePassage   = "Passage narrower than the land data resolves; follow the canal or fairway and pilotage."
 	noteConnector = "Port approach: connects the port to the network."
 	noteApproach  = "Port approach: check chart and pilotage."
-	noteUnchecked = "Land data does not cover this approach; check the chart."
+	noteUnchecked = "Land data does not cover this stretch; check the chart."
 )
 
 // hazards checks every segment of path against land and depth and merges
@@ -77,7 +78,7 @@ func (g *Graph) hazards(legs []Leg, path []Position, opts Options, c *pathCtx) [
 			switch {
 			case d <= tol:
 				sev, clear = "aground", 0
-			case code == segConnector && !g.inCorridor(a, b, limit):
+			case !g.verified(a, b, clr*MetresPerNM):
 				// Clear only of the land the dataset holds.
 				sev, clear = "unchecked", 0
 			case g.tooShallow(a, b, code, pass, &cc):
@@ -119,6 +120,17 @@ func (g *Graph) hazards(legs []Leg, path []Position, opts Options, c *pathCtx) [
 		}
 	}
 	return out
+}
+
+// verified reports whether the data vouches for a-b by the rule the taut
+// search plans with (covered): the land data covers it, or the stretch it
+// does not cover is open ocean in the depth grid, by whole tiles or by a band
+// clearM wide either side.
+func (g *Graph) verified(a, b Position, clearM float64) bool {
+	if g.land == nil || g.land.CorridorNM == 0 {
+		return true
+	}
+	return g.covered(a, b, &pathCtx{clearM: clearM, band: true})
 }
 
 // confinedSamples samples the confined passages the path uses, for nearConfined.

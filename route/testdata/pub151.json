@@ -13,8 +13,8 @@
   "nm": 1581,
   "page": 104,
   "note": "",
-  "skip": "Measured 1617.0 NM (+2.28%; 2% limit 1612.6, so 4.4 NM over) at commit of the fix round. 196.1 NM of the route is pinned Malacca TSS lanes; 1376.0 NM is taut free water (longest leg 910.0 NM); 44.9 NM connectors/joins/MARNET edges.",
-  "max_nm": 1618
+  "skip": "Measured 1615.6 NM (+2.19%; 2% limit 1612.6, so 3.0 NM over) with free TSS joins and pulled waypoints (1617.0 before). 196.1 NM of the route is pinned Malacca TSS lanes; 1376.0 NM is taut free water (longest leg 910.0 NM); 44.9 NM connectors/joins/MARNET edges.",
+  "max_nm": 1617
  },
  {
   "from": {
@@ -30,8 +30,8 @@
   "nm": 3701,
   "page": 104,
   "note": "",
-  "skip": "Measured 3804.2 NM (+2.79%; limit 3775.0, 29.2 NM over). Shares the Malacca exit with Colombo; no rule-conforming change measured below the limit (wider offsets to 48 NM changed nothing).",
-  "max_nm": 3806
+  "skip": "Measured 3792.6 NM (+2.48%; limit 3775.0, 17.6 NM over; 3804.2 before free TSS joins and pulled waypoints). Shares the Malacca exit with Colombo; no rule-conforming change measured below the limit (wider offsets to 48 NM changed nothing).",
+  "max_nm": 3794
  },
  {
   "from": {
@@ -47,8 +47,8 @@
   "nm": 4872,
   "page": 104,
   "note": "",
-  "skip": "Measured 5027.3 NM (+3.19%; limit 4969.4, 57.9 NM over). Great circle is 4550.9 NM; the route has 196.1 NM of pinned Malacca TSS lanes, 4737.7 NM taut free water (longest leg 2217.5 NM) and 93.5 NM other. An earlier-state probe put MARNET's Sunda/Bangka approach at ~100 NM over a straight run (pub151-rootcause).",
-  "max_nm": 5029
+  "skip": "Measured 5015.1 NM (+2.94%; limit 4969.4, 45.7 NM over; 5027.3 before free TSS joins, pulled waypoints and great-circle links). Great circle is 4550.9 NM; at 5027.3 NM the route had 196.1 NM of pinned Malacca TSS lanes, 4737.7 NM taut free water (longest leg 2217.5 NM) and 93.5 NM other. An earlier-state probe put MARNET's Sunda/Bangka approach at ~100 NM over a straight run (pub151-rootcause).",
+  "max_nm": 5017
  },
  {
   "from": {
@@ -109,8 +109,8 @@
   "nm": 4914,
   "page": 96,
   "note": "Known gap: our route follows the MARNET transpacific track, about 6.4% longer than Pub. 151.",
-  "skip": "Measured 5168.0 NM (+5.17%; limit 5012.3). Probe on the preceding code state: the great circle SF to Tsugaru (4405 NM) fails 8 of 45 legs (Aleutian ridge near 51.3N 180E, uncovered shallow tiles; Kuril/Hokkaido land), and the antimeridian MARNET edge is pinned; unpinning it gave 5104.9 (+3.88%), still over.",
-  "max_nm": 5170
+  "skip": "Measured 5159.7 NM (+5.00%; limit 5012.3; 5168.0 before free TSS joins and pulled waypoints). Probe on the preceding code state: the great circle SF to Tsugaru (4405 NM) fails 8 of 45 legs (Aleutian ridge near 51.3N 180E, uncovered shallow tiles; Kuril/Hokkaido land), and the antimeridian MARNET edge is pinned; unpinning it gave 5104.9 (+3.88%), still over.",
+  "max_nm": 5161
  },
  {
   "from": {
@@ -187,7 +187,7 @@
   "page": 36,
   "note": "Through the Kiel Canal: Gdansk to Nord-Ostsee-Kanal East Entrance 344 + East Entrance to Rotterdam 323. The default 10 m draught exceeds the 9.5 m canal limit, so the default vessel is routed around via the Sound.",
   "draught_m": 8,
-  "skip": "Measured 710.7 NM (+6.54%; 2% limit 680.3) with draught 8 m via Kiel. Gdansk to Holtenau 365.7 NM (Pub 344), canal 49.2 NM, Elbe mouth (Brunsbuettel) to Rotterdam 302.7 NM of which 123.8 NM is pinned TSS lane (straight line 198.7 NM crosses land, Pub ~270 incl. canal share). The lane cost alone was not isolated.",
-  "max_nm": 712
+  "skip": "Measured 707.9 NM (+6.13%; 2% limit 680.3) with draught 8 m via Kiel, with every TSS join free (717.4 NM when only access pieces were free). Gdansk to Holtenau 365.7 NM (Pub 344), canal 49.2 NM, Elbe mouth (Brunsbuettel) to Rotterdam 302.7 NM of which 123.8 NM is pinned TSS lane (straight line 198.7 NM crosses land, Pub ~270 incl. canal share). The lane cost alone was not isolated.",
+  "max_nm": 709
  }
 ]

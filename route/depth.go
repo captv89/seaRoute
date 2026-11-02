@@ -120,6 +120,59 @@ func (d *Depth) DeepTiles(a, b Position, minM float64) bool {
 	return true
 }
 
+// DeepBand reports whether the band halfWidthM either side of the rhumb leg
+// a-b holds at least minM everywhere in the grid: the leg and lines parallel
+// to it, under one cell apart, are sampled under one cell apart (centre line
+// first, so an obstacle on the track fails fast). A sample outside the stored
+// tiles passes only when its tile is at least deepTileM throughout (the mask).
+// Land and drying cells read 0, so an island the land data lacks fails.
+func (d *Depth) DeepBand(a, b Position, halfWidthM, minM float64) bool {
+	const stepM = depthCellDeg * 60 * MetresPerNM * 0.9 // just under one cell (at the equator; cells narrow in longitude only)
+	n := int(math.Ceil(halfWidthM / stepM))
+	for _, pc := range splitAntimeridian(a, b) {
+		p, q := pc[0], pc[1]
+		cosLat := math.Max(0.01, math.Cos((p[1]+q[1])/2*math.Pi/180))
+		dx, dy := (q[0]-p[0])*cosLat, q[1]-p[1]
+		l := math.Hypot(dx, dy)
+		var nx, ny float64 // unit normal, in degrees of latitude
+		if l > 0 {
+			nx, ny = -dy/l, dx/l
+		}
+		steps := max(1, int(math.Ceil(Distance(p, q)/stepM)))
+		for k := 0; k <= 2*n; k++ {
+			o := (k + 1) / 2 // 0, 1, -1, 2, -2, ...
+			if k%2 == 0 {
+				o = -o
+			}
+			off := float64(o) * halfWidthM / float64(max(n, 1)) / (60 * MetresPerNM) // degrees of latitude
+			oLon, oLat := nx*off/cosLat, ny*off
+			ma := Mercator(Position{p[0] + oLon, p[1] + oLat})
+			mb := Mercator(Position{q[0] + oLon, q[1] + oLat})
+			var last *DepthTile // last fully deep tile: its samples need no lookup
+			for s := 0; s <= steps; s++ {
+				f := float64(s) / float64(steps)
+				x := Position{(ma[0] + f*(mb[0]-ma[0])) * 180 / math.Pi, invMercatorLat(ma[1] + f*(mb[1]-ma[1]))}
+				t, i, j := d.tileAt(x)
+				switch {
+				case t == nil:
+					if d.TileMinDepth(x) < deepTileM {
+						return false
+					}
+				case t == last:
+				case t.Deep:
+					last = t
+				case t.at(i, j) < minM:
+					return false
+				}
+			}
+			if l == 0 {
+				break
+			}
+		}
+	}
+	return true
+}
+
 // wrapLon maps a longitude into [-180, 180).
 func wrapLon(lon float64) float64 {
 	if lon >= -180 && lon < 180 {

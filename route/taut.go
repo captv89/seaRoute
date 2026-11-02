@@ -5,6 +5,7 @@ import (
 	"maps"
 	"math"
 	"runtime"
+	"slices"
 	"sync"
 )
 
@@ -17,7 +18,14 @@ const (
 )
 
 // tautOffsetsNM are the lateral lattice offsets, in the order they are tried.
-var tautOffsetsNM = [...]float64{0, 1, -1, 2, -2, 4, -4, 8, -8, 16, -16}
+// tautWideOffsetsNM is the fallback lattice when a station has no safe node
+// within 16 NM: it keeps the inner offsets, so a gap a few miles off the
+// coarse path (between an island and a reef) is still found, and reaches out
+// to tautMaxOffset.
+var (
+	tautOffsetsNM     = []float64{0, 1, -1, 2, -2, 4, -4, 8, -8, 16, -16}
+	tautWideOffsetsNM = []float64{0, 1, -1, 2, -2, 4, -4, 6, -6, 8, -8, 12, -12, 16, -16, 20, -20, tautMaxOffset, -tautMaxOffset}
+)
 
 // pathCtx is what the taut search needs to judge a leg.
 type pathCtx struct {
@@ -26,6 +34,7 @@ type pathCtx struct {
 	limitConfinedM float64    // depth limit near confined passages
 	ends           []Position // requested points: approach exemption
 	noTSS          bool       // skip the TSS rules
+	strictDepth    bool       // judge depth cell by cell (pull), not by shallow runs
 	lifted         []bool     // schemes whose rules the leg lifted (by scheme); nil = none
 
 	// confined samples the confined passages the leg uses (set by tautLeg). A
@@ -38,58 +47,10 @@ type pathCtx struct {
 	// requested one, instead of making the whole run unroutable.
 	joins map[Position]float64
 
-	// track indexes samples of the coarse leg (set by tautLeg). The land data
-	// is dense within CorridorNM of MARNET vertices only, and MARNET has long
-	// edges in open water, so a point that is out of reach of every vertex but
-	// within trackNM of the coarse leg counts as covered: the coarse leg is
-	// trusted as drawn, and the taut path may follow it there.
-	track map[int64][]Position
-}
-
-const (
-	trackNM      = 4.0  // reach of the coarse track
-	trackStepNM  = 1.0  // spacing of the track samples
-	trackCellDeg = 0.25 // cell size of the track index
-)
-
-func trackKey(p Position) int64 {
-	return cellKey(int32(math.Floor(p[0]/trackCellDeg)), int32(math.Floor(p[1]/trackCellDeg)))
-}
-
-// newTrack indexes samples of the coarse path.
-func newTrack(path []Position) map[int64][]Position {
-	t := map[int64][]Position{}
-	add := func(p Position) { t[trackKey(p)] = append(t[trackKey(p)], p) }
-	for k := 0; k+1 < len(path); k++ {
-		for _, pc := range splitAntimeridian(path[k], path[k+1]) {
-			for _, p := range rhumbSamples(pc[0], pc[1], trackStepNM) {
-				add(p)
-			}
-		}
-	}
-	return t
-}
-
-// onTrack reports whether p is within trackNM of a track sample. The distance
-// is flat-earth, which is plenty at this range.
-func (c *pathCtx) onTrack(p Position) bool {
-	cx, cy := int32(math.Floor(p[0]/trackCellDeg)), int32(math.Floor(p[1]/trackCellDeg))
-	const reach = trackNM / 60 // degrees of latitude
-	cosP := math.Cos(p[1] * math.Pi / 180)
-	for dx := int32(-1); dx <= 1; dx++ {
-		for dy := int32(-1); dy <= 1; dy++ {
-			for _, q := range c.track[cellKey(cx+dx, cy+dy)] {
-				dl := math.Abs(q[0] - p[0])
-				if dl > 180 {
-					dl = 360 - dl
-				}
-				if x, y := dl*cosP, q[1]-p[1]; x*x+y*y <= reach*reach {
-					return true
-				}
-			}
-		}
-	}
-	return false
+	// band lets the depth grid vouch, cell by cell, for open ocean in a tile
+	// that is not deep throughout (see covered). tautSplit sets it only to
+	// rescue a coarse segment that would otherwise be kept as drawn over land.
+	band bool
 }
 
 // deepTileM is the minimum depth of a 0.5 degree tile that makes it open
@@ -97,16 +58,16 @@ func (c *pathCtx) onTrack(p Position) bool {
 const deepTileM = 200.0
 
 // covered reports whether the land data covers the leg a-b (every sample, as
-// in inCorridor), or the leg stays on the coarse track where it does not, or
-// the sample lies in a fully deep tile (open ocean: the depth grid vouches for
-// it).
+// in inCorridor), or the samples it does not cover lie in fully deep tiles
+// (open ocean: the depth grid vouches for it). The coarse network path is not
+// trusted where the data is missing: some MARNET edges cross land.
 func (g *Graph) covered(a, b Position, c *pathCtx) bool {
 	r := g.land.CorridorNM*MetresPerNM - tautCorridorM
 	for _, pc := range splitAntimeridian(a, b) {
 		ps := rhumbSamples(pc[0], pc[1], corridorSampleNM)
-		lo, hi := -1, -1 // first and last sample the land data and track do not cover
+		lo, hi := -1, -1 // first and last sample the land data does not cover
 		for i, p := range ps {
-			if c.onTrack(p) || (r > 0 && g.nearVertex(p, r)) {
+			if r > 0 && g.nearNetwork(p, r) {
 				continue
 			}
 			if lo < 0 {
@@ -121,7 +82,15 @@ func (g *Graph) covered(a, b Position, c *pathCtx) bool {
 		// corner of a shallow, land or unstored tile can lie between two
 		// samples, so the whole stretch from the sample before the first
 		// uncovered one to the sample after the last is walked tile by tile.
-		if g.depth == nil || !g.depth.DeepTiles(ps[max(lo-1, 0)], ps[min(hi+1, len(ps)-1)], deepTileM) {
+		// A tile holding an island or a seamount is not deep throughout; with
+		// band set the grid vouches cell by cell for open-ocean depth over a
+		// band as wide as the clearance, so a ship can round an ocean island
+		// far from the network.
+		if g.depth == nil {
+			return false
+		}
+		sa, sb := ps[max(lo-1, 0)], ps[min(hi+1, len(ps)-1)]
+		if !g.depth.DeepTiles(sa, sb, deepTileM) && !(c.band && g.depth.DeepBand(sa, sb, c.clearM+g.land.Tolerance, deepTileM)) {
 			return false
 		}
 	}
@@ -191,7 +160,11 @@ func (g *Graph) safeLeg(a, b Position, c *pathCtx) bool {
 		// not judged here; the hazards pass judges them with runTSS, which is
 		// the laxer run, so a free leg is never judged less strictly than it
 		// is reported.
-		if d, _ := g.segmentDepth(a, b, runMarnet, lim); d < lim && g.approachOf(a, b) == "" {
+		run := runMarnet
+		if c.strictDepth {
+			run = 1
+		}
+		if d, _ := g.segmentDepth(a, b, run, lim); d < lim && g.approachOf(a, b) == "" {
 			return false
 		}
 	}
@@ -290,83 +263,21 @@ func (g *Graph) openWater(a, b Position, needM float64) bool {
 }
 
 // pinnedSeg reports whether segment k of a coarse leg is kept as drawn:
-// connectors, TSS lanes, passage edges, legs over the antimeridian and TSS
-// joins, except the joins marked in freeJoin (nil = none). A free join is
-// judged by safeLeg, which enforces the TSS rules.
-func (g *Graph) pinnedSeg(l *Leg, k int, freeJoin []bool) bool {
+// connectors, TSS lanes and passage edges. A leg over the antimeridian is free:
+// the lattice, links and every land, depth and coverage check unwrap or split
+// at ±180, and pinning it forced the path through the network's vertices there. TSS
+// joins are free, even inside a tagged passage: a join is only the network's
+// way into a lane end, and a ship heads for the lane end directly. safeLeg
+// enforces the TSS rules on the taut legs that replace them.
+func (g *Graph) pinnedSeg(l *Leg, k int) bool {
 	code := l.segs[k]
 	switch {
-	case code < 0:
+	case code < 0, g.flags[code]&edgeLane != 0:
 		return true
-	case g.flags[code]&edgeLane != 0, g.pass[code] != 0, g.flags[code]&edgeJoin != 0 && (freeJoin == nil || !freeJoin[k]):
+	case g.flags[code]&edgeJoin == 0 && g.pass[code] != 0:
 		return true
 	}
-	return math.Abs(l.Path[k][0]-l.Path[k+1][0]) > 180
-}
-
-// tautLeg replaces every free run of the coarse leg with a taut safe-water
-// chain (tautRun), keeping the pinned pieces. It does this twice when the leg
-// has TSS joins, with the joins pinned and with them free, and keeps the
-// shorter result. It rewrites l.Path and l.segs and calls l.measure. A run
-// with no safe path stays as drawn.
-func (g *Graph) tautLeg(l *Leg, c *pathCtx) {
-	if g.land == nil {
-		return // without land data a shortcut cannot be judged: keep the network path
-	}
-	loose := g.looseJoins(l)
-	if loose == nil {
-		g.tautLegJoins(l, c, nil, nil)
-		return
-	}
-	free := *l
-	// A run the two passes share (no loose join in it) is tautened once.
-	memo := map[[2]int]tautResult{}
-	g.tautLegJoins(l, c, nil, memo)
-	g.tautLegJoins(&free, c, loose, memo)
-	if free.DistanceM < l.DistanceM {
-		*l = free
-	}
-}
-
-// A stretch of TSS joins is worth freeing when it is at least this much longer
-// than the rhumb between its ends: on a short leg any join (the free pass is
-// cheap), on a long one only a clear detour, because the free pass re-tautens
-// every run it merges and would double the routing time.
-const (
-	looseJoinExcessNM     = 0.0
-	looseJoinExcessLongNM = 5.0
-	looseJoinShortLegNM   = 600.0
-)
-
-// looseJoins marks the segments of the joins of l that detour: each stretch of
-// consecutive join segments that is long enough a detour (see looseJoinExcessNM). It returns nil when there is none.
-func (g *Graph) looseJoins(l *Leg) []bool {
-	var out []bool
-	need := looseJoinExcessLongNM
-	if l.DistanceM <= looseJoinShortLegNM*MetresPerNM {
-		need = looseJoinExcessNM
-	}
-	for k := 0; k < len(l.segs); {
-		if l.segs[k] < 0 || g.flags[l.segs[k]]&edgeJoin == 0 {
-			k++
-			continue
-		}
-		j, along := k, 0.0
-		for j < len(l.segs) && l.segs[j] >= 0 && g.flags[l.segs[j]]&edgeJoin != 0 {
-			along += Distance(l.Path[j], l.Path[j+1])
-			j++
-		}
-		if along-Distance(l.Path[k], l.Path[j]) >= need*MetresPerNM {
-			if out == nil {
-				out = make([]bool, len(l.segs))
-			}
-			for i := k; i < j; i++ {
-				out[i] = true
-			}
-		}
-		k = j
-	}
-	return out
+	return false
 }
 
 type tautResult struct {
@@ -374,26 +285,32 @@ type tautResult struct {
 	segs []int32
 }
 
-// tautLegJoins is one pass of tautLeg: the joins marked in freeJoin are free.
-// memo, when not nil, holds the result of every run by its segment range.
-func (g *Graph) tautLegJoins(l *Leg, c *pathCtx, freeJoin []bool, memo map[[2]int]tautResult) {
+// tautLeg replaces every free run of the coarse leg with a taut safe-water
+// chain (tautRun), keeping the pinned pieces. It rewrites l.Path and l.segs
+// and calls l.measure. A run with no safe path stays as drawn.
+func (g *Graph) tautLeg(l *Leg, c *pathCtx) {
+	if g.land == nil {
+		return // without land data a shortcut cannot be judged: keep the network path
+	}
 	type run struct{ lo, hi int } // segments lo..hi-1, path points lo..hi
 	var runs []run
 	cc := *c
 	cc.lifted = l.lifted
-	cc.confined, cc.joins, cc.track = nil, map[Position]float64{}, newTrack(l.Path)
+	cc.confined, cc.joins = nil, map[Position]float64{}
+	for k, code := range l.segs {
+		if code >= 0 && PassageLimits[g.passes[g.pass[code]]].Confined {
+			cc.confined = append(cc.confined, rhumbSamples(l.Path[k], l.Path[k+1], tautConfinedNM/2)...)
+		}
+	}
 	for k := 0; k < len(l.segs); {
-		if !g.pinnedSeg(l, k, freeJoin) {
+		if !g.pinnedSeg(l, k) {
 			j := k
-			for j < len(l.segs) && !g.pinnedSeg(l, j, freeJoin) {
+			for j < len(l.segs) && !g.pinnedSeg(l, j) {
 				j++
 			}
 			runs = append(runs, run{k, j})
 			k = j
 			continue
-		}
-		if code := l.segs[k]; code >= 0 && PassageLimits[g.passes[g.pass[code]]].Confined {
-			cc.confined = append(cc.confined, rhumbSamples(l.Path[k], l.Path[k+1], tautConfinedNM/2)...)
 		}
 		k++
 	}
@@ -404,10 +321,6 @@ func (g *Graph) tautLegJoins(l *Leg, c *pathCtx, freeJoin []bool, memo map[[2]in
 	var wg sync.WaitGroup
 	sem := make(chan struct{}, runtime.NumCPU())
 	for i, r := range runs {
-		if res, ok := memo[[2]int{r.lo, r.hi}]; ok {
-			out[i] = res
-			continue
-		}
 		wg.Add(1)
 		sem <- struct{}{}
 		go func() {
@@ -417,11 +330,6 @@ func (g *Graph) tautLegJoins(l *Leg, c *pathCtx, freeJoin []bool, memo map[[2]in
 		}()
 	}
 	wg.Wait()
-	if memo != nil {
-		for i, r := range runs {
-			memo[[2]int{r.lo, r.hi}] = out[i]
-		}
-	}
 
 	path := []Position{l.Path[0]}
 	var segs []int32
@@ -466,12 +374,15 @@ func (g *Graph) tautSplit(l *Leg, lo, hi int, c *pathCtx) ([]Position, []int32) 
 		}
 		return g.tautRun(l.Path[lo:m+1], &cc)
 	}
+	first := l.Path[lo]
+	split := false
 	for lo < hi {
 		if pts, ok := try(lo, hi); ok {
 			outP = append(outP, pts[1:]...)
 			outS = appendTaut(outS, len(pts)-1)
 			break
 		}
+		split = true
 		// Longest prefix lo..good that succeeds; bad is the shortest known failure.
 		good, bad := lo, hi
 		var goodPts []Position
@@ -487,9 +398,17 @@ func (g *Graph) tautSplit(l *Leg, lo, hi int, c *pathCtx) ([]Position, []int32) 
 			}
 		}
 		if good == lo {
-			// Not even one segment is safe: keep it as drawn.
-			outP = append(outP, l.Path[lo+1])
-			outS = append(outS, l.segs[lo])
+			// Not even one segment is safe. A network edge drawn over land
+			// (an ocean island between two far MARNET vertices) is retried
+			// with the depth grid vouching for the open water round it;
+			// otherwise the segment is kept as drawn.
+			if pts, ok := g.rescueAground(l.Path[lo], l.Path[lo+1], &cc); ok {
+				outP = append(outP, pts[1:]...)
+				outS = appendTaut(outS, len(pts)-1)
+			} else {
+				outP = append(outP, l.Path[lo+1])
+				outS = append(outS, l.segs[lo])
+			}
 			lo++
 			continue
 		}
@@ -497,7 +416,52 @@ func (g *Graph) tautSplit(l *Leg, lo, hi int, c *pathCtx) ([]Position, []int32) 
 		outS = appendTaut(outS, len(goodPts)-1)
 		lo = good
 	}
+	if split {
+		outP, outS = g.tightenSplit(first, outP, outS, &cc)
+	}
 	return outP, outS
+}
+
+// rescueAground tautens the single coarse segment a-b with band set, when the
+// segment as drawn touches land. Only then: elsewhere the band would let the
+// path stray far from the network, where the land data may be missing.
+func (g *Graph) rescueAground(a, b Position, c *pathCtx) ([]Position, bool) {
+	if g.land == nil || g.depth == nil || g.land.SegmentClearance(a, b, 1) > 0 {
+		return nil, false
+	}
+	cb := *c
+	cb.band = true
+	return g.tautRun([]Position{a, b}, &cb)
+}
+
+// tightenSplit drops every vertex of a split run (first, then pts with segment
+// codes segs) whose neighbours see each other, across the seams between the
+// pieces: each piece is tautened on its own, so a vertex where two pieces meet,
+// or a segment kept as drawn between them, can be slack. A merged segment is
+// taut. A vertex is dropped only when the direct rhumb leg is not longer than
+// the two legs through it, so a great-circle chain is not folded back into one
+// longer rhumb leg.
+func (g *Graph) tightenSplit(first Position, pts []Position, segs []int32, c *pathCtx) ([]Position, []int32) {
+	for changed := true; changed; {
+		changed = false
+		var outP []Position
+		var outS []int32
+		last, merged := first, false
+		for i, p := range pts {
+			if i+1 < len(pts) && Distance(last, pts[i+1]) <= Distance(last, p)+Distance(p, pts[i+1])+1 && g.safeLeg(last, pts[i+1], c) {
+				merged, changed = true, true
+				continue
+			}
+			code := segs[i]
+			if merged {
+				code = segTaut
+			}
+			outP, outS = append(outP, p), append(outS, code)
+			last, merged = p, false
+		}
+		pts, segs = outP, outS
+	}
+	return pts, segs
 }
 
 func appendTaut(s []int32, n int) []int32 {
@@ -508,32 +472,63 @@ func appendTaut(s []int32, n int) []int32 {
 }
 
 // tautRun returns a taut chain from pts[0] to pts[len-1] (both fixed) that
-// stays within about 16 NM of the run and passes safeLeg, or false and pts when
-// no safe path exists. Where the ends are far apart it also tries a chain of
-// rhumb legs along the great circle, which only passes where every sample is
-// covered (fully deep tiles), and keeps the shorter.
+// stays near the run and passes safeLeg, or false and pts when no safe path
+// exists. Theta* finds a path over a lattice along the run; its waypoints are
+// then tightened and pulled to where the legs graze an obstacle, each leg
+// sailed as a link (one rhumb leg, or a great-circle chain over open ocean).
 func (g *Graph) tautRun(pts []Position, c *pathCtx) ([]Position, bool) {
 	if len(pts) < 2 {
 		return pts, true
 	}
-	var best []Position
-	for _, scale := range [...]float64{1, 1.5} {
-		if out, ok := g.thetaRun(pts, c, scale); ok {
-			best = g.tighten(out, c)
+	s := newLinks(g, c)
+	out, ok := g.thetaWidening(pts, c)
+	if !ok {
+		// No lattice path: the ends may still see each other over open ocean.
+		if r := s.link(pts[0], pts[len(pts)-1]); r.ok {
+			return append([]Position{pts[0]}, r.pts...), true
+		}
+		return pts, false
+	}
+	strict := *c
+	strict.strictDepth = true
+	way := s.tighten(newLinks(g, &strict).pull(s.tighten(out)))
+	// A link's own points can be slack against the next link's: tighten the
+	// joined path once more, never lengthening it.
+	return g.tightenBy(s.expand(way), c, true), true
+}
+
+// tautWidenStations is how many stations either side of where Theta* got
+// stuck take the wide offsets on the next try; tautWidenTries bounds the tries.
+const (
+	tautWidenStations = 4
+	tautWidenTries    = 4
+)
+
+// thetaWidening runs Theta* on the narrow lattice and, where it gets stuck
+// (an island or reef across the coarse path that the narrow offsets cannot
+// round), widens the lattice around that station and tries again. The last
+// try is wide throughout. The tries share one line-of-sight cache, so a retry
+// costs little more than the new nodes.
+func (g *Graph) thetaWidening(pts []Position, c *pathCtx) ([]Position, bool) {
+	cache := map[[2]Position]bool{}
+	wide := map[int]bool{}
+	for range tautWidenTries {
+		out, ok, stuck := g.thetaRun(pts, c, func(i int) bool { return wide[i] }, cache)
+		if ok {
+			return out, true
+		}
+		grown := false
+		for i := stuck - tautWidenStations; i <= stuck+tautWidenStations+1; i++ {
+			if !wide[i] {
+				wide[i], grown = true, true
+			}
+		}
+		if !grown {
 			break
 		}
 	}
-	if gc, ok := g.greatCircleRun(pts[0], pts[len(pts)-1], c); ok {
-		for _, cand := range [][]Position{gc, g.tightenBy(gc, c, true), g.tightenBy(gc, c, false)} {
-			if best == nil || chainLength(cand) < chainLength(best) {
-				best = cand
-			}
-		}
-	}
-	if best == nil {
-		return pts, false
-	}
-	return best, true
+	out, ok, _ := g.thetaRun(pts, c, func(int) bool { return true }, cache)
+	return out, ok
 }
 
 // chainLength is the length of the rhumb chain p in metres.
@@ -586,14 +581,9 @@ func (g *Graph) greatCircleRun(a, b Position, c *pathCtx) ([]Position, bool) {
 	return append(out, b), true
 }
 
-// tighten drops every inner vertex whose neighbours see each other, until
-// nothing changes.
-func (g *Graph) tighten(p []Position, c *pathCtx) []Position {
-	return g.tightenBy(p, c, false)
-}
-
-// tightenBy is tighten; with shorterOnly it drops a vertex only when the
-// direct rhumb leg is not longer than the two legs through it. Over long
+// tightenBy drops every inner vertex whose neighbours see each other, until
+// nothing changes; with shorterOnly it drops a vertex only when the direct
+// rhumb leg is not longer than the two legs through it. Over long
 // distances a rhumb leg can be longer than a bent chain along the great
 // circle, so the great-circle chain is tightened both ways and the shorter kept.
 func (g *Graph) tightenBy(p []Position, c *pathCtx, shorterOnly bool) []Position {
@@ -613,15 +603,167 @@ func (g *Graph) tightenBy(p []Position, c *pathCtx, shorterOnly bool) []Position
 	return p
 }
 
+// links judges the legs between waypoints of the taut path as they are
+// sailed, remembering each answer: a link a-b is the rhumb leg when it is
+// safe, or, beyond gcLegNM, the chain along the great circle when that is safe
+// and shorter (an ocean crossing follows the great circle, not one long rhumb
+// line).
+type links struct {
+	g    *Graph
+	c    *pathCtx
+	memo map[[2]Position]linkResult
+}
+
+type linkResult struct {
+	pts []Position // points after a, ending at b
+	m   float64    // length in metres
+	ok  bool
+}
+
+func newLinks(g *Graph, c *pathCtx) *links {
+	return &links{g: g, c: c, memo: map[[2]Position]linkResult{}}
+}
+
+func (s *links) link(a, b Position) linkResult {
+	key := [2]Position{a, b}
+	if r, hit := s.memo[key]; hit {
+		return r
+	}
+	r := linkResult{m: math.Inf(1)}
+	if s.g.safeLeg(a, b, s.c) {
+		r = linkResult{[]Position{b}, Distance(a, b), true}
+	}
+	if gc, ok := s.g.greatCircleRun(a, b, s.c); ok {
+		gc = s.g.tightenBy(gc, s.c, true)
+		if m := chainLength(gc); m < r.m {
+			r = linkResult{gc[1:], m, true}
+		}
+	}
+	s.memo[key] = r
+	return r
+}
+
+// tighten drops every inner waypoint of p whose neighbours are linked by a
+// safe link no longer than the two through it, until nothing changes.
+func (s *links) tighten(p []Position) []Position {
+	for changed := true; changed; {
+		changed = false
+		out := []Position{p[0]}
+		for i := 1; i+1 < len(p); i++ {
+			last := out[len(out)-1]
+			if r := s.link(last, p[i+1]); r.ok && r.m <= s.link(last, p[i]).m+s.link(p[i], p[i+1]).m+1 {
+				changed = true
+				continue
+			}
+			out = append(out, p[i])
+		}
+		p = append(out, p[len(p)-1])
+	}
+	return p
+}
+
+// expand returns the points of the path through the waypoints p.
+func (s *links) expand(p []Position) []Position {
+	out := []Position{p[0]}
+	for i := 1; i < len(p); i++ {
+		out = append(out, s.link(p[i-1], p[i]).pts...)
+	}
+	return out
+}
+
+// pullTolNM is the precision pull places a waypoint to; pullSweeps bounds
+// its passes.
+const (
+	pullTolNM  = 0.1
+	pullSweeps = 8
+)
+
+// pull slides each inner waypoint of p towards the chord of its neighbours
+// (the rhumb line, or the great circle when they are more than gcLegNM apart)
+// as far as both links stay safe and the path gets shorter. Theta*
+// leaves turns on lattice nodes, up to tautStationNM from where they belong;
+// pull moves each to where a leg grazes an obstacle (the clearance round a
+// headland, a shoal or a TSS boundary), the turn a navigator would draw. A
+// waypoint that reaches the chord is left for tighten to drop. The ends stay
+// fixed.
+//
+// Its links should judge depth cell by cell (strictDepth): safeLeg forgives a
+// short shallow run as raster noise, and pull, which seeks the edge of what
+// passes, would otherwise clip a shoal by just that much.
+func (s *links) pull(p []Position) []Position {
+	if len(p) < 3 {
+		return p
+	}
+	p = slices.Clone(p)
+	dirty := make([]bool, len(p))
+	for i := range dirty {
+		dirty[i] = true
+	}
+	tol := pullTolNM * MetresPerNM
+	for range pullSweeps {
+		moved := false
+		for i := 1; i+1 < len(p); i++ {
+			if !dirty[i] {
+				continue
+			}
+			dirty[i] = false
+			u, v, w := p[i-1], p[i], p[i+1]
+			foot, ok := chordFoot(u, v, w)
+			if Distance(u, w) > gcLegNM*MetresPerNM {
+				foot, ok = arcFoot(u, v, w) // the link is sailed on the great circle
+			}
+			if !ok {
+				continue
+			}
+			d := Distance(v, foot)
+			if d < tol {
+				continue
+			}
+			base := s.link(u, v).m + s.link(v, w).m
+			try := func(f float64) bool {
+				x := slide(v, foot, f)
+				r1 := s.link(u, x)
+				if !r1.ok {
+					return false
+				}
+				r2 := s.link(x, w)
+				return r2.ok && r1.m+r2.m < base-1
+			}
+			lo, hi := 0.0, 1.0
+			if try(1) {
+				lo = 1
+			} else {
+				for (hi-lo)*d > tol {
+					if mid := (lo + hi) / 2; try(mid) {
+						lo = mid
+					} else {
+						hi = mid
+					}
+				}
+			}
+			if lo > 0 {
+				p[i] = slide(v, foot, lo)
+				dirty[i-1], dirty[i], dirty[i+1] = true, true, true
+				moved = true
+			}
+		}
+		if !moved {
+			break
+		}
+	}
+	return p
+}
+
 type latticeNode struct {
 	pos Position
 	k   float64 // lateral offset in NM, for tie-breaking
 }
 
 // lattice places stations every tautStationNM of arc along pts, with lattice
-// points at the lateral offsets (scaled) perpendicular to the local bearing.
+// points at the lateral offsets perpendicular to the local bearing: the wide
+// offsets at station i when wide(i), or when no narrow offset is safe there.
 // The ends are single nodes. Points failing the point check are dropped.
-func (g *Graph) lattice(pts []Position, c *pathCtx, scale float64) [][]latticeNode {
+func (g *Graph) lattice(pts []Position, c *pathCtx, wide func(i int) bool) [][]latticeNode {
 	// Unwrapped Mercator coordinates keep a run near the antimeridian continuous.
 	m := make([][2]float64, len(pts))
 	cum := make([]float64, len(pts))
@@ -659,18 +801,27 @@ func (g *Graph) lattice(pts []Position, c *pathCtx, scale float64) [][]latticeNo
 		}
 		px, py := -dy/n, dx/n
 		unit := MetresPerNM / earthRadiusM / math.Cos(invMercatorLat(y)*math.Pi/180)
+		place := func(offs []float64) []latticeNode {
+			var st []latticeNode
+			for _, k := range offs {
+				lat := invMercatorLat(y + k*unit*py)
+				if math.Abs(lat) > 85 {
+					continue
+				}
+				lon := math.Remainder((x+k*unit*px)*180/math.Pi, 360)
+				p := Position{lon, lat}
+				if g.safeLeg(p, p, c) {
+					st = append(st, latticeNode{p, k})
+				}
+			}
+			return st
+		}
 		var st []latticeNode
-		for _, off := range tautOffsetsNM {
-			k := math.Max(-tautMaxOffset, math.Min(tautMaxOffset, off*scale))
-			lat := invMercatorLat(y + k*unit*py)
-			if math.Abs(lat) > 85 {
-				continue
-			}
-			lon := math.Remainder((x+k*unit*px)*180/math.Pi, 360)
-			p := Position{lon, lat}
-			if g.safeLeg(p, p, c) {
-				st = append(st, latticeNode{p, k})
-			}
+		if !wide(len(stations)) {
+			st = place(tautOffsetsNM)
+		}
+		if len(st) == 0 {
+			st = place(tautWideOffsetsNM)
 		}
 		if len(st) == 0 {
 			return nil
@@ -710,11 +861,14 @@ func (q *thetaQueue) Pop() any {
 	return it
 }
 
-// thetaRun runs Theta* over the lattice of one run.
-func (g *Graph) thetaRun(pts []Position, c *pathCtx, scale float64) ([]Position, bool) {
-	st := g.lattice(pts, c, scale)
+// thetaRun runs Theta* over the lattice of one run (see lattice for wide).
+// cache holds line-of-sight results by end points and may be shared between
+// runs over the same pts and c. On failure it returns the furthest station
+// reached.
+func (g *Graph) thetaRun(pts []Position, c *pathCtx, wide func(i int) bool, cache map[[2]Position]bool) ([]Position, bool, int) {
+	st := g.lattice(pts, c, wide)
 	if st == nil {
-		return nil, false
+		return nil, false, 0
 	}
 	var nodes []latticeNode
 	var stationOf []int32
@@ -737,9 +891,8 @@ func (g *Graph) thetaRun(pts []Position, c *pathCtx, scale float64) ([]Position,
 	}
 	cost[0], parent[0] = 0, 0
 
-	cache := map[[2]int32]bool{}
 	see := func(a, b int32) bool {
-		key := [2]int32{a, b}
+		key := [2]Position{nodes[a].pos, nodes[b].pos}
 		ok, hit := cache[key]
 		if !hit {
 			ok = Distance(nodes[a].pos, nodes[b].pos) <= tautSightNM*MetresPerNM && g.safeLeg(nodes[a].pos, nodes[b].pos, c)
@@ -747,6 +900,7 @@ func (g *Graph) thetaRun(pts []Position, c *pathCtx, scale float64) ([]Position,
 		}
 		return ok
 	}
+	reached := int32(0)
 	h := func(i int32) float64 { return Distance(nodes[i].pos, nodes[end].pos) }
 
 	q := &thetaQueue{{f: h(0), id: 0}}
@@ -760,6 +914,7 @@ func (g *Graph) thetaRun(pts []Position, c *pathCtx, scale float64) ([]Position,
 			break
 		}
 		si := stationOf[n]
+		reached = max(reached, si)
 		for m := first[si+1]; m < first[si+2]; m++ {
 			var par int32
 			var via float64
@@ -778,7 +933,7 @@ func (g *Graph) thetaRun(pts []Position, c *pathCtx, scale float64) ([]Position,
 		}
 	}
 	if !closed[end] {
-		return nil, false
+		return nil, false, int(reached)
 	}
 	var rev []Position
 	for v := end; ; v = parent[v] {
@@ -791,5 +946,76 @@ func (g *Graph) thetaRun(pts []Position, c *pathCtx, scale float64) ([]Position,
 	for i, p := range rev {
 		out[len(rev)-1-i] = p
 	}
-	return out, true
+	return out, true, 0
+}
+
+// mercUnwrap is the Mercator position of p with its longitude moved by whole
+// turns to lie within half a turn of ref (radians), so a chain near the
+// antimeridian stays continuous.
+func mercUnwrap(p Position, ref float64) [2]float64 {
+	m := Mercator(p)
+	m[0] = ref + math.Remainder(m[0]-ref, 2*math.Pi)
+	return m
+}
+
+func fromMerc(m [2]float64) Position {
+	return Position{math.Remainder(m[0]*180/math.Pi, 360), invMercatorLat(m[1])}
+}
+
+// chordFoot is the point of the rhumb chord p-q nearest to v, in the Mercator
+// plane, or false when the chord is degenerate.
+func chordFoot(p, v, q Position) (Position, bool) {
+	mv := Mercator(v)
+	mp, mq := mercUnwrap(p, mv[0]), mercUnwrap(q, mv[0])
+	dx, dy := mq[0]-mp[0], mq[1]-mp[1]
+	l2 := dx*dx + dy*dy
+	if l2 == 0 {
+		return Position{}, false
+	}
+	t := math.Max(0, math.Min(1, ((mv[0]-mp[0])*dx+(mv[1]-mp[1])*dy)/l2))
+	return fromMerc([2]float64{mp[0] + t*dx, mp[1] + t*dy}), true
+}
+
+// arcFoot is the point of the great-circle arc p-q nearest to v, or false when
+// the arc is degenerate.
+func arcFoot(p, v, q Position) (Position, bool) {
+	rad := math.Pi / 180
+	vec := func(x Position) [3]float64 {
+		la, lo := x[1]*rad, x[0]*rad
+		return [3]float64{math.Cos(la) * math.Cos(lo), math.Cos(la) * math.Sin(lo), math.Sin(la)}
+	}
+	cross := func(a, b [3]float64) [3]float64 {
+		return [3]float64{a[1]*b[2] - a[2]*b[1], a[2]*b[0] - a[0]*b[2], a[0]*b[1] - a[1]*b[0]}
+	}
+	dot := func(a, b [3]float64) float64 { return a[0]*b[0] + a[1]*b[1] + a[2]*b[2] }
+	a, b, x := vec(p), vec(q), vec(v)
+	n := cross(a, b)
+	nn := dot(n, n)
+	if nn < 1e-18 {
+		return Position{}, false
+	}
+	// Project x onto the plane of the great circle, then normalise.
+	k := dot(x, n) / nn
+	f := [3]float64{x[0] - k*n[0], x[1] - k*n[1], x[2] - k*n[2]}
+	fl := math.Sqrt(dot(f, f))
+	if fl < 1e-12 {
+		return Position{}, false
+	}
+	f = [3]float64{f[0] / fl, f[1] / fl, f[2] / fl}
+	// Outside the arc the nearest point is the nearer end.
+	if dot(cross(a, f), n) < 0 {
+		return p, true
+	}
+	if dot(cross(f, b), n) < 0 {
+		return q, true
+	}
+	return Position{math.Atan2(f[1], f[0]) / rad, math.Atan2(f[2], math.Hypot(f[0], f[1])) / rad}, true
+}
+
+// slide is the point a fraction f of the way from v to target, in the
+// Mercator plane.
+func slide(v, target Position, f float64) Position {
+	mv := Mercator(v)
+	mt := mercUnwrap(target, mv[0])
+	return fromMerc([2]float64{mv[0] + f*(mt[0]-mv[0]), mv[1] + f*(mt[1]-mv[1])})
 }

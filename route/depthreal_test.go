@@ -17,7 +17,9 @@ func TestRealRotterdamHamburgDefaultDraught(t *testing.T) {
 
 func TestRealTorresStraitClosesAt12m(t *testing.T) {
 	g := testDepthGraph(t)
-	r := routeOn(t, g, Options{Vessel: Vessel{DraughtM: 12, SpeedKn: 14, Type: Bulk}}, Position{145.78, -16.92}, Position{130.84, -12.46})
+	// Deep water either side: Cairns and Darwin themselves are shallower than a
+	// 12 m vessel needs, so from the ports there is no route deep enough at all.
+	r := routeOn(t, g, Options{Vessel: Vessel{DraughtM: 12, SpeedKn: 14, Type: Bulk}}, Position{152.0, -15.0}, Position{128.0, -10.0})
 	if inBox(r.Path, 141.0, 143.5, -10.9, -9.8) {
 		t.Error("12 m vessel passes Torres Strait")
 	}

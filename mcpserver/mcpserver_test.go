@@ -255,7 +255,9 @@ func TestMCPRouteDraughtNotice(t *testing.T) {
 		t.Skip("depth dataset not built")
 	}
 	var out routeOut
-	pts := []map[string]any{{"lat": 26.65, "lon": 50.17}, {"lat": 36.05, "lon": 120.3}}
+	// The open Yellow Sea, not Qingdao: every network edge into Qingdao is
+	// shallower than the 25.8 m a 22 m tanker needs, so there is no route at all.
+	pts := []map[string]any{{"lat": 26.65, "lon": 50.17}, {"lat": 34.5, "lon": 123.0}}
 	call(t, fullSession(t), "route", map[string]any{"points": pts, "draught_m": 22}, &out)
 	for _, n := range out.Notices {
 		if n.Kind == "draught-reroute" {

@@ -85,7 +85,6 @@ func ctxFor(g *Graph, opts Options, pts []Position) *pathCtx {
 // it uses, and the points where a taut run meets a piece kept as drawn.
 func legCtxFor(g *Graph, base *pathCtx, l Leg, coarse []Position) *pathCtx {
 	c := *base
-	c.track = newTrack(coarse)
 	c.confined, c.joins = nil, map[Position]float64{}
 	taut := func(k int) bool { return k >= 0 && k < len(l.segs) && l.segs[k] == segTaut }
 	for k, code := range l.segs {
@@ -121,7 +120,7 @@ func TestTautNoGrounding(t *testing.T) {
 			cp := coarse.Path
 			free := 0
 			for k := range coarse.segs {
-				if !g.pinnedSeg(&coarse, k, nil) {
+				if !g.pinnedSeg(&coarse, k) {
 					free++
 				}
 			}
@@ -139,11 +138,13 @@ func TestTautNoGrounding(t *testing.T) {
 						if !g.safeLeg(a, b, c) {
 							t.Errorf("taut segment %v -> %v is not safe", a, b)
 						}
-					case code >= 0 && !g.pinnedSeg(&l, k, nil):
+					case code >= 0 && !g.pinnedSeg(&l, k):
 						left++
 					}
-					// Independent of safeLeg: no free segment touches land.
-					if code == segTaut || (code >= 0 && !g.pinnedSeg(&l, k, nil)) {
+					// Independent of safeLeg: no free segment touches land, except
+					// one left as drawn at a passage mouth (the canal end node lies
+					// in land the data does not resolve, so no safe leg leaves it).
+					if code == segTaut || (code >= 0 && !g.pinnedSeg(&l, k) && !meetsPassage(g, &l, k)) {
 						if d := g.land.SegmentClearance(a, b, tol+1); d <= tol {
 							t.Errorf("free segment %v -> %v touches land", a, b)
 						}
@@ -278,7 +279,11 @@ func TestTautStaysNearMARNET(t *testing.T) {
 				best = math.Min(best, Distance(p, q))
 			}
 		}
-		if best > 24*MetresPerNM {
+		// The lattice reaches tautMaxOffset; the slack covers sampling and the
+		// projection of the offset (a detour round islands the coarse path
+		// crosses sits on the outer offset). A great-circle link over open
+		// ocean may run further off, through fully deep tiles only.
+		if best > (tautMaxOffset+0.5)*MetresPerNM && (g.depth == nil || g.depth.TileMinDepth(p) < deepTileM) {
 			t.Errorf("vertex %v is %.1f NM from the coarse path", p, best/MetresPerNM)
 		}
 	}
@@ -464,5 +469,87 @@ func TestSafeLegJoinOnLandRejectsCrossing(t *testing.T) {
 	}
 	if g.safeLeg(j, Position{0.5, 0}, c) {
 		t.Error("a leg from a join on land across the island is accepted")
+	}
+}
+
+// meetsPassage reports whether a segment next to segment k of l is a passage edge.
+func meetsPassage(g *Graph, l *Leg, k int) bool {
+	for _, j := range [2]int{k - 1, k + 1} {
+		if j >= 0 && j < len(l.segs) && l.segs[j] >= 0 && g.pass[l.segs[j]] != 0 {
+			return true
+		}
+	}
+	return false
+}
+
+// TestTautNoJoinDogLeg checks that no TSS join is kept as drawn where the
+// leg from the vertex before it straight to its far end is safe and shorter:
+// a ship heads for the lane end, it does not steer for a network node first.
+func TestTautNoJoinDogLeg(t *testing.T) {
+	g := testFullGraph(t)
+	r := rotterdamSingapore(t)
+	coarse := coarseLeg(t, g, tautRotterdam, tautSingapore)
+	l := r.Legs[0]
+	c := legCtxFor(g, ctxFor(g, Options{}, []Position{tautRotterdam, tautSingapore}), l, coarse.Path)
+	for k := 1; k < len(l.segs); k++ {
+		code := l.segs[k]
+		if code < 0 || g.flags[code]&edgeJoin == 0 || l.segs[k-1] != segTaut {
+			continue
+		}
+		p, v, q := l.Path[k-1], l.Path[k], l.Path[k+1]
+		if Distance(p, q) < Distance(p, v)+Distance(v, q)-0.1*MetresPerNM && g.safeLeg(p, q, c) {
+			t.Errorf("join %v -> %v kept as drawn: %v -> %v is safe and shorter", v, q, p, q)
+		}
+	}
+}
+
+// TestTautVerticesAreTight checks that every turn of the taut path sits where
+// a leg meets an obstacle: sliding the vertex 0.5 NM towards the chord of its
+// neighbours must make a leg unsafe. A turn left on a lattice node in open
+// water shows as a kink a navigator would never draw.
+func TestTautVerticesAreTight(t *testing.T) {
+	g := testFullGraph(t)
+	r := rotterdamSingapore(t)
+	coarse := coarseLeg(t, g, tautRotterdam, tautSingapore)
+	l := r.Legs[0]
+	c := legCtxFor(g, ctxFor(g, Options{}, []Position{tautRotterdam, tautSingapore}), l, coarse.Path)
+	for k := 1; k < len(l.segs); k++ {
+		if l.segs[k-1] != segTaut || l.segs[k] != segTaut {
+			continue
+		}
+		p, v, q := l.Path[k-1], l.Path[k], l.Path[k+1]
+		target, ok := chordFoot(p, v, q)
+		if !ok {
+			continue
+		}
+		d := Distance(v, target)
+		if d < 0.6*MetresPerNM {
+			continue
+		}
+		w := slide(v, target, 0.5*MetresPerNM/d)
+		if g.safeLeg(p, w, c) && g.safeLeg(w, q, c) &&
+			Distance(p, w)+Distance(w, q) < Distance(p, v)+Distance(v, q)-0.05*MetresPerNM {
+			t.Errorf("vertex %v is slack: moving it 0.5 NM to %v is safe and shorter", v, w)
+		}
+	}
+}
+
+// TestTightenSplitKeepsGreatCircle: tightening the seams of a split run must
+// not fold a great-circle chain back into one longer rhumb leg.
+func TestTightenSplitKeepsGreatCircle(t *testing.T) {
+	g := testFullGraph(t)
+	a, b := Position{-119.9998, 30}, Position{-175.112, 40.758}
+	c := ctxFor(g, Options{}, []Position{a, b})
+	gc, ok := g.greatCircleRun(a, b, c)
+	if !ok {
+		t.Fatal("great-circle chain over the North Pacific should be safe")
+	}
+	pts, segs := g.tightenSplit(a, gc[1:], appendTaut(nil, len(gc)-1), c)
+	got := chainLength(append([]Position{a}, pts...))
+	if want := chainLength(gc); got > want+MetresPerNM {
+		t.Errorf("tightened chain %.1f NM, great circle %.1f NM (%d points)", got/MetresPerNM, want/MetresPerNM, len(pts))
+	}
+	if len(segs) != len(pts) {
+		t.Errorf("segs %d, pts %d", len(segs), len(pts))
 	}
 }

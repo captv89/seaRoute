@@ -59,7 +59,9 @@ var (
 
 func TestDraughtReroutesAroundSingapore(t *testing.T) {
 	g := testDepthGraph(t)
-	r := routeOn(t, g, Options{Vessel: Vessel{DraughtM: 22, SpeedKn: 14, Type: Tanker}}, rasTannurah, qingdao)
+	// To the open Yellow Sea, not Qingdao: the grid reads 18-24 m on every
+	// network edge into Qingdao, under the 25.8 m this tanker needs.
+	r := routeOn(t, g, Options{Vessel: Vessel{DraughtM: 22, SpeedKn: 14, Type: Tanker}}, rasTannurah, Position{123.0, 34.5})
 	if inBox(r.Path, 103.4, 104.6, 1.0, 1.5) {
 		t.Error("22 m tanker passes Singapore")
 	}

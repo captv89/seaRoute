@@ -152,7 +152,7 @@ cd web/tailwind && npm ci && npm run build
 | `/` | `GET` | Main Tactical ECDIS dashboard web application |
 | `/waypoints` | `POST` | Calculate optimal sea route between ports or coordinates |
 | `/ports` | `GET` | Query commercial seaport database with UN/LOCODEs |
-| `/passages` | `GET` | List available choke-point passages and routing graph stats |
+| `/passages` | `GET` | List available choke-point passages, routing graph stats and `datasets` (name, source, use, loaded) |
 | `/network` | `GET` | Stream raw Marnet navigation graph GeoJSON (gzip when accepted) |
 | `/layers/:name` | `GET` | Serve gzip-compressed tactical GIS overlays (`baseline`, `eez`, `piracy`, `seaports`, `eca-sox`, `eca-nox`, `boundaries`, `fao`, `tss`) |
 | `/emissions` | `GET` | Stream IMO Emission Control Area (ECA) GeoJSON |
@@ -168,12 +168,13 @@ Request (optional field):
 | `draught_m` | `10` | Vessel draught in metres, 1 to 25. An explicit `0` or out-of-range value returns HTTP 400. |
 | `speed_kn` | `14` | Speed in knots for squat, 1 to 30. An explicit `0` or out-of-range value returns HTTP 400. |
 | `vessel_type` | `bulk` | `tanker`, `bulk`, `general` or `container`; sets the block coefficient (0.80, 0.80, 0.70, 0.60). |
+| `from.name`, `to.name` | none | Label for a coordinate point, up to 100 characters. Without it, a point within 1 NM of a known port takes the port's name. A named point names the first or last waypoint and `route_name`; a bare coordinate stays `Origin` / `Destination`. |
 
 The route stays in water deeper than draught + squat + margin where depth data exists. Squat is Cb x V^2 / 100 in open water and Cb x V^2 / 50 in canals and straits; the margin is the larger of 2 m and 10% of the draught. When the draught does not fit, the route goes the long way and `notices` say why. The same fields (`draught_m`, `speed_kn`, `vessel_type`) are accepted by the MCP `route` and `distance_to_go` tools.
 
 The `kinks` and `accept` request fields were removed and are now ignored; `proposals` and `ignored_accept` are no longer returned.
 
-Traffic separation scheme (TSS) handling is always on. Every leg is a rhumb line.
+Traffic separation scheme (TSS) handling is always on. Every leg is a rhumb line. Over open ocean, where it is safe and shorter, the route follows the great circle as a chain of rhumb legs of at most 100 NM each, so every leg is a constant course.
 
 Response `properties` gains `clearance_nm` (the effective value), `stretches[]` (index range into the path, `flag`, `severity`, `scheme`), `warnings[]`, `hazards[]`, `depth` (`draught_m`, `squat_m`, `margin_m` and `depth_limit_m`, the depth needed in open water), `confined_depth_limit_m` (the limit in a canal or strait) and `notices[]` (empty when the draught changed nothing; each has `kind` `draught-reroute` or `draught-no-route`, `text`, `extra_nm`, `avoided` and `passages`). The MCP tools return `depth`, `confined_depth_limit_m` and `notices` too. Each hazard is a run of path segments that touch land (`severity` `aground`, within the land data tolerance) or pass closer than `clearance_nm` (`close`), or a port connector that leaves the area the land data covers (`unchecked`, clearance unknown), with `from`/`to` (index range into the path), `start`/`end` positions, `min_clearance_nm`, `kind` (`marnet`, `osm-tss`, `connector`), `passage` and `note`. The MCP `route` and `distance_to_go` tools return the same `hazards`. Each waypoint has a `flag` naming the provenance of the stretch that arrives at it (`marnet`, `osm-tss`, `tss-unknown`, `tss-unresolved`, `connector`); the origin is `connector`.
 

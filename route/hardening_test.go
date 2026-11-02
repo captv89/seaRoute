@@ -138,8 +138,10 @@ func TestSegmentDepthRunAcrossAntimeridian(t *testing.T) {
 }
 
 // TestTrackStaysNearMarnetOrDeep logs, and checks, that every vertex of the
-// Rotterdam-Singapore and SF-Busan tracks is within 24 NM of the MARNET track
-// or inside a fully deep tile.
+// Rotterdam-Singapore and SF-Busan tracks lies where the land data holds the
+// coast (within the corridor of the MARNET network, less the taut margin) or
+// inside a fully deep tile. The leg's own coarse track is not the bound: the
+// taut path may take another part of the network's corridor.
 func TestTrackStaysNearMarnetOrDeep(t *testing.T) {
 	if testing.Short() {
 		t.Skip("slow: full graph")
@@ -148,6 +150,7 @@ func TestTrackStaysNearMarnetOrDeep(t *testing.T) {
 	if g.depth == nil {
 		t.Skip("no depth dataset")
 	}
+	r0 := g.land.CorridorNM*MetresPerNM - tautCorridorM
 	for _, tc := range []struct {
 		name string
 		a, b Position
@@ -157,30 +160,19 @@ func TestTrackStaysNearMarnetOrDeep(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			r := routeOn(t, g, Options{}, tc.a, tc.b)
-			var marnet []Position
-			l := coarseLeg(t, g, tc.a, tc.b)
-			for k := 0; k+1 < len(l.Path); k++ {
-				for _, pc := range splitAntimeridian(l.Path[k], l.Path[k+1]) {
-					marnet = append(marnet, rhumbSamples(pc[0], pc[1], 4)...)
-				}
-			}
 			far, deep, near := 0, 0, 0
 			for _, p := range r.Path {
-				best := 1e18
-				for _, q := range marnet {
-					best = min(best, Distance(p, q))
-				}
 				switch {
-				case best <= 24*MetresPerNM:
+				case g.nearNetwork(p, r0):
 					near++
 				case g.depth.TileMinDepth(p) >= deepTileM:
 					deep++
 				default:
 					far++
-					t.Errorf("vertex %v is %.1f NM from MARNET and not in a deep tile", p, best/MetresPerNM)
+					t.Errorf("vertex %v is outside the data corridor and not in a deep tile", p)
 				}
 			}
-			t.Logf("%d vertices: %d within 24 NM of MARNET, %d in fully deep tiles, %d neither; %.0f NM", len(r.Path), near, deep, far, r.DistanceNM())
+			t.Logf("%d vertices: %d in the data corridor, %d in fully deep tiles, %d neither; %.0f NM", len(r.Path), near, deep, far, r.DistanceNM())
 		})
 	}
 }
@@ -205,5 +197,60 @@ func TestCoveredRejectsClippedShallowTileCorner(t *testing.T) {
 	g.depth = NewDepthMask(nil, nil, "x/gebco2026") // no mask: nothing is vouched for
 	if g.covered(Position{1.9, 0.56}, Position{2.1, 0.64}, c) {
 		t.Error("without a deep-ocean mask nothing is covered")
+	}
+}
+
+func TestCoveredRoundsIslandInPartlyDeepTile(t *testing.T) {
+	// Tile (4, 0) spans lon 2..2.5, lat 0..0.5 and is stored: 255 m except a
+	// 0.05 degree island at its centre. No network, so only the grid covers.
+	m := make([]uint8, depthCellsPerTile*depthCellsPerTile)
+	for k := range m {
+		m[k] = 255
+	}
+	for j := 54; j < 66; j++ {
+		for i := 54; i < 66; i++ {
+			m[j*depthCellsPerTile+i] = 0
+		}
+	}
+	g := &Graph{
+		land:  &Land{CorridorNM: 30},
+		depth: NewDepthMask([]DepthTile{{CX: 4, CY: 0, M: m}}, maskWith(map[[2]int]uint8{{4, 0}: 0}), "x/gebco2026"),
+	}
+	c := &pathCtx{clearM: MetresPerNM, band: true}
+	if g.covered(Position{1.9, 0.25}, Position{2.6, 0.25}, c) {
+		t.Error("leg over the island counted as covered")
+	}
+	// 0.6 NM north of the island's edge: inside the 1 NM band.
+	if g.covered(Position{1.9, 0.285}, Position{2.6, 0.285}, c) {
+		t.Error("leg within the clearance of the island counted as covered")
+	}
+	if !g.covered(Position{1.9, 0.33}, Position{2.6, 0.33}, c) {
+		t.Error("leg 3 NM clear of the island should be covered")
+	}
+	c.band = false
+	if g.covered(Position{1.9, 0.33}, Position{2.6, 0.33}, c) {
+		t.Error("without band a tile that is not deep throughout covers nothing")
+	}
+}
+
+func TestNewYorkTokyoRoundsGuadalupe(t *testing.T) {
+	if testing.Short() {
+		t.Skip("slow: full graph")
+	}
+	g := pub151Graph(t)
+	if g.depth == nil {
+		t.Skip("no depth dataset")
+	}
+	v := Vessel{DraughtM: 9, SpeedKn: 15, Type: "bulk"}
+	r := routeOn(t, g, Options{ClearanceNM: 1, Vessel: v}, Position{-74.0177, 40.7055}, Position{139.7916, 35.6492})
+	for k := 0; k+1 < len(r.Path); k++ {
+		a, b := r.Path[k], r.Path[k+1]
+		// Isla Guadalupe and the open Pacific off Baja California.
+		if min(a[0], b[0]) > -116 || max(a[0], b[0]) < -121 || min(a[1], b[1]) > 31 || max(a[1], b[1]) < 28 {
+			continue
+		}
+		if cl := g.land.SegmentClearance(a, b, MetresPerNM); cl < MetresPerNM-g.land.Tolerance {
+			t.Errorf("leg %v-%v is %.2f NM from land", a, b, cl/MetresPerNM)
+		}
 	}
 }

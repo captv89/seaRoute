@@ -62,7 +62,7 @@ type Output struct {
 	Features []Feature `json:"features"`
 }
 
-func generateOutput(r route.Route, clearanceNM float64, oCoords route.Position, dCoords route.Position, totalDistance float64, oToWpDist float64, wpToDDist float64, Wp2WpDist float64, routeName string, passages []string) Output {
+func generateOutput(r route.Route, clearanceNM float64, oCoords route.Position, dCoords route.Position, totalDistance float64, oToWpDist float64, wpToDDist float64, Wp2WpDist float64, routeName, originName, destName string, passages []string) Output {
 	totalDistNM := totalDistance / 1.852
 	totalDistMI := totalDistance * 0.621371
 
@@ -81,8 +81,14 @@ func generateOutput(r route.Route, clearanceNM float64, oCoords route.Position, 
 		name := fmt.Sprintf("Waypoint %d", i+1)
 		if i == 0 {
 			name = "Origin"
+			if originName != "" {
+				name = originName
+			}
 		} else if i == len(r.Path)-1 {
 			name = "Destination"
+			if destName != "" {
+				name = destName
+			}
 		}
 
 		var passage string
