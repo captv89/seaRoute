@@ -1015,7 +1015,5 @@ func arcFoot(p, v, q Position) (Position, bool) {
 // slide is the point a fraction f of the way from v to target, in the
 // Mercator plane.
 func slide(v, target Position, f float64) Position {
-	mv := Mercator(v)
-	mt := mercUnwrap(target, mv[0])
-	return fromMerc([2]float64{mv[0] + f*(mt[0]-mv[0]), mv[1] + f*(mt[1]-mv[1])})
+	return RhumbPoint(v, target, f)
 }

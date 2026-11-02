@@ -275,3 +275,43 @@ func TestMercatorEquator(t *testing.T) {
 		t.Errorf("Mercator(0,0) = %v, want [0 0]", m)
 	}
 }
+
+func TestRhumbPointEnds(t *testing.T) {
+	a, b := Position{-3, 43}, Position{18, 54}
+	if p := RhumbPoint(a, b, 0); !approx(p[0], a[0]) || !approx(p[1], a[1]) {
+		t.Errorf("RhumbPoint f=0 = %v, want %v", p, a)
+	}
+	if p := RhumbPoint(a, b, 1); math.Abs(p[0]-b[0]) > 1e-9 || math.Abs(p[1]-b[1]) > 1e-9 {
+		t.Errorf("RhumbPoint f=1 = %v, want %v", p, b)
+	}
+}
+
+func TestRhumbPointAntimeridian(t *testing.T) {
+	p := RhumbPoint(Position{179, 0}, Position{-179, 0}, 0.5)
+	if math.Abs(math.Abs(p[0])-180) > 1e-9 {
+		t.Errorf("RhumbPoint lon = %v, want +/-180", p[0])
+	}
+	if math.Abs(p[1]) > 1e-9 {
+		t.Errorf("RhumbPoint lat = %v, want 0", p[1])
+	}
+}
+
+func TestRhumbCourse(t *testing.T) {
+	tests := []struct {
+		name string
+		a, b Position
+		want float64
+	}{
+		{"north", Position{0, 0}, Position{0, 1}, 0},
+		{"east", Position{0, 0}, Position{1, 0}, 90},
+		{"east across antimeridian", Position{179, 0}, Position{-179, 0}, 90},
+		{"west", Position{1, 0}, Position{0, 0}, 270},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := RhumbCourse(tt.a, tt.b); math.Abs(got-tt.want) > 1e-9 {
+				t.Errorf("RhumbCourse(%v, %v) = %v, want %v", tt.a, tt.b, got, tt.want)
+			}
+		})
+	}
+}
