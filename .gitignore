@@ -19,3 +19,6 @@ dataset/*.geojson
 
 
 .codegraph/
+
+# Local-only design docs, plans and explainers (not published)
+/docs/
