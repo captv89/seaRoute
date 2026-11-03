@@ -2,9 +2,11 @@ package route
 
 import (
 	"math"
+	"os"
 	"slices"
 	"sync"
 	"testing"
+	"time"
 )
 
 const network = "../dataset/marnet_plus_5km.geojson"
@@ -314,4 +316,13 @@ func TestRhumbCourse(t *testing.T) {
 			}
 		})
 	}
+}
+
+// perfBudget is a timing limit set for a dev machine; shared CI runners are
+// slower and noisier, so they get three times as long.
+func perfBudget(d time.Duration) time.Duration {
+	if os.Getenv("CI") != "" {
+		return 3 * d
+	}
+	return d
 }

@@ -174,11 +174,7 @@ func TestRoutePerformance(t *testing.T) {
 		t.Skip("short")
 	}
 	g := testTSSGraph(t)
-	// Shared CI runners are slower and noisier than a dev machine.
-	limit := time.Second
-	if os.Getenv("CI") != "" {
-		limit = 3 * time.Second
-	}
+	limit := perfBudget(time.Second)
 	for _, c := range []struct {
 		name     string
 		from, to Position

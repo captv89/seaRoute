@@ -376,8 +376,8 @@ func TestRouteUnderOneSecond(t *testing.T) {
 	}
 	sort.Slice(ds, func(i, j int) bool { return ds[i] < ds[j] })
 	t.Logf("runs: %v, median %v", ds, ds[2])
-	if ds[2] >= time.Second {
-		t.Errorf("median %v, want under 1 s", ds[2])
+	if limit := perfBudget(time.Second); ds[2] >= limit {
+		t.Errorf("median %v, want under %v", ds[2], limit)
 	}
 }
 
