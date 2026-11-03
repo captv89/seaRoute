@@ -103,7 +103,9 @@ func TestLoadDepthRejectsTruncated(t *testing.T) {
 		t.Fatal(err)
 	}
 	p := filepath.Join(t.TempDir(), "d.bin.gz")
-	os.WriteFile(p, buf.Bytes()[:buf.Len()/2], 0o644)
+	if err := os.WriteFile(p, buf.Bytes()[:buf.Len()/2], 0o644); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := LoadDepth(p); err == nil {
 		t.Error("truncated file should fail")
 	}
@@ -142,7 +144,9 @@ func TestDeepTilesMask(t *testing.T) {
 		t.Fatal(err)
 	}
 	p := filepath.Join(t.TempDir(), "d.bin.gz")
-	os.WriteFile(p, buf.Bytes(), 0o644)
+	if err := os.WriteFile(p, buf.Bytes(), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	l, err := LoadDepth(p)
 	if err != nil {
 		t.Fatal(err)

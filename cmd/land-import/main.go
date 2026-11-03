@@ -95,12 +95,6 @@ func main() {
 		read, inVerts, len(rings), outVerts, *out, st.Size(), float64(st.Size())/1e6)
 }
 
-// cellKey returns the grid cell of a coordinate; longitude wraps at 180.
-func cellKey(lon, lat float64) [2]int32 {
-	cx := int32(math.Floor(lon / cellSize))
-	return [2]int32{wrapCX(cx), int32(math.Floor(lat / cellSize))}
-}
-
 func wrapCX(cx int32) int32 {
 	const n = int32(360 / cellSize)
 	cx = (cx + n/2) % n

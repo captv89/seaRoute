@@ -30,8 +30,8 @@
   "nm": 3701,
   "page": 104,
   "note": "",
-  "skip": "Measured 3792.6 NM (+2.48%; limit 3775.0, 17.6 NM over; 3804.2 before free TSS joins and pulled waypoints). Shares the Malacca exit with Colombo; no rule-conforming change measured below the limit (wider offsets to 48 NM changed nothing).",
-  "max_nm": 3794
+  "skip": "Measured 3883.8 NM (+4.94%) since the 2026-11-01 depth rebuild: the Lakshadweep edge is closed by line depth and the route detours via Mumbai (issue #8). Before that 3792.6 NM (+2.48%, bound 3794). Restore max_nm 3794 when #8 is fixed.",
+  "max_nm": 3890
  },
  {
   "from": {

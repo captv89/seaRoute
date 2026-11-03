@@ -174,6 +174,11 @@ func TestRoutePerformance(t *testing.T) {
 		t.Skip("short")
 	}
 	g := testTSSGraph(t)
+	// Shared CI runners are slower and noisier than a dev machine.
+	limit := time.Second
+	if os.Getenv("CI") != "" {
+		limit = 3 * time.Second
+	}
 	for _, c := range []struct {
 		name     string
 		from, to Position
@@ -188,8 +193,8 @@ func TestRoutePerformance(t *testing.T) {
 		r := routeOn(t, g, Options{}, c.from, c.to)
 		took := time.Since(start)
 		t.Logf("%s: %v, %d vertices, %d stretches, %d hazards", c.name, took, len(r.Path), len(r.Stretches), len(r.Hazards))
-		if took > time.Second {
-			t.Errorf("%s took %v", c.name, took)
+		if took > limit {
+			t.Errorf("%s took %v, limit %v", c.name, took, limit)
 		}
 	}
 }

@@ -63,7 +63,7 @@ func readEsriASCII(r io.Reader, fn func(h esriHeader, row int, vals []uint8, nod
 			continue
 		}
 		key := string(bytes.ToLower(f[0]))
-		if len(f) != 2 || !(key[0] >= 'a' && key[0] <= 'z') {
+		if len(f) != 2 || key[0] < 'a' || key[0] > 'z' {
 			pending = append([]byte(nil), line...)
 			break
 		}

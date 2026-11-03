@@ -313,7 +313,7 @@ func TestNoticeThreshold(t *testing.T) {
 	s, tt := Position{0, 0}, Position{1, 0}
 	// A detour over a mid point h degrees north adds 2*hypot(30, 60h) - 60 NM.
 	detour := func(extraNM float64, directPass, detourPass string) []divergence {
-		h := math.Sqrt(math.Pow((60+extraNM)/2, 2)-900) / 60
+		h := math.Sqrt((60+extraNM)/2*((60+extraNM)/2)-900) / 60
 		d := Position{0.5, h}
 		g := New([]Segment{
 			{A: s, B: tt, Pass: directPass},

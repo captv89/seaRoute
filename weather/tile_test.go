@@ -105,9 +105,9 @@ func TestTileCacheEvicts(t *testing.T) {
 	r := tileRun(t)
 	probe, _ := NewTiles(1<<20, 1).Get(context.Background(), r, "wind", 3, 1, 0, 0)
 	ts := NewTiles(int64(len(probe))*3/2, 1) // room for one tile, not two
-	ts.Get(context.Background(), r, "wind", 3, 1, 0, 0)
-	ts.Get(context.Background(), r, "wind", 3, 1, 1, 0)
-	ts.Get(context.Background(), r, "wind", 3, 1, 0, 0)
+	_, _ = ts.Get(context.Background(), r, "wind", 3, 1, 0, 0)
+	_, _ = ts.Get(context.Background(), r, "wind", 3, 1, 1, 0)
+	_, _ = ts.Get(context.Background(), r, "wind", 3, 1, 0, 0)
 	if n := ts.renders.Load(); n != 3 {
 		t.Errorf("renders = %d, want 3 (first tile evicted)", n)
 	}

@@ -110,7 +110,7 @@ func TestTilerDeepAndNoData(t *testing.T) {
 	if len(tiles) != 1 || tiles[0].CX != 1 || !tiles[0].Deep || tiles[0].M != nil {
 		t.Fatalf("want only the deep tile 1, got %+v", tiles)
 	}
-	var _ route.DepthTile = tiles[0]
+	_ = route.DepthTile(tiles[0]) // the importer writes the route package type
 }
 
 func TestTilerMask(t *testing.T) {

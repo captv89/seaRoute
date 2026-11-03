@@ -200,7 +200,7 @@ func TestRouteReturnsHazards(t *testing.T) {
 	}
 	var d distanceOut
 	call(t, cs, "distance_to_go", withArgs(nil), &d)
-	if d.Hazards == nil || len(d.Hazards) == 0 {
+	if len(d.Hazards) == 0 {
 		t.Errorf("distance_to_go hazards = %#v", d.Hazards)
 	}
 }

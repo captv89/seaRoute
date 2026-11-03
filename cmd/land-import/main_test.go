@@ -29,22 +29,22 @@ func writeShp(t *testing.T, path string, polys [][][][2]float64) {
 		for _, r := range rings {
 			np += len(r)
 		}
-		binary.Write(&rec, binary.LittleEndian, int32(5))
-		binary.Write(&rec, binary.LittleEndian, [4]float64{0, 0, 0, 0})
-		binary.Write(&rec, binary.LittleEndian, int32(len(rings)))
-		binary.Write(&rec, binary.LittleEndian, int32(np))
+		_ = binary.Write(&rec, binary.LittleEndian, int32(5))
+		_ = binary.Write(&rec, binary.LittleEndian, [4]float64{0, 0, 0, 0})
+		_ = binary.Write(&rec, binary.LittleEndian, int32(len(rings)))
+		_ = binary.Write(&rec, binary.LittleEndian, int32(np))
 		off := int32(0)
 		for _, r := range rings {
-			binary.Write(&rec, binary.LittleEndian, off)
+			_ = binary.Write(&rec, binary.LittleEndian, off)
 			off += int32(len(r))
 		}
 		for _, r := range rings {
 			for _, p := range r {
-				binary.Write(&rec, binary.LittleEndian, p)
+				_ = binary.Write(&rec, binary.LittleEndian, p)
 			}
 		}
-		binary.Write(&body, binary.BigEndian, int32(i+1))
-		binary.Write(&body, binary.BigEndian, int32(rec.Len()/2))
+		_ = binary.Write(&body, binary.BigEndian, int32(i+1))
+		_ = binary.Write(&body, binary.BigEndian, int32(rec.Len()/2))
 		body.Write(rec.Bytes())
 	}
 	hdr := make([]byte, 100)
@@ -78,7 +78,9 @@ func TestReadShpRejectsOtherTypes(t *testing.T) {
 	hdr := make([]byte, 100)
 	binary.BigEndian.PutUint32(hdr[0:], 9994)
 	binary.LittleEndian.PutUint32(hdr[32:], 3)
-	os.WriteFile(p, hdr, 0o644)
+	if err := os.WriteFile(p, hdr, 0o644); err != nil {
+		t.Fatal(err)
+	}
 	if err := readShp(p, func([][2]float64) {}); err == nil {
 		t.Fatal("expected error for polyline shapefile")
 	}
@@ -163,7 +165,9 @@ func writeNetwork(t *testing.T, coords [][2]float64) string {
 		map[string]any{"type": "Feature", "properties": map[string]any{}, "geometry": map[string]any{"type": "LineString", "coordinates": coords}},
 	}})
 	p := filepath.Join(t.TempDir(), "net.geojson")
-	os.WriteFile(p, b, 0o644)
+	if err := os.WriteFile(p, b, 0o644); err != nil {
+		t.Fatal(err)
+	}
 	return p
 }
 

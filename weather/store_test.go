@@ -167,7 +167,7 @@ func TestRefreshSkipsWhenUpToDate(t *testing.T) {
 		if strings.HasSuffix(r.URL.Path, ".grib2") {
 			data.Add(1)
 		}
-		w.Write([]byte("{}\n"))
+		_, _ = w.Write([]byte("{}\n"))
 	}))
 	defer srv.Close()
 	f := testFetcher(srv.URL, []int{24})

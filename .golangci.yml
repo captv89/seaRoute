@@ -14,8 +14,14 @@ linters:
   settings:
     errcheck:
       exclude-functions:
+        # bufio errors are sticky and checked once at Flush.
+        - (*bufio.Writer).Write
         - (*bufio.Writer).WriteByte
+        - (*bufio.Writer).WriteString
         - fmt.Fprint
         - fmt.Fprintf
         - io.Copy
-
+  exclusions:
+    # Unchecked Close, Remove and print calls: best-effort cleanup.
+    presets:
+      - std-error-handling

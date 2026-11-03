@@ -94,7 +94,7 @@ func legCtxFor(g *Graph, base *pathCtx, l Leg, coarse []Position) *pathCtx {
 	}
 	need := c.clearM + g.land.Tolerance
 	for k := range l.Path {
-		if (taut(k-1) || taut(k)) && !(taut(k-1) && taut(k)) {
+		if taut(k-1) != taut(k) {
 			c.joins[l.Path[k]] = g.land.PointDistance(l.Path[k], need)
 		}
 	}

@@ -35,7 +35,7 @@ func fixtureServer(t *testing.T, dataStatus int, operParam string) *httptest.Ser
 				fmt.Fprintf(w, `{"param": %q, "_offset": 0, "_length": %d}`+"\n", operParam, len(data))
 			}
 		case strings.HasSuffix(r.URL.Path, "-wave-fc.index"):
-			w.Write(index)
+			_, _ = w.Write(index)
 		case strings.HasSuffix(r.URL.Path, ".grib2"):
 			if dataStatus != 0 {
 				http.Error(w, "boom", dataStatus)
@@ -48,7 +48,7 @@ func fixtureServer(t *testing.T, dataStatus int, operParam string) *httptest.Ser
 			}
 			w.Header().Set("Content-Length", strconv.Itoa(b-a+1))
 			w.WriteHeader(http.StatusPartialContent)
-			w.Write(data[a : b+1])
+			_, _ = w.Write(data[a : b+1])
 		default:
 			http.NotFound(w, r)
 		}
@@ -187,7 +187,7 @@ func TestLatestPicksNewestReady(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if strings.HasPrefix(r.URL.Path, "/20261102/00z/") && strings.HasSuffix(r.URL.Path, "-24h-oper-fc.index") ||
 			strings.HasPrefix(r.URL.Path, "/20261102/00z/") && strings.HasSuffix(r.URL.Path, "-24h-wave-fc.index") {
-			w.Write([]byte("{}\n"))
+			_, _ = w.Write([]byte("{}\n"))
 			return
 		}
 		http.NotFound(w, r)
