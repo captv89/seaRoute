@@ -1,12 +1,11 @@
 # syntax=docker/dockerfile:1
 
 # --- Build Stage ---
-FROM golang:1.26.9-alpine3.24 AS builder
+# Build on the host platform and cross-compile: the binary is pure Go (no CGO).
+FROM --platform=$BUILDPLATFORM golang:1.26.9-alpine3.24 AS builder
+ARG TARGETOS TARGETARCH
 
 WORKDIR /app
-
-# Install build dependencies for CGO (SQLite)
-RUN apk add --no-cache gcc musl-dev
 
 # Copy dependency files first for better layer caching
 COPY go.mod go.sum ./
@@ -16,13 +15,13 @@ RUN go mod download
 COPY . .
 
 # Build the binary with optimizations
-RUN CGO_ENABLED=1 CGO_CFLAGS="-D_LARGEFILE64_SOURCE" go build -ldflags='-s -w' -o /searoute
+RUN CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH go build -ldflags='-s -w' -o /searoute
 
 # --- Runtime Stage ---
 FROM alpine:3.24
 
-# Install runtime dependencies for SQLite
-RUN apk add --no-cache ca-certificates libc6-compat wget
+# Runtime dependencies: CA certificates, wget for the health check
+RUN apk add --no-cache ca-certificates wget
 
 # Create non-root user
 RUN addgroup -S appgroup && adduser -S appuser -G appgroup
@@ -36,8 +35,9 @@ COPY --from=builder /searoute /app/searoute
 COPY dataset /app/dataset
 COPY web /app/web
 
-# Create temp directory with proper permissions
-RUN mkdir -p /app/temp && chown -R appuser:appgroup /app
+# Create temp and weather directories with proper permissions (a named volume
+# mounted on /app/weather takes this owner)
+RUN mkdir -p /app/temp /app/weather && chown -R appuser:appgroup /app
 
 # Switch to non-root user
 USER appuser

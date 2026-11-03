@@ -22,7 +22,7 @@
                     <span class="font-mono text-[9px] text-secondary font-bold mt-0.5" id="collapsed-pts-val">--</span>
                     <span class="font-mono text-[8px] text-on-surface-variant uppercase">PTS</span>
                 </div>
-                <div class="flex flex-col items-center p-1 rounded-sm hover:bg-surface-container cursor-pointer" id="btn-quick-sim-trigger" title="Passage Playback / Simulation">
+                <div class="flex flex-col items-center p-1 rounded-sm hover:bg-surface-container cursor-pointer opacity-40" id="btn-quick-sim-trigger" role="button" aria-disabled="true" title="Passage Playback / Simulation (compute a route first)">
                     <span class="material-symbols-outlined text-tertiary text-[17px]">play_circle</span>
                     <span class="font-mono text-[8px] text-tertiary uppercase">SIM</span>
                 </div>
@@ -321,24 +321,44 @@
                     <span class="material-symbols-outlined text-[12px]">info</span>
                     <span>Some coastal stretches have no TSS data; check the chart.</span>
                 </p>
-                <!-- Transit Speed slider & Duration -->
-                <div class="bg-surface-container-low p-2 rounded-sm border border-surface-container-high flex flex-col gap-1.5">
-                    <div class="flex items-center justify-between">
-                        <span class="font-mono text-[10px] text-on-surface-variant uppercase">Transit Speed: <span class="text-on-surface font-semibold font-mono" id="speed-label">18.0 kts</span></span>
-                        <span class="font-mono text-[11px] text-secondary font-semibold" id="stat-time">--</span>
+                <!-- Transit speed, departure and arrival -->
+                <div class="bg-surface-container-low p-2.5 rounded-sm border border-surface-container-high flex flex-col gap-2.5">
+                    <div class="flex flex-col gap-1.5">
+                        <div class="flex items-center justify-between">
+                            <span class="font-mono text-[10px] text-on-surface-variant uppercase">Transit Speed: <span class="text-on-surface font-semibold font-mono" id="speed-label">18.0 kts</span></span>
+                            <span class="font-mono text-[11px] text-secondary font-semibold tabular-nums" id="stat-time">--</span>
+                        </div>
+                        <input aria-label="Transit speed in knots" class="w-full accent-primary h-1 bg-surface-container-highest rounded cursor-pointer" id="speed-slider" max="30" min="6" step="0.5" type="range" value="18"/>
+                        <div class="flex justify-between text-[8px] font-mono text-outline">
+                            <span>6 kts (Eco)</span>
+                            <span>18 kts (Cruising)</span>
+                            <span>30 kts (Fast)</span>
+                        </div>
                     </div>
-                    <input aria-label="Transit speed in knots" class="w-full accent-primary h-1 bg-surface-container-highest rounded cursor-pointer" id="speed-slider" max="30" min="6" step="0.5" type="range" value="18"/>
-                    <div class="flex justify-between text-[8px] font-mono text-outline">
-                        <span>6 kts (Eco)</span>
-                        <span>18 kts (Cruising)</span>
-                        <span>30 kts (Fast)</span>
+                    <div class="flex flex-col gap-1.5 border-t border-surface-container-high pt-2.5">
+                        <label class="font-mono text-[10px] text-on-surface-variant uppercase" for="departure-input">Departure (UTC)</label>
+                        <div class="flex items-stretch gap-1.5">
+                            <input class="departure-input flex-1 min-w-0 bg-surface-container-lowest border border-surface-container-high hover:border-surface-variant focus:border-primary rounded-sm px-2 py-1.5 font-mono text-[11px] text-on-surface tabular-nums transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-primary" id="departure-input" type="datetime-local" step="60"/>
+                            <button class="shrink-0 px-3 rounded-sm bg-surface-container hover:bg-surface-bright border border-surface-container-high hover:border-surface-variant text-primary font-mono text-[10px] font-semibold uppercase flex items-center gap-1 transition-colors active:scale-95 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary cursor-pointer" id="btn-departure-now" title="Set departure to the current UTC time" type="button">
+                                <span class="material-symbols-outlined text-[14px]" aria-hidden="true">schedule</span>
+                                <span>Now</span>
+                            </button>
+                        </div>
+                        <p class="flex items-center gap-1.5 font-mono text-[10px] text-on-surface-variant">
+                            <span class="material-symbols-outlined text-[14px] text-secondary" aria-hidden="true">flag</span>
+                            <span>Arrives</span>
+                            <span class="text-on-surface font-semibold tabular-nums" id="stat-eta">--</span>
+                        </p>
                     </div>
                 </div>
                 <!-- ROUTE PLAYBACK & SIMULATION ACTION BUTTON -->
-                <button class="w-full py-2 px-3 rounded-sm bg-tertiary/15 hover:bg-tertiary/25 text-tertiary border border-tertiary/30 font-mono text-[11px] font-semibold flex items-center justify-center gap-2 transition-all shadow-sm cursor-pointer" id="btn-start-simulation" type="button">
-                    <span class="material-symbols-outlined text-[16px]">play_circle</span>
-                    <span>Simulate Passage &amp; Play Route</span>
-                </button>
+                <div class="flex flex-col gap-1">
+                    <button class="w-full py-2 px-3 rounded-sm bg-tertiary/15 hover:bg-tertiary/25 text-tertiary border border-tertiary/30 font-mono text-[11px] font-semibold flex items-center justify-center gap-2 transition-all shadow-sm cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-tertiary disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-tertiary/15" disabled id="btn-start-simulation" aria-describedby="sim-hint" type="button">
+                        <span class="material-symbols-outlined text-[16px]" aria-hidden="true">play_circle</span>
+                        <span>Simulate Passage &amp; Play Route</span>
+                    </button>
+                    <p class="font-mono text-[9px] text-on-surface-variant text-center" id="sim-hint">Compute a route to enable playback.</p>
+                </div>
             </div>
 
 
@@ -591,58 +611,140 @@
         </div>
 
         <!-- DEDICATED ROUTE SIMULATION CONTROLLER DOCK (HUD Player Bar) -->
-        <div class="absolute bottom-5 inset-x-4 md:inset-x-auto md:left-1/2 md:-translate-x-1/2 z-30 hidden transition-all duration-300" id="simulation-player-dock">
-            <div class="bg-surface-container-lowest/95 backdrop-blur-lg border border-primary/40 rounded-sm shadow-2xl p-3 flex flex-col gap-2.5 w-full md:w-[680px]">
+        <div class="absolute bottom-5 inset-x-3 md:inset-x-auto md:left-1/2 md:-translate-x-1/2 z-30 hidden transition-all duration-300" id="simulation-player-dock" role="region" aria-label="Voyage playback">
+            <div class="bg-surface-container-lowest/95 backdrop-blur-lg border border-primary/40 rounded-sm shadow-2xl p-3 flex flex-col gap-2.5 w-full md:w-[680px] max-h-[60vh] overflow-y-auto custom-scroll">
                 <!-- Top bar of simulation dock -->
-                <div class="flex items-center justify-between border-b border-surface-container-high pb-2">
-                    <div class="flex items-center gap-2">
-                        <span class="flex h-2.5 w-2.5 relative">
+                <div class="flex items-start justify-between gap-2 border-b border-surface-container-high pb-2">
+                    <div class="flex items-start gap-2 min-w-0">
+                        <span class="flex h-2.5 w-2.5 relative mt-1 shrink-0">
                             <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-tertiary opacity-75"></span>
                             <span class="relative inline-flex rounded-full h-2.5 w-2.5 bg-tertiary"></span>
                         </span>
-                        <span class="font-mono text-[11px] font-bold text-on-surface tracking-wider uppercase flex items-center gap-1.5">
-                            <span>Transit Simulation</span>
-                            <span class="text-tertiary font-normal" id="sim-leg-name">• Inactive</span>
+                        <span class="font-mono text-[11px] font-bold text-on-surface tracking-wider uppercase min-w-0">
+                            <span>Voyage Playback</span>
+                            <span class="block sm:inline text-tertiary font-normal normal-case tracking-normal truncate sm:ml-1" id="sim-leg-name">• Inactive</span>
                         </span>
                     </div>
-                    <div class="flex items-center gap-2">
-                        <span class="font-mono text-[10px] text-on-surface-variant" id="sim-vessel-telemetry">ETA: -- • 18.0 kts</span>
-                        <button class="px-2 py-0.5 rounded-sm bg-error/20 hover:bg-error/30 text-error border border-error/40 font-mono text-[10px] flex items-center gap-1 transition-colors cursor-pointer" id="btn-stop-sim" title="Stop Route Simulation" type="button">
-                            <span class="material-symbols-outlined text-[13px]">stop</span>
-                            <span>Stop Simulation</span>
+                    <div class="flex items-center gap-2 shrink-0">
+                        <span class="hidden sm:inline font-mono text-[10px] text-on-surface-variant" id="sim-vessel-telemetry">ETA: -- • 18.0 kts</span>
+                        <button class="px-2 py-1 rounded-sm bg-error/20 hover:bg-error/30 text-error border border-error/40 font-mono text-[10px] flex items-center gap-1 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-error cursor-pointer" id="btn-stop-sim" title="Stop voyage playback" type="button">
+                            <span class="material-symbols-outlined text-[13px]" aria-hidden="true">stop</span>
+                            <span>Stop</span>
                         </button>
                     </div>
                 </div>
-                <!-- Scrubber track & Progress -->
+                <!-- Ship clock and distance readout -->
+                <div class="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1 font-mono">
+                    <div class="flex items-baseline gap-2">
+                        <span class="text-[15px] font-bold text-on-surface tabular-nums" id="sim-ship-time" aria-live="off">-- --- --:-- UTC</span>
+                        <span class="text-[10px] text-secondary font-semibold tabular-nums" id="sim-elapsed">Day 0.0</span>
+                    </div>
+                    <div class="text-[10px] tabular-nums">
+                        <span class="text-primary font-semibold" id="sim-progress-dist">0 NM run</span>
+                        <span class="text-on-surface-variant"> · </span>
+                        <span class="text-on-surface-variant" id="sim-progress-pct">-- NM to go</span>
+                    </div>
+                </div>
+                <!-- Scrubber track with forecast band -->
                 <div class="flex flex-col gap-1">
-                    <div class="flex items-center justify-between font-mono text-[10px]">
-                        <span class="text-primary font-semibold" id="sim-progress-dist">0 NM / -- NM</span>
-                        <span class="text-on-surface-variant" id="sim-progress-pct">0% Complete</span>
-                        <span class="text-secondary font-semibold" id="sim-elapsed">Day 0.0</span>
+                    <div class="sim-track" id="sim-track">
+                        <div class="sim-track__band" aria-hidden="true"></div>
+                        <input aria-label="Voyage time" class="sim-scrubber" id="sim-scrubber" max="1000" min="0" step="1" type="range" value="0"/>
                     </div>
-                    <input class="w-full accent-primary h-1.5 bg-surface-container-high rounded-none cursor-pointer" id="sim-scrubber" max="100" min="0" step="0.1" type="range" value="0"/>
+                    <p class="flex items-center gap-1.5 font-mono text-[9px] text-on-surface-variant" id="sim-forecast-row">
+                        <span class="sim-forecast-key" aria-hidden="true"></span>
+                        <span id="sim-forecast-note">Forecast not loaded</span>
+                    </p>
                 </div>
+                <!-- ECMWF map layer selector -->
+                <div class="flex flex-wrap items-center gap-x-1.5 gap-y-1 font-mono" id="sim-ecmwf-row">
+                    <span class="text-[9px] uppercase tracking-widest text-on-surface-variant mr-0.5" id="sim-ecmwf-label">Map layer</span>
+                    <div class="flex items-center gap-1" role="group" aria-labelledby="sim-ecmwf-label" id="sim-ecmwf-pills">
+                        <button class="sim-ecmwf-pill px-2.5 py-1 min-h-[28px] rounded-sm border border-surface-container-high text-[10px] text-on-surface-variant hover:text-on-surface hover:bg-surface-container-high/50 aria-pressed:bg-primary-container aria-pressed:text-on-primary-container aria-pressed:border-primary/50 aria-pressed:font-semibold disabled:opacity-40 disabled:pointer-events-none transition-colors cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary" data-sim-field="wind" aria-pressed="true" type="button">Wind</button>
+                        <button class="sim-ecmwf-pill px-2.5 py-1 min-h-[28px] rounded-sm border border-surface-container-high text-[10px] text-on-surface-variant hover:text-on-surface hover:bg-surface-container-high/50 aria-pressed:bg-primary-container aria-pressed:text-on-primary-container aria-pressed:border-primary/50 aria-pressed:font-semibold disabled:opacity-40 disabled:pointer-events-none transition-colors cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary" data-sim-field="waves" aria-pressed="false" type="button">Waves</button>
+                        <button class="sim-ecmwf-pill px-2.5 py-1 min-h-[28px] rounded-sm border border-surface-container-high text-[10px] text-on-surface-variant hover:text-on-surface hover:bg-surface-container-high/50 aria-pressed:bg-primary-container aria-pressed:text-on-primary-container aria-pressed:border-primary/50 aria-pressed:font-semibold disabled:opacity-40 disabled:pointer-events-none transition-colors cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary" data-sim-field="current" aria-pressed="false" type="button">Current</button>
+                    </div>
+                    <span class="text-[9px] text-on-surface-variant tabular-nums" id="sim-ecmwf-note" role="status"></span>
+                </div>
+                <!-- Weather at the vessel and current leg summary -->
+                <details class="group border-t border-surface-container-high pt-2" id="sim-weather" open>
+                    <summary class="flex items-center justify-between gap-2 cursor-pointer select-none list-none font-mono text-[10px] uppercase tracking-widest text-on-surface-variant hover:text-on-surface focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary rounded-sm [&::-webkit-details-marker]:hidden">
+                        <span class="flex items-center gap-1.5">
+                            <span class="material-symbols-outlined text-[14px] text-secondary" aria-hidden="true">air</span>
+                            <span>Weather at vessel</span>
+                        </span>
+                        <span class="material-symbols-outlined text-[16px] transition-transform duration-200 group-open:rotate-180" aria-hidden="true">expand_more</span>
+                    </summary>
+                    <div class="flex flex-col gap-2 pt-2">
+                        <p class="hidden m-0 font-mono text-[11px] text-on-surface-variant bg-surface-container-low border border-dashed border-surface-container-high rounded-sm px-2 py-2" id="sim-wx-msg" role="status"></p>
+                        <dl class="m-0 grid grid-cols-2 sm:grid-cols-4 gap-1.5" id="sim-wx-grid">
+                            <div class="bg-surface-container-low border border-surface-container-high rounded-sm px-2 py-1.5 min-w-0">
+                                <dt class="font-mono text-[9px] uppercase tracking-widest text-on-surface-variant">Wind</dt>
+                                <dd class="m-0 mt-0.5 flex items-center gap-1.5 min-w-0">
+                                    <span class="material-symbols-outlined sim-wx-arrow text-[18px] text-primary shrink-0 opacity-30" id="sim-wx-wind-arrow" aria-hidden="true">navigation</span>
+                                    <span class="font-mono text-[13px] font-bold text-on-surface tabular-nums truncate" id="sim-wx-wind">&mdash;</span>
+                                </dd>
+                                <dd class="m-0 font-mono text-[10px] text-on-surface-variant tabular-nums truncate" id="sim-wx-wind-sub">from &mdash; &middot; gust &mdash;</dd>
+                            </div>
+                            <div class="bg-surface-container-low border border-surface-container-high rounded-sm px-2 py-1.5 min-w-0">
+                                <dt class="font-mono text-[9px] uppercase tracking-widest text-on-surface-variant">Current</dt>
+                                <dd class="m-0 mt-0.5 flex items-center gap-1.5 min-w-0">
+                                    <span class="material-symbols-outlined sim-wx-arrow text-[18px] text-primary shrink-0 opacity-30" id="sim-wx-current-arrow" aria-hidden="true">navigation</span>
+                                    <span class="font-mono text-[13px] font-bold text-on-surface tabular-nums truncate" id="sim-wx-current">&mdash;</span>
+                                </dd>
+                                <dd class="m-0 font-mono text-[10px] text-on-surface-variant tabular-nums truncate" id="sim-wx-current-sub">to &mdash;</dd>
+                            </div>
+                            <div class="bg-surface-container-low border border-surface-container-high rounded-sm px-2 py-1.5 min-w-0">
+                                <dt class="font-mono text-[9px] uppercase tracking-widest text-on-surface-variant">Waves</dt>
+                                <dd class="m-0 mt-0.5 flex items-center gap-1.5 min-w-0">
+                                    <span class="material-symbols-outlined sim-wx-arrow text-[18px] text-primary shrink-0 opacity-30" id="sim-wx-wave-arrow" aria-hidden="true">navigation</span>
+                                    <span class="font-mono text-[13px] font-bold text-on-surface tabular-nums truncate" id="sim-wx-wave">&mdash;</span>
+                                </dd>
+                                <dd class="m-0 font-mono text-[10px] text-on-surface-variant tabular-nums truncate" id="sim-wx-wave-sub">from &mdash; &middot; &mdash; period</dd>
+                            </div>
+                            <div class="bg-surface-container-low border border-surface-container-high rounded-sm px-2 py-1.5 min-w-0">
+                                <dt class="font-mono text-[9px] uppercase tracking-widest text-on-surface-variant">Pressure</dt>
+                                <dd class="m-0 mt-0.5 flex items-center gap-1.5 min-w-0">
+                                    <span class="font-mono text-[13px] font-bold text-on-surface tabular-nums truncate" id="sim-wx-pressure">&mdash;</span>
+                                </dd>
+                            </div>
+                        </dl>
+                        <div class="font-mono text-[10px] text-on-surface-variant border-l-2 border-primary/50 pl-2 flex flex-col gap-0.5" id="sim-leg-summary">
+                            <div class="flex flex-wrap items-baseline gap-x-2">
+                                <span class="text-on-surface font-semibold" id="sim-leg-title">Leg &mdash;</span>
+                                <span class="tabular-nums" id="sim-leg-span"></span>
+                            </div>
+                            <div class="tabular-nums" id="sim-leg-max"></div>
+                            <div class="text-tertiary hidden" id="sim-leg-cover"></div>
+                        </div>
+                        <p class="m-0 font-mono text-[9px] text-on-surface-variant/80 tabular-nums" id="sim-wx-source"></p>
+                    </div>
+                </details>
                 <!-- Player controls row -->
-                <div class="flex items-center justify-between pt-1">
+                <div class="flex flex-wrap items-center justify-between gap-y-2 pt-1">
                     <div class="flex items-center gap-1.5">
-                        <button class="w-8 h-8 rounded-sm bg-primary hover:brightness-110 text-on-primary flex items-center justify-center transition-all shadow cursor-pointer" id="btn-play-pause-sim" title="Play / Pause simulation" type="button">
-                            <span class="material-symbols-outlined text-[18px]" id="sim-play-icon">play_arrow</span>
+                        <button class="w-9 h-9 rounded-sm bg-primary hover:brightness-110 text-on-primary flex items-center justify-center transition-all shadow active:scale-95 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-1 cursor-pointer" id="btn-play-pause-sim" title="Play / Pause" aria-label="Play or pause" type="button">
+                            <span class="material-symbols-outlined text-[20px]" id="sim-play-icon" aria-hidden="true">play_arrow</span>
                         </button>
-                        <button class="w-7 h-7 rounded-sm bg-surface-container hover:bg-surface-bright text-on-surface flex items-center justify-center transition-colors cursor-pointer" id="btn-restart-sim" title="Restart from Origin" type="button">
-                            <span class="material-symbols-outlined text-[15px]">replay</span>
+                        <button class="w-9 h-9 rounded-sm bg-surface-container hover:bg-surface-bright text-on-surface flex items-center justify-center transition-colors active:scale-95 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary cursor-pointer" id="btn-restart-sim" title="Restart from departure" aria-label="Restart from departure" type="button">
+                            <span class="material-symbols-outlined text-[16px]" aria-hidden="true">replay</span>
                         </button>
                         <div class="h-4 w-px bg-surface-container-high mx-1"></div>
-                        <!-- Speed multipliers -->
-                        <div class="flex items-center bg-surface-container-low rounded-sm border border-surface-container-high p-0.5 text-[10px] font-mono">
-                            <button class="sim-speed-btn active px-2 py-0.5 rounded-sm bg-primary-container text-on-primary-container font-semibold cursor-pointer" data-speed="1" type="button">1x</button>
-                            <button class="sim-speed-btn px-2 py-0.5 rounded-sm text-on-surface-variant hover:text-on-surface cursor-pointer" data-speed="5" type="button">5x</button>
-                            <button class="sim-speed-btn px-2 py-0.5 rounded-sm text-on-surface-variant hover:text-on-surface cursor-pointer" data-speed="20" type="button">20x</button>
+                        <!-- Playback rate: hours of voyage per real second -->
+                        <div class="flex items-center bg-surface-container-low rounded-sm border border-surface-container-high p-0.5 text-[10px] font-mono" role="group" aria-label="Playback rate">
+                            <button class="sim-speed-btn active px-2 py-1 rounded-sm bg-primary-container text-on-primary-container font-semibold cursor-pointer" data-speed="1" title="1 hour of voyage per second" type="button">1 h/s</button>
+                            <button class="sim-speed-btn px-2 py-1 rounded-sm text-on-surface-variant hover:text-on-surface cursor-pointer" data-speed="6" title="6 hours of voyage per second" type="button">6 h/s</button>
+                            <button class="sim-speed-btn px-2 py-1 rounded-sm text-on-surface-variant hover:text-on-surface cursor-pointer" data-speed="24" title="24 hours of voyage per second" type="button">24 h/s</button>
                         </div>
                     </div>
+                    <button class="px-2.5 py-1 min-h-[28px] rounded-sm border border-surface-container-high text-[10px] font-mono text-on-surface-variant hover:text-on-surface hover:bg-surface-container-high/50 disabled:opacity-40 disabled:pointer-events-none flex items-center gap-1.5 transition-colors cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary" id="btn-export-weather" title="Available once voyage weather has loaded" aria-disabled="true" disabled type="button">
+                        <span class="material-symbols-outlined text-[14px]" aria-hidden="true">download</span>
+                        <span>Export weather (CSV)</span>
+                    </button>
                     <!-- Live simulated position coords -->
                     <div class="flex items-center gap-2 font-mono text-[10px] text-on-surface-variant bg-surface-container-low px-2 py-1 rounded-sm border border-surface-container-high">
-                        <span class="material-symbols-outlined text-[13px] text-secondary">sailing</span>
-                        <span id="sim-current-pos">Position: --</span>
+                        <span class="material-symbols-outlined text-[13px] text-secondary" aria-hidden="true">sailing</span>
+                        <span class="tabular-nums" id="sim-current-pos">Position: --</span>
                     </div>
                 </div>
             </div>

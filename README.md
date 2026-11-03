@@ -100,8 +100,7 @@ docker run -d \
 ## Building from Source
 
 ### Prerequisites
-* [Go 1.22+](https://go.dev/)
-* GCC / CGO build toolchain (for SQLite embedded driver)
+* [Go 1.26+](https://go.dev/) (no C toolchain needed: the SQLite driver is pure Go)
 
 ### Installation
 
@@ -130,10 +129,22 @@ Open `http://localhost:8080` in your web browser.
 | `OWM_API_KEY` | OpenWeatherMap API key for live radar and weather matrix | _Optional_ |
 | `CARTO_API_KEY` | CARTO vector basemap key (uses OpenStreetMap if omitted) | _Optional_ |
 | `GA_TRACKING_ID`| Google Analytics tracking identifier | _Optional_ |
+| `WEATHER_DIR` | Directory for the downloaded ECMWF forecast run. Unset turns weather off. The compose files set `/app/weather` on a named volume | _Optional_ |
+| `WEATHER_BASE_URL` | Source of the ECMWF open data | `https://data.ecmwf.int/forecasts` |
 | `CSP_MODE` | `report-only` sends the Content-Security-Policy as `Content-Security-Policy-Report-Only` (fallback if the enforced policy blocks something) | enforced |
 | `TRUSTED_PROXIES` | Comma-separated proxy CIDRs allowed to set `X-Forwarded-For` (used for per-client rate limiting); `none` to ignore the header | loopback + private ranges |
 
-`/waypoints`, `/ports` and `/mcp` are rate limited to 60 requests per minute per client IP. Pages, static files and map layers are not.
+`/waypoints`, `/ports`, `/voyage/weather` and `/mcp` are rate limited to 60 requests per minute per client IP. Pages, static files and map layers are not.
+
+### Weather forecast (voyage simulation)
+
+With `WEATHER_DIR` set, the server downloads the latest ECMWF IFS open data run (wind, gusts, pressure, ocean current and waves, 0.25 degrees, out to 15 days) at start and checks for a newer run every hour. The first start fetches about 470 MB; the current run file, the previous one and the `.tmp` download of the next run are about 1.6 GB each, so peak disk use is about 5 GB. Keep `WEATHER_DIR` on a volume (the compose files use the named volume `searoute-weather`). Without `WEATHER_DIR`, or when the store cannot be opened, weather is off and everything else works as before.
+
+* `POST /voyage/weather` sails a track at a constant speed (6 to 30 kn) and returns hourly samples with the forecast along it and a summary per leg. Rate limited; body up to 2 MiB.
+* `GET /weather/tile/:run/:field/:step/:z/:x/:y.png` serves PNG map tiles (`wind`, `waves`, `current`). Only the current run id is served; tiles are cacheable for a day.
+* `GET /passages` includes `weather` with the loaded run and the last refresh outcome (`{"enabled": false}` when off).
+
+Forecast data: ECMWF IFS open data, CC BY 4.0
 
 ### Rebuilding the CSS
 
@@ -155,6 +166,8 @@ cd web/tailwind && npm ci && npm run build
 | `/passages` | `GET` | List available choke-point passages, routing graph stats and `datasets` (name, source, use, loaded) |
 | `/network` | `GET` | Stream raw Marnet navigation graph GeoJSON (gzip when accepted) |
 | `/layers/:name` | `GET` | Serve gzip-compressed tactical GIS overlays (`baseline`, `eez`, `piracy`, `seaports`, `eca-sox`, `eca-nox`, `boundaries`, `fao`, `tss`) |
+| `/voyage/weather` | `POST` | Forecast along a track at a given departure and speed (needs `WEATHER_DIR` for weather values) |
+| `/weather/tile/:run/:field/:step/:z/:x/:y.png` | `GET` | Forecast map tile (`wind`, `waves`, `current`) |
 | `/emissions` | `GET` | Stream IMO Emission Control Area (ECA) GeoJSON |
 | `/mcp` | `GET/POST` | Model Context Protocol endpoint for AI agent integration |
 

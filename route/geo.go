@@ -70,6 +70,29 @@ func invMercatorLat(y float64) float64 {
 	return (2*math.Atan(math.Exp(y)) - math.Pi/2) * 180 / math.Pi
 }
 
+// RhumbPoint is the point a fraction f of the way along the rhumb line from a
+// to b (f=0 gives a, f=1 gives b). The line is straight in the Mercator plane,
+// and the route crosses the antimeridian the short way. Longitudes come back
+// in [-180, 180].
+func RhumbPoint(a, b Position, f float64) Position {
+	ma := Mercator(a)
+	mb := mercUnwrap(b, ma[0])
+	return fromMerc([2]float64{ma[0] + f*(mb[0]-ma[0]), ma[1] + f*(mb[1]-ma[1])})
+}
+
+// RhumbCourse is the constant bearing in degrees true (0 to 360) of the rhumb
+// line from a to b. North is 0, east is 90.
+func RhumbCourse(a, b Position) float64 {
+	const rad = math.Pi / 180
+	dLon := math.Remainder((b[0]-a[0])*rad, 2*math.Pi)
+	dPsi := math.Log(math.Tan(math.Pi/4+b[1]*rad/2) / math.Tan(math.Pi/4+a[1]*rad/2))
+	deg := math.Atan2(dLon, dPsi) / rad
+	if deg < 0 {
+		deg += 360
+	}
+	return deg
+}
+
 // splitAntimeridian splits the rhumb leg a-b at lon ±180 when its shorter
 // longitude difference crosses the antimeridian. Otherwise it returns the leg
 // whole. Pieces keep the ±180 convention: the piece before the crossing ends at

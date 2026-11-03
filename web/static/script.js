@@ -27,8 +27,20 @@
 
     // Simulation state
     let simActive = false;
+    // ECMWF map layer during playback (section 11). Declared early: the scale dock reads it.
+    let simWxField = 'wind';
+    let simWxShown = null;      // loaded, visible tile layer
+    let simWxPending = null;    // replacement still loading
+    let simWxKey = '';          // run|field|hour of the layer wanted, or 'none:...'
+    let simWxSavedOwm = null;   // OWM state to restore on stop
+    let simWxNoteStale = false; // note shows 'Loading forecast' and needs a refresh
+    let simWxRun = null;        // run id of the layers on the map
+    let simWxLastScales = null; // last legend scales, kept while a refetch is pending
+    let simWxRefetchedRun = ''; // run id whose tile errors already triggered one refetch
+    let simWxTileFailRun = '';  // run id whose tiles still fail after that refetch
     let simPlaying = false;
-    let simProgress = 0; // 0 to 100
+    let simProgress = 0; // 0 to 100, derived from simHours
+    let simHours = 0; // playback position: hours since departure
     let simSpeedMultiplier = 1;
     let simInterval = null;
     let simVesselMarker = null;
@@ -794,6 +806,12 @@
     function updateWeatherScaleDock() {
         const dock = document.getElementById('weather-scale-dock');
         if (!dock) return;
+
+        // During playback the dock shows the ECMWF legend (or nothing outside the forecast).
+        if (simActive) {
+            renderSimWxLegend(dock);
+            return;
+        }
 
         const masterEnabled = Boolean(toggleOwm && toggleOwm.checked && OWM_API_KEY);
         if (!masterEnabled || activeWeatherLayers.size === 0) {
@@ -2202,6 +2220,7 @@
         const sl = document.getElementById('speed-slider');
         if (sl) sl.value = String(readSpeed());
         updateTransitDuration();
+        setVoyage(null); // old samples are timed for the old speed
         rerouteIfShown();
     });
 
@@ -2244,6 +2263,7 @@
      * opts.keepView: do not re-fit the map to the route
      */
     function computeRoute(opts = {}) {
+        cancelVoyageFetch(); // any reroute makes in-flight voyage weather stale
         const fromLat = parseCoordinate(originLatInput ? originLatInput.value : '', true);
         const fromLon = parseCoordinate(originLonInput ? originLonInput.value : '', false);
         const toLat = parseCoordinate(destLatInput ? destLatInput.value : '', true);
@@ -2319,6 +2339,8 @@
         routeRequestSeq++; // drop any response still in flight
         setComputeLoading(false);
         if (simActive) stopSimulation();
+        cancelVoyageFetch();
+        setVoyage(null);
         routeLayerGroup.clearLayers();
         resetReview();
         currentRouteData = null;
@@ -2341,6 +2363,8 @@
         setText('collapsed-pts-val', '--');
         setText('header-dist-badge', '-- NM');
         setText('header-duration-badge', '--');
+        setText('stat-eta', '--');
+        updateTransitDuration();
         setText('depth-readout', 'Depth limit is worked out with the route (squat uses this speed).');
         renderRouteNotices({});
         renderManifestTable([]);
@@ -2549,7 +2573,13 @@
         }
 
         // Transit duration update based on current speed slider
+        if (!opts.keepView) {
+            setVoyage(null); // new route: old samples no longer apply
+            simHours = 0; // playback restarts at departure
+            lastTotalHours = 0; // do not rescale the old position onto the new route
+        }
         updateTransitDuration();
+        fetchVoyageWeather();
 
         // 4. Update Waypoint Manifest Table
         renderManifestTable(waypoints);
@@ -2922,44 +2952,454 @@
     }
 
     // =========================================================================
-    // 10. Transit Speed Slider & Voyage Duration
+    // 10. Transit Speed Slider, Departure & Voyage Clock
     // =========================================================================
     const speedSlider = document.getElementById('speed-slider');
     const speedLabel = document.getElementById('speed-label');
     const statTime = document.getElementById('stat-time');
+    const statEta = document.getElementById('stat-eta');
     const headerDurationBadge = document.getElementById('header-duration-badge');
+    const departureInput = document.getElementById('departure-input');
+    const btnDepartureNow = document.getElementById('btn-departure-now');
 
+    const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+    const pad2 = n => String(n).padStart(2, '0');
+    const NM_PER_KM = 1 / 1.852;
+
+    // "DD Mon HH:MM UTC"
+    function formatUTC(d) {
+        return `${pad2(d.getUTCDate())} ${MONTHS[d.getUTCMonth()]} ${pad2(d.getUTCHours())}:${pad2(d.getUTCMinutes())} UTC`;
+    }
+    // The server sends RFC 3339 with nanoseconds; JS engines only guarantee milliseconds.
+    function parseTime(str) {
+        return Date.parse(String(str).replace(/(\.\d{3})\d+/, '$1'));
+    }
+    function nowUTCInputValue() {
+        return new Date().toISOString().slice(0, 16); // current UTC minute, YYYY-MM-DDTHH:MM
+    }
+    if (departureInput && !departureInput.value) departureInput.value = nowUTCInputValue();
+
+    // Departure as a Date. The datetime-local value has no zone; it is UTC by contract.
+    function departureDate() {
+        const v = departureInput ? departureInput.value : '';
+        const t = v ? Date.parse(v.length === 16 ? `${v}:00Z` : `${v}Z`) : NaN;
+        return new Date(isNaN(t) ? Date.parse(`${nowUTCInputValue()}:00Z`) : t);
+    }
+    function hasRoute() {
+        return currentLatLngs.length > 1 && currentTotalDistNM > 0;
+    }
+    // Voyage length in hours. Same formula as the server: distance / speed.
+    function voyageHours() {
+        return hasRoute() ? currentTotalDistNM / currentSpeedKn() : 0;
+    }
+    // Clock time at a fraction (0..1) of the voyage.
+    function voyageTimeAt(progress) {
+        const f = Math.min(1, Math.max(0, progress));
+        return new Date(departureDate().getTime() + f * voyageHours() * 3600e3);
+    }
+
+    // --- Last /voyage/weather response (null until one arrives) -------------
+    let voyage = null;
+    let voyageLoading = false;
+    let voyageFailed = false;
+    let voyageTimer = null;
+    let voyageReqSeq = 0;
+    const voyageListeners = [];
+
+    // Register fn(voyage) to run whenever the voyage response is replaced or cleared.
+    function onVoyageUpdated(fn) {
+        if (typeof fn === 'function') voyageListeners.push(fn);
+    }
+    function setVoyage(data) {
+        if (data && Array.isArray(data.samples)) {
+            data.samples.forEach(s => { s.t = parseTime(s.time); });
+        }
+        voyage = data || null;
+        updateForecastBand();
+        if (simActive) updateSimulationUI();
+        voyageListeners.forEach(fn => {
+            try { fn(voyage); } catch (e) { console.error('onVoyageUpdated listener failed:', e); }
+        });
+    }
+    function cancelVoyageFetch() {
+        clearTimeout(voyageTimer);
+        voyageReqSeq++;
+        if (voyageLoading) {
+            voyageLoading = false;
+            updateForecastBand();
+        }
+    }
+
+    // Debounced (300 ms) POST of the current track; only the latest response is used.
+    function fetchVoyageWeather() {
+        clearTimeout(voyageTimer);
+        voyageReqSeq++; // anything already in flight is for an older route/speed/departure
+        if (!hasRoute()) {
+            voyageLoading = false;
+            return;
+        }
+        voyageLoading = true;
+        updateForecastBand();
+        voyageTimer = setTimeout(requestVoyageWeather, 300);
+    }
+    function requestVoyageWeather() {
+        if (!hasRoute()) return;
+        const reqId = ++voyageReqSeq;
+        voyageLoading = true;
+        voyageFailed = false;
+        updateForecastBand();
+        const body = {
+            track: currentLatLngs.map(p => [p[1], p[0]]), // Leaflet [lat, lon] -> API [lon, lat]
+            departure: departureDate().toISOString(),
+            speed_kn: currentSpeedKn()
+        };
+        fetch('/voyage/weather', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(body)
+        })
+            .then(res => {
+                if (!res.ok) {
+                    return res.json().catch(() => ({})).then(err => {
+                        throw new Error(err.error || `HTTP ${res.status}`);
+                    });
+                }
+                return res.json();
+            })
+            .then(data => {
+                if (reqId !== voyageReqSeq) return; // superseded
+                voyageLoading = false;
+                setVoyage(data);
+            })
+            .catch(err => {
+                if (reqId !== voyageReqSeq) return;
+                voyageLoading = false;
+                voyageFailed = true;
+                console.error('Voyage weather error:', err);
+                updateForecastBand();
+            });
+    }
+
+    // Bracketing samples at a clock time. Position is interpolated between them;
+    // weather and everything else come from the nearer sample. `leg` and
+    // `course_deg` come from the earlier one: a sample on a waypoint already
+    // carries the next leg, but the span after `prev` still belongs to prev's leg.
+    // Returns null before the first response.
+    function sampleAt(date) {
+        const ss = voyage && voyage.samples;
+        if (!ss || ss.length === 0) return null;
+        const t = date.getTime();
+        let lo = 0;
+        let hi = ss.length - 1;
+        if (t <= ss[0].t) hi = 0;
+        else if (t >= ss[hi].t) lo = hi;
+        else {
+            while (hi - lo > 1) {
+                const mid = (lo + hi) >> 1;
+                if (ss[mid].t <= t) lo = mid; else hi = mid;
+            }
+        }
+        const prev = ss[lo];
+        const next = ss[Math.min(lo + 1, ss.length - 1)];
+        const span = next.t - prev.t;
+        const frac = span > 0 ? Math.min(1, Math.max(0, (t - prev.t) / span)) : 0;
+        const nearer = frac < 0.5 ? prev : next;
+        let dLon = next.lon - prev.lon;
+        if (dLon > 180) dLon -= 360;
+        else if (dLon < -180) dLon += 360;
+        let lon = prev.lon + dLon * frac;
+        // Put the longitude on the same world copy as the drawn (unwrapped) route.
+        const ref = currentLatLngs[Math.min(prev.leg, currentLatLngs.length - 1)];
+        if (ref) lon += 360 * Math.round((ref[1] - lon) / 360);
+        const sample = Object.assign({}, nearer, {
+            time: date.toISOString(),
+            lon,
+            lat: prev.lat + (next.lat - prev.lat) * frac,
+            dist_nm: prev.dist_nm + (next.dist_nm - prev.dist_nm) * frac,
+            leg: prev.leg,
+            course_deg: prev.course_deg
+        });
+        return { sample, prev, next, frac };
+    }
+
+    // Distance-based fallback (constant speed along the drawn route) for use
+    // before the first API response arrives.
+    let alongCache = { src: null, cum: [] };
+    function cumulativeNM() {
+        if (alongCache.src === currentLatLngs) return alongCache.cum;
+        const R = 3440.065;
+        const rad = d => d * Math.PI / 180;
+        const cum = [0];
+        for (let i = 1; i < currentLatLngs.length; i++) {
+            const [la0, lo0] = currentLatLngs[i - 1];
+            const [la1, lo1] = currentLatLngs[i];
+            const a = Math.sin(rad(la1 - la0) / 2) ** 2 +
+                Math.cos(rad(la0)) * Math.cos(rad(la1)) * Math.sin(rad(lo1 - lo0) / 2) ** 2;
+            cum.push(cum[i - 1] + 2 * R * Math.asin(Math.min(1, Math.sqrt(a))));
+        }
+        const last = cum[cum.length - 1];
+        const k = last > 0 ? currentTotalDistNM / last : 1; // scale to the reported distance
+        alongCache = { src: currentLatLngs, cum: cum.map(v => v * k) };
+        return alongCache.cum;
+    }
+    function fallbackStateAt(distNM) {
+        const cum = cumulativeNM();
+        const n = currentLatLngs.length - 1;
+        let seg = 0;
+        while (seg < n - 1 && cum[seg + 1] < distNM) seg++;
+        const span = cum[seg + 1] - cum[seg];
+        const t = span > 0 ? Math.min(1, Math.max(0, (distNM - cum[seg]) / span)) : 0;
+        const p0 = currentLatLngs[seg];
+        const p1 = currentLatLngs[seg + 1];
+        return {
+            lat: p0[0] + (p1[0] - p0[0]) * t,
+            lon: p0[1] + (p1[1] - p0[1]) * t,
+            leg: seg,
+            heading: computeHeading(p0[0], p0[1], p1[0], p1[1]),
+            distNM,
+            weather: null
+        };
+    }
+    // Where the vessel is after `hours` of voyage: API samples when present, else fallback.
+    function vesselStateAt(hours) {
+        const total = voyageHours();
+        const h = Math.min(total, Math.max(0, hours));
+        const date = new Date(departureDate().getTime() + h * 3600e3);
+        const hit = sampleAt(date);
+        if (hit) {
+            const s = hit.sample;
+            return { lat: s.lat, lon: s.lon, leg: s.leg, heading: s.course_deg, distNM: s.dist_nm, weather: s.weather, date };
+        }
+        const st = fallbackStateAt(Math.min(currentTotalDistNM, h * currentSpeedKn()));
+        st.date = date;
+        return st;
+    }
+    // Index of the route leg the vessel is on at the current playback time.
+    function currentLegIndex() {
+        if (!hasRoute()) return 0;
+        const leg = vesselStateAt(simHours).leg;
+        return Math.min(Math.max(0, leg), currentLatLngs.length - 2);
+    }
+
+    // --- Weather window and leg summary ------------------------------------
+    const WX_DASH = '—';
+    const WX_COMPASS = ['N', 'NNE', 'NE', 'ENE', 'E', 'ESE', 'SE', 'SSE', 'S', 'SSW', 'SW', 'WSW', 'W', 'WNW', 'NW', 'NNW'];
+    const wxEls = {};
+    function wxEl(id) {
+        if (!(id in wxEls)) wxEls[id] = document.getElementById(id);
+        return wxEls[id];
+    }
+    function wxText(id, text) {
+        const el = wxEl(id);
+        if (el && el.textContent !== text) el.textContent = text;
+    }
+    function wxNum(v, digits) {
+        return (typeof v === 'number' && isFinite(v)) ? v.toFixed(digits) : null;
+    }
+    // "NE 045°" for a bearing, or null when missing.
+    function wxBearing(deg) {
+        if (typeof deg !== 'number' || !isFinite(deg)) return null;
+        const d = ((deg % 360) + 360) % 360;
+        const pt = WX_COMPASS[Math.round(d / 22.5) % 16];
+        return `${pt} ${String(Math.round(d) % 360).padStart(3, '0')}°`;
+    }
+    // Rotate a `navigation` glyph (points north); dim it when the value is missing.
+    function wxArrow(id, deg) {
+        const el = wxEl(id);
+        if (!el) return;
+        const ok = typeof deg === 'number' && isFinite(deg);
+        el.style.transform = ok ? `rotate(${Math.round(deg)}deg)` : '';
+        el.classList.toggle('opacity-30', !ok);
+    }
+    // Why there is no weather for this sample, or null when it has some.
+    function wxNoWeatherMessage(sample) {
+        if (!voyage) return voyageLoading ? 'Loading forecast…' : 'No forecast loaded';
+        if (!voyage.run) return 'No forecast loaded';
+        const t = sample ? parseTime(sample.time) : NaN;
+        const start = parseTime(voyage.run_time);
+        const end = parseTime(voyage.forecast_end);
+        if (isFinite(t) && isFinite(start) && t < start) return `Forecast starts ${formatUTC(new Date(start))}`;
+        if (isFinite(t) && isFinite(end) && t > end) return `No forecast beyond ${formatUTC(new Date(end))}`;
+        return 'No forecast data here';
+    }
+    // Update the weather panel for the vessel's sample and leg. Cheap: text and
+    // arrow transforms only, so it runs on every playback tick.
+    function renderWeatherWindow(sample, leg) {
+        if (!wxEl('sim-weather')) return;
+        const w = sample && sample.weather;
+        const msg = wxEl('sim-wx-msg');
+        const grid = wxEl('sim-wx-grid');
+        if (!w) {
+            wxText('sim-wx-msg', wxNoWeatherMessage(sample));
+            if (msg) msg.classList.remove('hidden');
+            if (grid) grid.classList.add('hidden');
+        } else {
+            if (msg) msg.classList.add('hidden');
+            if (grid) grid.classList.remove('hidden');
+            const wind = wxNum(w.wind_kn, 1);
+            const gust = wxNum(w.gust_kn, 1);
+            const wb = wxBearing(w.wind_from_deg);
+            wxText('sim-wx-wind', wind ? `${wind} kn` : WX_DASH);
+            wxText('sim-wx-wind-sub', `${wb ? 'from ' + wb : 'from ' + WX_DASH} · gust ${gust ? gust + ' kn' : WX_DASH}`);
+            wxArrow('sim-wx-wind-arrow', typeof w.wind_from_deg === 'number' ? w.wind_from_deg + 180 : null);
+
+            const cur = wxNum(w.current_kn, 1);
+            const cb = wxBearing(w.current_to_deg);
+            wxText('sim-wx-current', cur ? `${cur} kn` : WX_DASH);
+            wxText('sim-wx-current-sub', `to ${cb || WX_DASH}`);
+            wxArrow('sim-wx-current-arrow', w.current_to_deg);
+
+            const wave = wxNum(w.wave_m, 1);
+            const per = wxNum(w.wave_period_s, 0);
+            const vb = wxBearing(w.wave_from_deg);
+            wxText('sim-wx-wave', wave ? `${wave} m` : WX_DASH);
+            wxText('sim-wx-wave-sub', `from ${vb || WX_DASH} · ${per ? per + ' s' : WX_DASH} period`);
+            wxArrow('sim-wx-wave-arrow', typeof w.wave_from_deg === 'number' ? w.wave_from_deg + 180 : null);
+
+            const p = wxNum(w.pressure_hpa, 0);
+            wxText('sim-wx-pressure', p ? `${p} hPa` : WX_DASH);
+        }
+
+        const legs = voyage && voyage.legs;
+        const cover = wxEl('sim-leg-cover');
+        if (leg && legs && legs.length) {
+            const n = Math.max(0, legs.indexOf(leg)) + 1;
+            const s = parseTime(leg.start);
+            const e = parseTime(leg.end);
+            wxText('sim-leg-title', `Leg ${n} of ${legs.length}`);
+            wxText('sim-leg-span', isFinite(s) && isFinite(e) ? `${formatUTC(new Date(s))} → ${formatUTC(new Date(e))}` : '');
+            const f = (v, d, u) => { const x = wxNum(v, d); return x ? `${x} ${u}` : WX_DASH; };
+            wxText('sim-leg-max', `Max wind ${f(leg.max_wind_kn, 1, 'kn')} · gust ${f(leg.max_gust_kn, 1, 'kn')} · waves ${f(leg.max_wave_m, 1, 'm')} · current ${f(leg.max_current_kn, 1, 'kn')}`);
+            if (cover) {
+                const frac = leg.forecast_frac;
+                if (typeof frac === 'number' && frac < 1) {
+                    wxText('sim-leg-cover', `Forecast covers ${Math.round(Math.max(0, frac) * 100)}% of this leg`);
+                    cover.classList.remove('hidden');
+                } else cover.classList.add('hidden');
+            }
+        } else {
+            wxText('sim-leg-title', 'Leg ' + WX_DASH);
+            wxText('sim-leg-span', '');
+            wxText('sim-leg-max', '');
+            if (cover) cover.classList.add('hidden');
+        }
+        wxText('sim-wx-source', voyage && voyage.run ? `ECMWF IFS · run ${formatUTC(new Date(parseTime(voyage.run_time)))}` : '');
+    }
+    // Sample and leg summary at the current playback time, then render.
+    function refreshWeatherWindow(date) {
+        const hit = sampleAt(date);
+        const sample = hit ? hit.sample : null;
+        let leg = null;
+        if (voyage && voyage.legs && sample) {
+            leg = voyage.legs.find(l => l.leg === sample.leg) || voyage.legs[Math.min(sample.leg, voyage.legs.length - 1)] || null;
+        }
+        renderWeatherWindow(sample, leg);
+    }
+    onVoyageUpdated(() => {
+        if (simActive) refreshWeatherWindow(vesselStateAt(simHours).date);
+    });
+    // Phones: start collapsed so the panel does not cover the map.
+    (function () {
+        const d = document.getElementById('sim-weather');
+        if (d && window.matchMedia && window.matchMedia('(max-width: 639px)').matches) d.removeAttribute('open');
+    })();
+
+    // Scrubber background: forecast span over the voyage versus the rest.
+    function updateForecastBand() {
+        const track = document.getElementById('sim-track');
+        const note = document.getElementById('sim-forecast-note');
+        if (!track && !note) return;
+        let a = 0;
+        let b = 0;
+        let text;
+        if (!hasRoute()) {
+            text = 'No route';
+        } else if (voyageLoading && !voyage) {
+            text = 'Loading forecast…';
+        } else if (!voyage) {
+            text = voyageFailed ? 'Forecast unavailable' : 'Forecast not loaded';
+        } else if (!voyage.run) {
+            text = 'No forecast for this period';
+        } else {
+            const dep = departureDate().getTime();
+            const end = dep + voyageHours() * 3600e3;
+            const rs = parseTime(voyage.run_time);
+            const fe = parseTime(voyage.forecast_end);
+            const span = end - dep;
+            if (span > 0) {
+                a = Math.min(1, Math.max(0, (Math.max(rs, dep) - dep) / span));
+                b = Math.min(1, Math.max(0, (Math.min(fe, end) - dep) / span));
+                if (b < a) b = a;
+            }
+            const early = dep < rs;
+            const late = end > fe;
+            if (b <= a) text = early ? `Forecast starts ${formatUTC(new Date(rs))}` : `No forecast beyond ${formatUTC(new Date(fe))}`;
+            else if (early && late) text = `Forecast ${formatUTC(new Date(rs))} to ${formatUTC(new Date(fe))}`;
+            else if (early) text = `Forecast starts ${formatUTC(new Date(rs))}`;
+            else if (late) text = `No forecast beyond ${formatUTC(new Date(fe))}`;
+            else text = 'Forecast covers the whole voyage';
+        }
+        if (track) {
+            track.style.setProperty('--band-a', `${(a * 100).toFixed(2)}%`);
+            track.style.setProperty('--band-b', `${(b * 100).toFixed(2)}%`);
+            track.title = text;
+        }
+        if (note) note.textContent = text;
+    }
+
+    // Playback needs a route; keep both entry points honest about it.
+    function syncSimAvailability() {
+        const on = hasRoute();
+        const startBtn = document.getElementById('btn-start-simulation');
+        if (startBtn) startBtn.disabled = !on;
+        const hint = document.getElementById('sim-hint');
+        if (hint) hint.classList.toggle('hidden', on);
+        const quick = document.getElementById('btn-quick-sim-trigger');
+        if (quick) {
+            quick.setAttribute('aria-disabled', on ? 'false' : 'true');
+            quick.classList.toggle('opacity-40', !on);
+        }
+    }
+
+    let lastTotalHours = 0;
     function updateTransitDuration() {
         if (!speedSlider) return;
         const speed = parseFloat(speedSlider.value) || 18.0;
         if (speedLabel) speedLabel.textContent = `${speed.toFixed(1)} kts`;
+        syncSimAvailability();
 
-        const dist = currentTotalDistNM || 8420;
-        const totalHours = dist / speed;
-        const days = Math.floor(totalHours / 24);
-        const hours = Math.floor(totalHours % 24);
-        const mins = Math.round((totalHours - Math.floor(totalHours)) * 60);
-        const durationStr = `${days}d ${hours}h ${mins}m`;
-
-        if (statTime) statTime.textContent = durationStr;
-        if (headerDurationBadge) headerDurationBadge.textContent = `${days}d ${hours}h @ ${speed.toFixed(1)} kts`;
-
-        const simTelemetry = document.getElementById('sim-vessel-telemetry');
-        if (simTelemetry) {
-            if (simActive && simProgress > 0) {
-                const remDist = Math.max(0, dist * (1 - simProgress / 100));
-                const remHours = remDist / speed;
-                const remDays = Math.floor(remHours / 24);
-                const remHrs = Math.floor(remHours % 24);
-                simTelemetry.textContent = `ETA: ${remDays}d ${remHrs}h • ${speed.toFixed(1)} kts`;
-            } else {
-                simTelemetry.textContent = `ETA: ${days}d ${hours}h • ${speed.toFixed(1)} kts`;
-            }
+        const totalHours = voyageHours();
+        // Keep the vessel at the same fraction of the passage when speed changes mid-playback.
+        if (simActive && lastTotalHours > 0 && totalHours > 0) {
+            simHours = simHours / lastTotalHours * totalHours;
         }
+        lastTotalHours = totalHours;
 
-        if (simActive) {
-            updateSimulationUI();
+        if (!hasRoute()) {
+            if (statTime) statTime.textContent = '--';
+            if (statEta) statEta.textContent = '--';
+            if (headerDurationBadge) headerDurationBadge.textContent = '--';
+            return;
         }
+        const totalMin = Math.round(totalHours * 60);
+        const days = Math.floor(totalMin / 1440);
+        const hours = Math.floor((totalMin % 1440) / 60);
+        const mins = totalMin % 60;
+        const arrival = formatUTC(voyageTimeAt(1));
+
+        if (statTime) statTime.textContent = `${days}d ${hours}h ${mins}m`;
+        if (statEta) statEta.textContent = arrival;
+        if (headerDurationBadge) headerDurationBadge.textContent = `${days}d ${hours}h • ${arrival}`;
+
+        updateForecastBand();
+        if (simActive) updateSimulationUI();
+        else updateSimTelemetry();
+    }
+    function updateSimTelemetry() {
+        const el = document.getElementById('sim-vessel-telemetry');
+        if (!el) return;
+        const speed = currentSpeedKn();
+        el.textContent = hasRoute() ? `ETA: ${formatUTC(voyageTimeAt(1))} • ${speed.toFixed(1)} kts` : `ETA: -- • ${speed.toFixed(1)} kts`;
     }
 
     if (speedSlider) {
@@ -2967,10 +3407,33 @@
             readSpeed.set(parseFloat(speedSlider.value) || 18);
             updateTransitDuration();
         });
+        // 'change' fires on release, so dragging does not flood the server
+        speedSlider.addEventListener('change', () => {
+            setVoyage(null); // samples are timed for the old speed; fall back until the new response
+            fetchVoyageWeather();
+        });
+    }
+    if (departureInput) {
+        const onDepartureChange = () => {
+            updateTransitDuration();
+            setVoyage(null);
+            fetchVoyageWeather();
+        };
+        departureInput.addEventListener('input', updateTransitDuration);
+        departureInput.addEventListener('change', onDepartureChange);
+    }
+    if (btnDepartureNow && departureInput) {
+        btnDepartureNow.addEventListener('click', () => {
+            departureInput.value = nowUTCInputValue();
+            updateTransitDuration();
+            setVoyage(null);
+            fetchVoyageWeather();
+        });
     }
 
     // =========================================================================
     // 11. Route Simulation / Playback Engine
+    // Playback state is voyage time: simHours of 0 .. voyageHours().
     // =========================================================================
     const btnStartSim = document.getElementById('btn-start-simulation');
     const btnQuickSimTrigger = document.getElementById('btn-quick-sim-trigger');
@@ -2980,29 +3443,18 @@
     const simPlayIcon = document.getElementById('sim-play-icon');
     const btnRestartSim = document.getElementById('btn-restart-sim');
     const simScrubber = document.getElementById('sim-scrubber');
+    const simShipTime = document.getElementById('sim-ship-time');
     const simProgressDist = document.getElementById('sim-progress-dist');
     const simProgressPct = document.getElementById('sim-progress-pct');
     const simElapsed = document.getElementById('sim-elapsed');
     const simLegName = document.getElementById('sim-leg-name');
     const simCurrentPos = document.getElementById('sim-current-pos');
     const simSpeedBtns = document.querySelectorAll('.sim-speed-btn');
-
-    // Default Rotterdam -> Singapore route waypoints when simulation is invoked before calculation
-    const FALLBACK_SIM_WAYPOINTS = [
-        { name: "Rotterdam (Departure)", lat: 51.95, lon: 4.05 },
-        { name: "English Channel TSS", lat: 50.12, lon: -0.45 },
-        { name: "Strait of Gibraltar", lat: 35.95, lon: -5.60 },
-        { name: "Suez Canal Approach", lat: 31.26, lon: 32.31 },
-        { name: "Bab-el-Mandeb Strait", lat: 12.58, lon: 43.33 },
-        { name: "Malacca Strait TSS", lat: 2.82, lon: 101.21 },
-        { name: "Singapore Roads", lat: 1.26, lon: 103.82 }
-    ];
+    const SCRUBBER_STEPS = 1000;
+    let simLastTick = 0;
 
     function getSimulationCoordinates() {
-        if (currentLatLngs && currentLatLngs.length > 1) {
-            return currentLatLngs; // [lat, lon], unwrapped
-        }
-        return FALLBACK_SIM_WAYPOINTS.map(wp => [wp.lat, wp.lon]);
+        return currentLatLngs; // [lat, lon], unwrapped; playback needs a route
     }
 
     /**
@@ -3065,9 +3517,6 @@
             }
             return `Waypoint ${index + 1}`;
         }
-        if (FALLBACK_SIM_WAYPOINTS[index]) {
-            return FALLBACK_SIM_WAYPOINTS[index].name;
-        }
         return `Waypoint ${index + 1}`;
     }
 
@@ -3101,19 +3550,370 @@
         simVesselMarker = L.marker(initialLatLng, { icon: vesselIcon, zIndexOffset: 1000 }).addTo(map);
     }
 
+    // --- ECMWF map layer during playback -------------------------------------
+    const SIM_WX_ATTRIBUTION = 'Forecast data: ECMWF IFS open data, CC BY 4.0';
+    const SIM_WX_META = {
+        wind: { title: 'ECMWF Wind', unit: 'KN' },
+        waves: { title: 'ECMWF Wave Height', unit: 'M' },
+        current: { title: 'ECMWF Current', unit: 'KN' }
+    };
+
+    // Nearest forecast hour on the server grid: every 3 h to 144, then every 6 h to 360.
+    function forecastStepHour(hours) {
+        const h = hours <= 144
+            ? Math.round(hours / 3) * 3
+            : 144 + Math.round((hours - 144) / 6) * 6;
+        return Math.max(0, Math.min(360, h));
+    }
+
+    function simWxTileUrl(run, field, hour) {
+        return `/weather/tile/${encodeURIComponent(run)}/${field}/${hour}/{z}/{x}/{y}.png`;
+    }
+
+    function dropSimWxLayer(layer) {
+        if (!layer) return;
+        layer._simTimer && clearTimeout(layer._simTimer);
+        layer.off();
+        if (map.hasLayer(layer)) map.removeLayer(layer);
+    }
+
+    // Remove every ECMWF layer and forget the wanted key.
+    function clearSimWxLayers() {
+        dropSimWxLayer(simWxPending);
+        dropSimWxLayer(simWxShown);
+        simWxPending = null;
+        simWxShown = null;
+        simWxKey = '';
+        simWxRun = null;
+    }
+
+    // Add a layer for (run, field, hour); the old one leaves only after the new one has loaded.
+    function showSimWxLayer(run, field, hour) {
+        dropSimWxLayer(simWxPending); // never more than two on the map
+        const maxZ = map.getMaxZoom();
+        const layer = L.tileLayer(simWxTileUrl(run, field, hour), {
+            opacity: 1,
+            maxNativeZoom: 8,
+            maxZoom: Number.isFinite(maxZ) ? maxZ : 19,
+            zIndex: 4,
+            attribution: SIM_WX_ATTRIBUTION
+        });
+        const promote = () => {
+            if (simWxPending !== layer) return;
+            clearTimeout(layer._simTimer);
+            layer.off('load', promote);
+            const old = simWxShown;
+            simWxShown = layer;
+            simWxPending = null;
+            dropSimWxLayer(old);
+        };
+        layer.on('load', promote);
+        // A 404 means the server moved to a newer run: refetch once so the layer follows it.
+        layer.on('tileerror', () => {
+            if (simWxRefetchedRun !== run) {
+                simWxRefetchedRun = run;
+                fetchVoyageWeather();
+            } else if (simWxTileFailRun !== run) {
+                simWxTileFailRun = run;
+                const el = document.getElementById('sim-ecmwf-note');
+                if (el) el.textContent = 'Weather tiles unavailable';
+            }
+        });
+        layer._simTimer = setTimeout(promote, 8000); // tiles that never settle must not pin the old layer
+        simWxPending = layer;
+        simWxRun = run;
+        layer.addTo(map);
+    }
+
+    function updateSimWxControls(note, enabled) {
+        document.querySelectorAll('.sim-ecmwf-pill').forEach(btn => {
+            btn.setAttribute('aria-pressed', btn.getAttribute('data-sim-field') === simWxField ? 'true' : 'false');
+            btn.disabled = !enabled;
+        });
+        const noteEl = document.getElementById('sim-ecmwf-note');
+        if (noteEl) noteEl.textContent = note || '';
+    }
+
+    function setSimWeatherLayer(field) {
+        if (!SIM_WX_META[field]) return;
+        simWxField = field;
+        if (simActive) updateSimWeatherStep(vesselStateAt(simHours).date);
+        else updateSimWxControls('', Boolean(voyage && voyage.run));
+    }
+
+    // Pick the layer for the playback time; swaps only when (run, field, hour) changes.
+    function updateSimWeatherStep(date) {
+        if (!simActive) return;
+        if (!voyage && voyageLoading) {
+            // Refetch pending: keep the current layer and legend, avoid a blink.
+            const el = document.getElementById('sim-ecmwf-note');
+            if (el && el.textContent !== 'Loading forecast\u2026') el.textContent = 'Loading forecast\u2026';
+            simWxNoteStale = true;
+            return;
+        }
+        const run = voyage && voyage.run ? voyage.run : null;
+        let key;
+        let note = '';
+        let hour = 0;
+        if (!run) {
+            key = 'none:norun';
+            note = 'No forecast loaded';
+        } else {
+            const t = date.getTime();
+            const start = parseTime(voyage.run_time);
+            const end = parseTime(voyage.forecast_end);
+            if (t < start) {
+                key = 'none:before';
+                note = `Forecast starts ${formatUTC(new Date(start))}`;
+            } else if (t > end) {
+                key = 'none:after';
+                note = `Forecast ends ${formatUTC(new Date(end))}`;
+            } else {
+                hour = forecastStepHour((t - start) / 3600e3);
+                key = `${run}|${simWxField}|${hour}`;
+                note = simWxTileFailRun === run ? 'Weather tiles unavailable' : `+${hour} h`;
+            }
+        }
+        if (key === simWxKey && !simWxNoteStale) return;
+        const sameLayer = key === simWxKey; // only the note/legend need refreshing
+        simWxKey = key;
+        simWxNoteStale = false;
+        if (sameLayer) {
+            // keep tiles as they are
+        } else if (key.startsWith('none:')) {
+            dropSimWxLayer(simWxPending);
+            dropSimWxLayer(simWxShown);
+            simWxPending = null;
+            simWxShown = null;
+        } else {
+            showSimWxLayer(run, simWxField, hour);
+        }
+        updateSimWxControls(note, Boolean(run));
+        updateWeatherScaleDock();
+    }
+
+    function fmtScaleTick(v) {
+        return String(Math.round(v * 10) / 10);
+    }
+
+    // Legend for the ECMWF layer in the existing scale dock; hidden when no layer is shown.
+    function renderSimWxLegend(dock) {
+        if (voyage && voyage.scales) simWxLastScales = voyage.scales;
+        const scales = voyage ? voyage.scales : (voyageLoading ? simWxLastScales : null);
+        const stops = scales ? scales[simWxField] : null;
+        const active = (simWxShown || simWxPending) && Array.isArray(stops) && stops.length > 1;
+        const max = active ? stops[stops.length - 1].value : 0;
+        if (!active || !(max > 0)) {
+            dock.classList.add('hidden');
+            dock.classList.remove('flex');
+            return;
+        }
+        dock.classList.remove('hidden');
+        dock.classList.add('flex');
+        const meta = SIM_WX_META[simWxField];
+        const tabsEl = document.getElementById('weather-scale-tabs');
+        if (tabsEl) {
+            tabsEl.classList.add('hidden');
+            tabsEl.classList.remove('flex');
+            tabsEl.innerHTML = '';
+        }
+        const titleEl = document.getElementById('weather-scale-title');
+        const unitEl = document.getElementById('weather-scale-unit');
+        const gradientEl = document.getElementById('weather-scale-gradient');
+        const ticksEl = document.getElementById('weather-scale-ticks');
+        if (titleEl) titleEl.textContent = meta.title;
+        if (unitEl) unitEl.textContent = meta.unit;
+        if (gradientEl) {
+            gradientEl.style.background = 'linear-gradient(to right, ' +
+                stops.map(s => `${s.color} ${(s.value / max * 100).toFixed(1)}%`).join(', ') + ')';
+        }
+        if (ticksEl) {
+            const n = 4;
+            let html = '';
+            for (let i = 0; i <= n; i++) html += `<span>${fmtScaleTick(max * i / n)}</span>`;
+            ticksEl.innerHTML = html;
+        }
+    }
+
+    // Playback takes over the weather overlay: park the OWM layers, restore them on stop.
+    function setOwmControlsLocked(locked) {
+        const hint = 'Live weather is off during voyage playback';
+        const els = [toggleOwm, ...document.querySelectorAll('.weather-btn')].filter(Boolean);
+        els.forEach(el => {
+            el.disabled = locked;
+            if (locked) {
+                el.dataset.prevTitle = el.getAttribute('title') || '';
+                el.setAttribute('title', hint);
+                el.dataset.prevAria = el.getAttribute('aria-label') || '';
+                el.setAttribute('aria-label', el.dataset.prevAria || el.textContent.trim() || 'Live weather');
+            } else if ('prevTitle' in el.dataset) {
+                if (el.dataset.prevAria) el.setAttribute('aria-label', el.dataset.prevAria);
+                else el.removeAttribute('aria-label');
+                delete el.dataset.prevAria;
+                if (el.dataset.prevTitle) el.setAttribute('title', el.dataset.prevTitle);
+                else el.removeAttribute('title');
+                delete el.dataset.prevTitle;
+            }
+        });
+    }
+
+    function beginSimWeather() {
+        if (simWxSavedOwm) return;
+        simWxSavedOwm = {
+            master: Boolean(toggleOwm && toggleOwm.checked),
+            layers: new Set(activeWeatherLayers)
+        };
+        if (toggleOwm) toggleOwm.checked = false;
+        setOwmControlsLocked(true);
+        updateWeatherLayersOnMap();
+        updateActiveLayerBadge();
+        clearSimWxLayers();
+        updateSimWxControls('', Boolean(voyage && voyage.run));
+    }
+
+    function endSimWeather() {
+        clearSimWxLayers();
+        setOwmControlsLocked(false);
+        updateSimWxControls('', Boolean(voyage && voyage.run));
+        if (simWxSavedOwm) {
+            activeWeatherLayers.clear();
+            simWxSavedOwm.layers.forEach(k => activeWeatherLayers.add(k));
+            if (toggleOwm) toggleOwm.checked = simWxSavedOwm.master;
+            simWxSavedOwm = null;
+        }
+        updateWeatherButtonsUI();
+        updateWeatherLayersOnMap();
+        updateActiveLayerBadge();
+        updateWeatherScaleDock();
+    }
+
+    document.querySelectorAll('.sim-ecmwf-pill').forEach(btn => {
+        btn.addEventListener('click', () => setSimWeatherLayer(btn.getAttribute('data-sim-field')));
+    });
+    // New or cleared voyage: the run may have changed, so rebuild the layer and legend.
+    onVoyageUpdated(() => {
+        if (!simActive) return;
+        const run = voyage && voyage.run ? voyage.run : null;
+        if (run !== simWxRun) simWxKey = ''; // unchanged run: keep tiles, no reload
+        updateSimWeatherStep(vesselStateAt(simHours).date);
+        updateWeatherScaleDock();
+    });
+
+    // --- Weather CSV export --------------------------------------------------
+    // Pure: builds the CSV text for a /voyage/weather response. meta is
+    // { from, to, speedKn } (labels as shown in the UI). RFC 4180: CRLF lines,
+    // fields with a comma, quote or newline are quoted. "# " lines are comments.
+    function buildVoyageCSV(v, meta) {
+        meta = meta || {};
+        const label = (x) => String(x === null || x === undefined ? '' : x).replace(/[\r\n]+/g, ' ').replace(/,/g, ';');
+        const csvField = (x) => {
+            const t = x === null || x === undefined ? '' : String(x);
+            return /[",\r\n]/.test(t) ? `"${t.replace(/"/g, '""')}"` : t;
+        };
+        const iso = (str) => {
+            const ms = Date.parse(String(str).replace(/(\.\d{3})\d+/, '$1'));
+            return isFinite(ms) ? new Date(ms).toISOString().slice(0, 16) + 'Z' : '';
+        };
+        const num = (x, d) => (typeof x === 'number' && isFinite(x)) ? x.toFixed(d) : '';
+        const row = (cells) => cells.map(csvField).join(',');
+        const out = [
+            '# seaRoute voyage weather',
+            `# From: ${label(meta.from)}`,
+            `# To: ${label(meta.to)}`,
+            `# Departure: ${iso(v.departure)}`,
+            `# ETA: ${iso(v.eta)}`,
+            `# Speed: ${num(meta.speedKn, 1)} kn`,
+            `# Distance: ${num(v.distance_nm, 1)} NM`,
+            `# Forecast run: ${v.run_time ? iso(v.run_time) : 'none'}`,
+            `# Forecast end: ${v.forecast_end ? iso(v.forecast_end) : 'none'}`,
+            '# Forecast data: ECMWF IFS open data, CC BY 4.0',
+            row(['leg', 'time_utc', 'lat', 'lon', 'dist_nm', 'course_deg', 'wind_kn', 'wind_from_deg', 'gust_kn',
+                'current_kn', 'current_to_deg', 'wave_m', 'wave_from_deg', 'wave_period_s', 'pressure_hpa']),
+        ];
+        (v.samples || []).forEach(s => {
+            const w = s.weather || {};
+            out.push(row([
+                (s.leg || 0) + 1, iso(s.time), num(s.lat, 5), num(s.lon, 5), num(s.dist_nm, 1), num(s.course_deg, 0),
+                num(w.wind_kn, 1), num(w.wind_from_deg, 1), num(w.gust_kn, 1),
+                num(w.current_kn, 1), num(w.current_to_deg, 1), num(w.wave_m, 1), num(w.wave_from_deg, 1),
+                num(w.wave_period_s, 1), num(w.pressure_hpa, 1),
+            ]));
+        });
+        out.push('');
+        out.push(row(['leg', 'start_utc', 'end_utc', 'max_wind_kn', 'max_gust_kn', 'max_wave_m', 'max_current_kn', 'forecast_pct']));
+        (v.legs || []).forEach(l => {
+            out.push(row([
+                (l.leg || 0) + 1, iso(l.start), iso(l.end), num(l.max_wind_kn, 1), num(l.max_gust_kn, 1),
+                num(l.max_wave_m, 1), num(l.max_current_kn, 1),
+                typeof l.forecast_frac === 'number' ? Math.round(l.forecast_frac * 100) : '',
+            ]));
+        });
+        return out.join('\r\n') + '\r\n';
+    }
+
+    // Label for one end of the voyage: preset or picked port name, else coordinates.
+    function exportEndLabel(side, latInput, lonInput) {
+        const lat = parseCoordinate(latInput ? latInput.value : '', true);
+        const lon = parseCoordinate(lonInput ? lonInput.value : '', false);
+        if (isNaN(lat) || isNaN(lon)) return '';
+        return pointLabel(side, lat, lon) || `${lat.toFixed(4)}, ${lon.toFixed(4)}`;
+    }
+
+    function exportVoyageCSV() {
+        if (!voyage) return;
+        const csv = buildVoyageCSV(voyage, {
+            from: exportEndLabel('origin', originLatInput, originLonInput),
+            to: exportEndLabel('dest', destLatInput, destLonInput),
+            speedKn: currentSpeedKn(),
+        });
+        const dep = new Date(parseTime(voyage.departure));
+        const stamp = isFinite(dep) ? dep.toISOString().slice(0, 16).replace(/[-:]/g, '') + 'Z' : '';
+        const url = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8' }));
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = stamp ? `voyage-weather-${stamp}.csv` : 'voyage-weather.csv';
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        setTimeout(() => URL.revokeObjectURL(url), 1000);
+    }
+    (function bindExportButton() {
+        const btn = document.getElementById('btn-export-weather');
+        if (!btn) return;
+        const sync = () => {
+            const ok = Boolean(voyage);
+            btn.disabled = !ok;
+            btn.setAttribute('aria-disabled', ok ? 'false' : 'true');
+            btn.title = ok ? 'Download the voyage weather as CSV' : 'Available once voyage weather has loaded';
+        };
+        btn.addEventListener('click', exportVoyageCSV);
+        onVoyageUpdated(sync);
+        sync();
+    })();
+
     function openSimulation() {
+        if (simActive) return;
+        if (!hasRoute()) {
+            showToast('Compute a route first', 'warning');
+            return;
+        }
         simActive = true;
+        beginSimWeather();
+        simHours = 0;
+        lastTotalHours = voyageHours();
         if (simPlayerDock) simPlayerDock.classList.remove('hidden');
         const coords = getSimulationCoordinates();
         createVesselMarker(coords[0]);
         updateSimulationUI();
         playSimulation();
-        showToast('Route Simulation Mode Activated', 'play_circle');
+        showToast('Voyage playback started', 'play_circle');
     }
 
     function stopSimulation() {
         simActive = false;
+        endSimWeather();
         pauseSimulation();
+        simHours = 0;
         simProgress = 0;
         if (simScrubber) simScrubber.value = 0;
         if (simPlayerDock) simPlayerDock.classList.add('hidden');
@@ -3125,21 +3925,25 @@
             simLegName.textContent = '• Inactive';
         }
         updateTransitDuration();
-        showToast('Simulation Stopped', 'stop');
+        showToast('Playback stopped', 'stop');
     }
 
     function playSimulation() {
         simPlaying = true;
         if (simPlayIcon) simPlayIcon.textContent = 'pause';
         clearInterval(simInterval);
+        simLastTick = performance.now();
         simInterval = setInterval(() => {
-            simProgress += 0.25 * simSpeedMultiplier;
-            if (simProgress >= 100) {
-                simProgress = 100;
+            const now = performance.now();
+            const dt = Math.min(now - simLastTick, 250) / 1000; // cap so a background tab does not jump
+            simLastTick = now;
+            const total = voyageHours();
+            simHours += simSpeedMultiplier * dt; // multiplier = hours of voyage per second
+            if (simHours >= total) {
+                simHours = total;
                 pauseSimulation();
-                showToast('Destination Reached: Voyage Complete', 'task_alt');
+                showToast('Destination reached: voyage complete', 'task_alt');
             }
-            if (simScrubber) simScrubber.value = simProgress;
             updateSimulationUI();
         }, 50);
     }
@@ -3151,67 +3955,54 @@
     }
 
     function updateSimulationUI() {
-        const totalDist = currentTotalDistNM || 8420;
-        const currentDist = Math.round((simProgress / 100) * totalDist);
-        const speed = (speedSlider ? parseFloat(speedSlider.value) : 18.0) || 18.0;
-        const totalDays = totalDist / (speed * 24);
-        const currentDays = ((simProgress / 100) * totalDays).toFixed(1);
+        const total = voyageHours();
+        if (!hasRoute() || total <= 0) return;
+        simHours = Math.min(total, Math.max(0, simHours));
+        simProgress = simHours / total * 100;
+        const st = vesselStateAt(simHours);
+        const speed = currentSpeedKn();
+        const toGo = Math.max(0, currentTotalDistNM - st.distNM);
 
-        if (simProgressDist) simProgressDist.textContent = `${currentDist.toLocaleString()} NM / ${Math.round(totalDist).toLocaleString()} NM`;
-        if (simProgressPct) simProgressPct.textContent = `${Math.round(simProgress)}% Complete`;
-        if (simElapsed) simElapsed.textContent = `Day ${currentDays}`;
+        if (simScrubber) simScrubber.value = Math.round(simHours / total * SCRUBBER_STEPS);
+        if (simShipTime) simShipTime.textContent = formatUTC(st.date);
+        if (simElapsed) simElapsed.textContent = `Day ${(simHours / 24).toFixed(1)}`;
+        if (simProgressDist) simProgressDist.textContent = `${Math.round(st.distNM).toLocaleString()} NM run`;
+        if (simProgressPct) simProgressPct.textContent = `${Math.round(toGo).toLocaleString()} NM to go`;
 
-        // Live ETA and speed telemetry
         const simTelemetry = document.getElementById('sim-vessel-telemetry');
         if (simTelemetry) {
-            const remainingDist = Math.max(0, totalDist * (1 - simProgress / 100));
-            const remainingHours = remainingDist / speed;
-            if (simProgress >= 100) {
-                simTelemetry.textContent = `Arrived • ${speed.toFixed(1)} kts`;
-            } else {
-                const remDays = Math.floor(remainingHours / 24);
-                const remHrs = Math.floor(remainingHours % 24);
-                simTelemetry.textContent = `ETA: ${remDays}d ${remHrs}h • ${speed.toFixed(1)} kts`;
-            }
+            simTelemetry.textContent = simHours >= total
+                ? `Arrived • ${speed.toFixed(1)} kts`
+                : `ETA: ${formatUTC(voyageTimeAt(1))} • ${speed.toFixed(1)} kts`;
         }
 
-        updateVesselPosition(simProgress / 100);
+        updateVesselPosition(st);
+        refreshWeatherWindow(st.date);
+        updateSimWeatherStep(st.date);
     }
 
-    function updateVesselPosition(ratio) {
+    function updateVesselPosition(st) {
         const coords = getSimulationCoordinates();
         if (coords.length < 2) return;
-
         const numSegments = coords.length - 1;
-        const exactIndex = ratio * numSegments;
-        const segmentIndex = Math.min(Math.floor(exactIndex), numSegments - 1);
-        const t = exactIndex - segmentIndex;
-
-        const p0 = coords[segmentIndex];
-        const p1 = coords[segmentIndex + 1];
-
-        const lat = p0[0] + (p1[0] - p0[0]) * t;
-        const lon = p0[1] + (p1[1] - p0[1]) * t;
-
-        const heading = computeHeading(p0[0], p0[1], p1[0], p1[1]);
-        const speed = (speedSlider ? parseFloat(speedSlider.value) : 18.0) || 18.0;
+        const segmentIndex = Math.min(Math.max(0, st.leg), numSegments - 1);
+        const speed = currentSpeedKn();
 
         if (simVesselMarker) {
-            simVesselMarker.setLatLng([lat, lon]);
+            simVesselMarker.setLatLng([st.lat, st.lon]);
             const markerEl = simVesselMarker.getElement();
             if (markerEl) {
                 const navIcon = markerEl.querySelector('#sim-vessel-nav-icon') || markerEl.querySelector('.sim-nav-icon');
                 if (navIcon) {
-                    navIcon.style.transform = `rotate(${Math.round(heading)}deg)`;
+                    navIcon.style.transform = `rotate(${Math.round(st.heading)}deg)`;
                 }
                 const markerSpeed = markerEl.querySelector('#sim-marker-speed') || markerEl.querySelector('.sim-marker-speed');
                 if (markerSpeed) {
-                    markerSpeed.textContent = `${speed.toFixed(1)} kts • HDG ${Math.round(heading).toString().padStart(3, '0')}°`;
+                    markerSpeed.textContent = `${speed.toFixed(1)} kts • HDG ${Math.round(st.heading).toString().padStart(3, '0')}°`;
                 }
             }
         }
 
-        // Leg Description
         if (simLegName) {
             const fromName = getWaypointName(segmentIndex, coords.length);
             const toName = getWaypointName(segmentIndex + 1, coords.length);
@@ -3223,7 +4014,7 @@
         }
 
         if (simCurrentPos) {
-            simCurrentPos.textContent = `Position: ${lat.toFixed(2)}°, ${lon.toFixed(2)}°`;
+            simCurrentPos.textContent = `Position: ${st.lat.toFixed(2)}°, ${st.lon.toFixed(2)}°`;
         }
     }
 
@@ -3235,7 +4026,7 @@
         btnPlayPauseSim.addEventListener('click', () => {
             if (simPlaying) pauseSimulation();
             else {
-                if (simProgress >= 100) simProgress = 0;
+                if (simHours >= voyageHours()) simHours = 0;
                 playSimulation();
             }
         });
@@ -3243,8 +4034,7 @@
 
     if (btnRestartSim) {
         btnRestartSim.addEventListener('click', () => {
-            simProgress = 0;
-            if (simScrubber) simScrubber.value = 0;
+            simHours = 0;
             updateSimulationUI();
             if (!simPlaying) playSimulation();
         });
@@ -3252,7 +4042,7 @@
 
     if (simScrubber) {
         simScrubber.addEventListener('input', (e) => {
-            simProgress = parseFloat(e.target.value);
+            simHours = (parseFloat(e.target.value) / SCRUBBER_STEPS) * voyageHours();
             updateSimulationUI();
         });
     }
@@ -3260,12 +4050,14 @@
     simSpeedBtns.forEach(btn => {
         btn.addEventListener('click', () => {
             simSpeedBtns.forEach(b => {
-                b.className = 'sim-speed-btn px-2 py-0.5 rounded-sm text-on-surface-variant hover:text-on-surface cursor-pointer';
+                b.className = 'sim-speed-btn px-2 py-1 rounded-sm text-on-surface-variant hover:text-on-surface cursor-pointer';
             });
-            btn.className = 'sim-speed-btn active px-2 py-0.5 rounded-sm bg-primary-container text-on-primary-container font-semibold cursor-pointer';
-            simSpeedMultiplier = parseFloat(btn.dataset.speed) || 1;
+            btn.className = 'sim-speed-btn active px-2 py-1 rounded-sm bg-primary-container text-on-primary-container font-semibold cursor-pointer';
+            simSpeedMultiplier = parseFloat(btn.dataset.speed) || 1; // hours of voyage per second
         });
     });
+
+    syncSimAvailability();
 
     // =========================================================================
     // 12. Exports & Sharing (CSV, GeoJSON, Permalinks)
